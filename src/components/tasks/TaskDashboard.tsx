@@ -123,7 +123,7 @@ function TaskCard({ task, onComplete, onDelete }: {
 
 export function TaskDashboard() {
   const { user } = useAuth();
-  const { data: allTasks = [] } = useTasks();
+  const { data: allTasks = [], isLoading, error } = useTasks();
   const { data: myTasks = [] } = useMyTasks();
   const updateTask = useUpdateTask();
   const deleteTask = useDeleteTask();
@@ -139,6 +139,30 @@ export function TaskDashboard() {
   const pendingTasks = allTasks.filter(t => t.status !== 'completed');
   const completedTasks = allTasks.filter(t => t.status === 'completed');
   const theirTasks = pendingTasks.filter(t => t.assigned_to && t.assigned_to !== user?.id);
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <Card>
+          <CardContent className="p-6 text-center text-muted-foreground">
+            Loading tasks...
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-4">
+        <Card className="border-destructive">
+          <CardContent className="p-6 text-center text-destructive">
+            Error loading tasks. Please try again.
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">

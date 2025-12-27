@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -11,7 +11,14 @@ import { Users, Plus, UserPlus, Package } from 'lucide-react';
 
 export default function TeamSetup() {
   const navigate = useNavigate();
-  const { createTeam, joinTeam, profile } = useAuth();
+  const { createTeam, joinTeam, profile, team } = useAuth();
+
+  // Redirect if user already has a team
+  useEffect(() => {
+    if (team) {
+      navigate('/', { replace: true });
+    }
+  }, [team, navigate]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [teamName, setTeamName] = useState('');
   const [teamCode, setTeamCode] = useState('');

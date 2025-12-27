@@ -7,6 +7,7 @@ interface AppLayoutProps {
 }
 
 export function AppLayout({ children }: AppLayoutProps) {
+  // useTheme is safe because AppLayout is always rendered inside ThemeProvider (in App.tsx)
   const { backgroundImageUrl } = useTheme();
 
   return (
