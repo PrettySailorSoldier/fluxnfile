@@ -189,11 +189,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (teamError) return { error: teamError as Error };
 
-    // Update profile with team_id
-    const { error: profileError } = await supabase
+    // Update profile with team_id and get the updated profile back
+    const { data: updatedProfile, error: profileError } = await supabase
       .from('profiles')
       .update({ team_id: teamData.id })
-      .eq('id', user.id);
+      .eq('id', user.id)
+      .select()
+      .single();
 
     if (profileError) return { error: profileError as Error };
 
@@ -218,21 +220,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }))
     );
 
-    await refreshProfile();
+    // Update state immediately with the new data to avoid race conditions
+    setProfile(updatedProfile);
+    setTeam(teamData);
+
     return { error: null };
   };
 
   const joinTeam = async (teamId: string) => {
     if (!user) return { error: new Error('Not authenticated') };
 
-    const { error } = await supabase
+    // Get the team data first to verify it exists
+    const { data: teamData, error: teamError } = await supabase
+      .from('teams')
+      .select()
+      .eq('id', teamId)
+      .single();
+
+    if (teamError || !teamData) {
+      return { error: new Error('Team not found') };
+    }
+
+    // Update profile with team_id
+    const { data: updatedProfile, error: profileError } = await supabase
       .from('profiles')
       .update({ team_id: teamId })
-      .eq('id', user.id);
+      .eq('id', user.id)
+      .select()
+      .single();
 
-    if (error) return { error: error as Error };
+    if (profileError) return { error: profileError as Error };
 
-    await refreshProfile();
+    // Update state immediately
+    setProfile(updatedProfile);
+    setTeam(teamData);
+
     return { error: null };
   };
 
