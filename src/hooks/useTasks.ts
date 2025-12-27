@@ -36,6 +36,7 @@ export interface Task {
   assignee?: {
     id: string;
     full_name: string | null;
+    avatar_url: string | null;
   } | null;
 }
 
@@ -63,7 +64,7 @@ export function useTasks() {
         .select(`
           *,
           item:items(id, title, photos),
-          assignee:profiles!tasks_assigned_to_fkey(id, full_name)
+          assignee:profiles!tasks_assigned_to_fkey(id, full_name, avatar_url)
         `)
         .eq('team_id', team.id)
         .order('created_at', { ascending: false });
@@ -88,7 +89,7 @@ export function useMyTasks() {
         .select(`
           *,
           item:items(id, title, photos),
-          assignee:profiles!tasks_assigned_to_fkey(id, full_name)
+          assignee:profiles!tasks_assigned_to_fkey(id, full_name, avatar_url)
         `)
         .eq('team_id', team.id)
         .eq('assigned_to', user.id)
