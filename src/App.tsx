@@ -14,6 +14,7 @@ import AddItem from "./pages/AddItem";
 import ItemDetail from "./pages/ItemDetail";
 import Analytics from "./pages/Analytics";
 import Settings from "./pages/Settings";
+import Tasks from "./pages/Tasks";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -60,6 +61,11 @@ const App = () => (
             <Route path="/settings" element={
               <ProtectedRoute>
                 <AppLayout><Settings /></AppLayout>
+              </ProtectedRoute>
+            } />
+            <Route path="/tasks" element={
+              <ProtectedRoute>
+                <AppLayout><Tasks /></AppLayout>
               </ProtectedRoute>
             } />
             <Route path="*" element={<NotFound />} />
