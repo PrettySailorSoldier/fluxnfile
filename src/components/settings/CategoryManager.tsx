@@ -9,6 +9,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { FolderOpen, Plus, Pencil, Trash2, X, Check } from 'lucide-react';
 import { toast } from 'sonner';
+import { z } from 'zod';
+import { sanitizeError } from '@/lib/errorHandler';
+
+const categorySchema = z.object({
+  name: z.string().min(1, 'Category name is required').max(100, 'Category name must be less than 100 characters').trim(),
+});
 
 export function CategoryManager() {
   const { team } = useAuth();
@@ -20,35 +26,53 @@ export function CategoryManager() {
   const [editName, setEditName] = useState('');
 
   const handleAdd = async () => {
-    if (!newName.trim() || !team?.id) return;
+    if (!team?.id) return;
 
-    const { error } = await supabase
-      .from('categories')
-      .insert({ name: newName.trim(), team_id: team.id });
+    try {
+      const validated = categorySchema.parse({ name: newName });
 
-    if (error) {
-      toast.error('Failed to add category');
-    } else {
-      toast.success('Category added');
-      setNewName('');
-      queryClient.invalidateQueries({ queryKey: ['categories'] });
+      const { error } = await supabase
+        .from('categories')
+        .insert({ name: validated.name, team_id: team.id });
+
+      if (error) {
+        toast.error(sanitizeError(error));
+      } else {
+        toast.success('Category added');
+        setNewName('');
+        queryClient.invalidateQueries({ queryKey: ['categories'] });
+      }
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        toast.error(err.errors[0].message);
+      } else {
+        toast.error(sanitizeError(err));
+      }
     }
   };
 
   const handleUpdate = async (id: string) => {
-    if (!editName.trim()) return;
+    try {
+      const validated = categorySchema.parse({ name: editName });
 
-    const { error } = await supabase
-      .from('categories')
-      .update({ name: editName.trim() })
-      .eq('id', id);
+      const { error } = await supabase
+        .from('categories')
+        .update({ name: validated.name })
+        .eq('id', id);
 
-    if (error) {
-      toast.error('Failed to update category');
-    } else {
-      toast.success('Category updated');
-      setEditingId(null);
-      queryClient.invalidateQueries({ queryKey: ['categories'] });
+      if (error) {
+        toast.error(sanitizeError(error));
+      } else {
+        toast.success('Category updated');
+        setEditingId(null);
+        queryClient.invalidateQueries({ queryKey: ['categories'] });
+      }
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        toast.error(err.errors[0].message);
+      } else {
+        toast.error(sanitizeError(err));
+      }
     }
   };
 
@@ -59,7 +83,7 @@ export function CategoryManager() {
       .eq('id', id);
 
     if (error) {
-      toast.error('Failed to delete category');
+      toast.error(sanitizeError(error));
     } else {
       toast.success('Category deleted');
       queryClient.invalidateQueries({ queryKey: ['categories'] });

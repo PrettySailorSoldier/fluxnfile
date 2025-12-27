@@ -57,7 +57,7 @@ export function useOffers(itemId?: string) {
       const { data, error } = await query;
 
       if (error) throw error;
-      return data as Offer[];
+      return (data || []) as unknown as Offer[];
     },
     enabled: !!team?.id,
   });
