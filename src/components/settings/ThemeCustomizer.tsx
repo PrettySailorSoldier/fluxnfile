@@ -480,7 +480,12 @@ export function ThemeCustomizer() {
           imageUrl={localBgImage}
           open={bgEditorOpen}
           onOpenChange={setBgEditorOpen}
-          initialSettings={backgroundSettings}
+          initialSettings={{
+            imageUrl: localBgImage,
+            zoom: backgroundSettings.zoom,
+            positionX: backgroundSettings.positionX,
+            positionY: backgroundSettings.positionY,
+          }}
           onSave={(settings) => {
             updateBackgroundSettings({
               zoom: settings.zoom,
