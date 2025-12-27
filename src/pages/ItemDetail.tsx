@@ -12,8 +12,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { ArrowLeft, Save, Trash2, Package, ChevronRight, Loader2, Edit2 } from 'lucide-react';
+import { ArrowLeft, Save, Trash2, Package, ChevronRight, Loader2, Edit2, Facebook, MessageSquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { QuickListDialog } from '@/components/fb/QuickListDialog';
+import { FBTrackingSection } from '@/components/fb/FBTrackingSection';
+import { TemplateLibrary } from '@/components/fb/TemplateLibrary';
 
 const statusOrder: ItemStatus[] = ['acquired', 'refurbishing', 'ready_to_list', 'listed', 'sold', 'shipped'];
 
@@ -27,6 +30,8 @@ export default function ItemDetail() {
 
   const [isEditing, setIsEditing] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showQuickList, setShowQuickList] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
 
   // Form state
   const [title, setTitle] = useState('');
@@ -147,6 +152,19 @@ export default function ItemDetail() {
         sale_date: newStatus === 'sold' || newStatus === 'shipped' ? new Date().toISOString().split('T')[0] : null,
       });
     }
+  };
+
+  const handleFBListingComplete = (listingUrl: string) => {
+    updateItem.mutate({
+      fb_listing_url: listingUrl,
+      fb_listed_date: new Date().toISOString(),
+      status: 'listed',
+    });
+    toast.success('Item marked as listed on Facebook!');
+  };
+
+  const handleFBUpdate = (updates: { fb_views?: number; fb_conversation_notes?: string }) => {
+    updateItem.mutate(updates);
   };
 
   if (isLoading) {
@@ -283,6 +301,41 @@ export default function ItemDetail() {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {/* Facebook Quick Actions (when not editing and not sold) */}
+      {!isEditing && item.status !== 'sold' && item.status !== 'shipped' && (
+        <div className="flex gap-2">
+          {!item.fb_listing_url ? (
+            <Button
+              onClick={() => setShowQuickList(true)}
+              className="flex-1 bg-[#1877F2] hover:bg-[#166FE5]"
+            >
+              <Facebook className="w-4 h-4 mr-2" />
+              Post to Facebook
+            </Button>
+          ) : null}
+          <Button
+            variant="outline"
+            onClick={() => setShowTemplates(true)}
+            className="flex-1"
+          >
+            <MessageSquare className="w-4 h-4 mr-2" />
+            Templates
+          </Button>
+        </div>
+      )}
+
+      {/* Facebook Tracking Section */}
+      {!isEditing && (
+        <FBTrackingSection
+          fbListingUrl={item.fb_listing_url}
+          fbViews={item.fb_views}
+          fbListedDate={item.fb_listed_date}
+          fbConversationNotes={item.fb_conversation_notes}
+          onUpdate={handleFBUpdate}
+          isUpdating={updateItem.isPending}
+        />
       )}
 
       {/* Edit Form */}
@@ -513,6 +566,36 @@ export default function ItemDetail() {
           </CardContent>
         </Card>
       )}
+
+      {/* Quick List Dialog */}
+      <QuickListDialog
+        open={showQuickList}
+        onOpenChange={setShowQuickList}
+        item={{
+          id: item.id,
+          title: item.title,
+          category: item.category,
+          condition: item.condition,
+          target_price: item.target_price,
+          actual_price: item.actual_price,
+          description: item.description,
+          refurbish_notes: item.refurbish_notes,
+          photos: item.photos,
+        }}
+        onListingComplete={handleFBListingComplete}
+      />
+
+      {/* Template Library */}
+      <TemplateLibrary
+        open={showTemplates}
+        onOpenChange={setShowTemplates}
+        itemContext={{
+          item_name: item.title || item.category?.name,
+          price: item.target_price || undefined,
+          lowest_price: item.target_price ? Math.round(item.target_price * 0.8) : undefined,
+          condition_notes: item.refurbish_notes || undefined,
+        }}
+      />
     </div>
   );
 }

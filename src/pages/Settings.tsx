@@ -1,11 +1,14 @@
+import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { LogOut, Users, User, Copy } from 'lucide-react';
+import { LogOut, Users, User, Copy, MessageSquare } from 'lucide-react';
 import { toast } from 'sonner';
+import { TemplateLibrary } from '@/components/fb/TemplateLibrary';
 
 export default function Settings() {
   const { profile, team, signOut } = useAuth();
+  const [showTemplates, setShowTemplates] = useState(false);
 
   const copyTeamId = () => {
     if (team?.id) {
@@ -15,7 +18,7 @@ export default function Settings() {
   };
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-4 space-y-4 pb-24">
       <h1 className="text-2xl font-bold text-foreground pt-2">Settings</h1>
       
       {/* Profile */}
@@ -55,6 +58,24 @@ export default function Settings() {
         </CardContent>
       </Card>
 
+      {/* Message Templates */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <MessageSquare className="w-4 h-4" />
+            Message Templates
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground mb-3">
+            Quick responses for buyer messages on Facebook Marketplace
+          </p>
+          <Button variant="outline" onClick={() => setShowTemplates(true)} className="w-full">
+            Manage Templates
+          </Button>
+        </CardContent>
+      </Card>
+
       {/* Sign Out */}
       <Button 
         variant="destructive" 
@@ -64,6 +85,12 @@ export default function Settings() {
         <LogOut className="w-4 h-4 mr-2" />
         Sign Out
       </Button>
+
+      {/* Template Library Dialog */}
+      <TemplateLibrary
+        open={showTemplates}
+        onOpenChange={setShowTemplates}
+      />
     </div>
   );
 }

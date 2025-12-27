@@ -103,7 +103,12 @@ export type Database = {
           condition: Database["public"]["Enums"]["item_condition"]
           created_at: string
           created_by: string | null
+          default_pickup_location: string | null
           description: string | null
+          fb_conversation_notes: string | null
+          fb_listed_date: string | null
+          fb_listing_url: string | null
+          fb_views: number | null
           id: string
           original_cost: number
           photos: string[] | null
@@ -128,7 +133,12 @@ export type Database = {
           condition?: Database["public"]["Enums"]["item_condition"]
           created_at?: string
           created_by?: string | null
+          default_pickup_location?: string | null
           description?: string | null
+          fb_conversation_notes?: string | null
+          fb_listed_date?: string | null
+          fb_listing_url?: string | null
+          fb_views?: number | null
           id?: string
           original_cost: number
           photos?: string[] | null
@@ -153,7 +163,12 @@ export type Database = {
           condition?: Database["public"]["Enums"]["item_condition"]
           created_at?: string
           created_by?: string | null
+          default_pickup_location?: string | null
           description?: string | null
+          fb_conversation_notes?: string | null
+          fb_listed_date?: string | null
+          fb_listing_url?: string | null
+          fb_views?: number | null
           id?: string
           original_cost?: number
           photos?: string[] | null
@@ -200,6 +215,78 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      meetup_locations: {
+        Row: {
+          address: string | null
+          created_at: string
+          id: string
+          is_default: boolean | null
+          location_type: string | null
+          name: string
+          notes: string | null
+          team_id: string
+        }
+        Insert: {
+          address?: string | null
+          created_at?: string
+          id?: string
+          is_default?: boolean | null
+          location_type?: string | null
+          name: string
+          notes?: string | null
+          team_id: string
+        }
+        Update: {
+          address?: string | null
+          created_at?: string
+          id?: string
+          is_default?: boolean | null
+          location_type?: string | null
+          name?: string
+          notes?: string | null
+          team_id?: string
+        }
+        Relationships: []
+      }
+      message_templates: {
+        Row: {
+          category: string
+          created_at: string
+          created_by: string | null
+          id: string
+          is_shared: boolean | null
+          name: string
+          team_id: string
+          template_text: string
+          updated_at: string
+          use_count: number | null
+        }
+        Insert: {
+          category?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_shared?: boolean | null
+          name: string
+          team_id: string
+          template_text: string
+          updated_at?: string
+          use_count?: number | null
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_shared?: boolean | null
+          name?: string
+          team_id?: string
+          template_text?: string
+          updated_at?: string
+          use_count?: number | null
+        }
+        Relationships: []
       }
       platforms: {
         Row: {
