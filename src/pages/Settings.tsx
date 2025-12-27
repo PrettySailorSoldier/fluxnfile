@@ -2,15 +2,16 @@ import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { LogOut, Users, User, Copy, MessageSquare } from 'lucide-react';
+import { LogOut, Users, Copy, MessageSquare } from 'lucide-react';
 import { toast } from 'sonner';
 import { TemplateLibrary } from '@/components/fb/TemplateLibrary';
 import { CategoryManager } from '@/components/settings/CategoryManager';
 import { StorageLocationManager } from '@/components/settings/StorageLocationManager';
 import { ThemeCustomizer } from '@/components/settings/ThemeCustomizer';
+import { ProfileEditor } from '@/components/settings/ProfileEditor';
 
 export default function Settings() {
-  const { profile, team, signOut } = useAuth();
+  const { team, signOut } = useAuth();
   const [showTemplates, setShowTemplates] = useState(false);
 
   const copyTeamId = () => {
@@ -25,17 +26,7 @@ export default function Settings() {
       <h1 className="text-2xl font-bold text-foreground pt-2">Settings</h1>
       
       {/* Profile */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium flex items-center gap-2">
-            <User className="w-4 h-4" />
-            Profile
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="font-medium">{profile?.full_name || 'No name set'}</p>
-        </CardContent>
-      </Card>
+      <ProfileEditor />
 
       {/* Team */}
       <Card>
