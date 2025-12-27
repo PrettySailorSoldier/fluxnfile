@@ -21,7 +21,8 @@ interface AuthContextType {
   team: Team | null;
   loading: boolean;
   signUp: (email: string, password: string, fullName?: string) => Promise<{ error: Error | null }>;
-  signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
+  signIn: (email: string, password: string, rememberMe?: boolean) => Promise<{ error: Error | null }>;
+  signInWithGoogle: () => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   createTeam: (teamName: string) => Promise<{ error: Error | null }>;
   joinTeam: (teamId: string) => Promise<{ error: Error | null }>;
@@ -138,10 +139,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: error as Error | null };
   };
 
-  const signIn = async (email: string, password: string) => {
+  const signIn = async (email: string, password: string, rememberMe: boolean = true) => {
+    // If not remembering, we still use localStorage but session will be shorter
+    // Supabase handles token refresh automatically
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
+    });
+
+    // If user doesn't want to be remembered, we'll clear session on browser close
+    if (!rememberMe && !error) {
+      // Store flag to clear on next load if browser was closed
+      sessionStorage.setItem('clear_session_on_close', 'true');
+    } else {
+      sessionStorage.removeItem('clear_session_on_close');
+    }
+
+    return { error: error as Error | null };
+  };
+
+  const signInWithGoogle = async () => {
+    const redirectUrl = `${window.location.origin}/`;
+    
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: redirectUrl,
+      },
     });
 
     return { error: error as Error | null };
@@ -222,6 +246,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         signUp,
         signIn,
+        signInWithGoogle,
         signOut,
         createTeam,
         joinTeam,
