@@ -10,6 +10,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { MapPin, Plus, Pencil, Trash2, X, Check } from 'lucide-react';
 import { toast } from 'sonner';
+import { z } from 'zod';
+import { sanitizeError } from '@/lib/errorHandler';
+
+const locationSchema = z.object({
+  name: z.string().min(1, 'Location name is required').max(100, 'Location name must be less than 100 characters').trim(),
+  description: z.string().max(500, 'Description must be less than 500 characters').optional(),
+});
 
 export function StorageLocationManager() {
   const { team } = useAuth();
@@ -23,43 +30,67 @@ export function StorageLocationManager() {
   const [editDescription, setEditDescription] = useState('');
 
   const handleAdd = async () => {
-    if (!newName.trim() || !team?.id) return;
+    if (!team?.id) return;
 
-    const { error } = await supabase
-      .from('storage_locations')
-      .insert({ 
-        name: newName.trim(), 
-        description: newDescription.trim() || null,
-        team_id: team.id 
+    try {
+      const validated = locationSchema.parse({ 
+        name: newName, 
+        description: newDescription.trim() || undefined 
       });
 
-    if (error) {
-      toast.error('Failed to add location');
-    } else {
-      toast.success('Location added');
-      setNewName('');
-      setNewDescription('');
-      queryClient.invalidateQueries({ queryKey: ['storage_locations'] });
+      const { error } = await supabase
+        .from('storage_locations')
+        .insert({ 
+          name: validated.name, 
+          description: validated.description || null,
+          team_id: team.id 
+        });
+
+      if (error) {
+        toast.error(sanitizeError(error));
+      } else {
+        toast.success('Location added');
+        setNewName('');
+        setNewDescription('');
+        queryClient.invalidateQueries({ queryKey: ['storage_locations'] });
+      }
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        toast.error(err.errors[0].message);
+      } else {
+        toast.error(sanitizeError(err));
+      }
     }
   };
 
   const handleUpdate = async (id: string) => {
-    if (!editName.trim()) return;
+    try {
+      const validated = locationSchema.parse({ 
+        name: editName, 
+        description: editDescription.trim() || undefined 
+      });
 
-    const { error } = await supabase
-      .from('storage_locations')
-      .update({ 
-        name: editName.trim(),
-        description: editDescription.trim() || null
-      })
-      .eq('id', id);
+      const { error } = await supabase
+        .from('storage_locations')
+        .update({ 
+          name: validated.name,
+          description: validated.description || null
+        })
+        .eq('id', id);
 
-    if (error) {
-      toast.error('Failed to update location');
-    } else {
-      toast.success('Location updated');
-      setEditingId(null);
-      queryClient.invalidateQueries({ queryKey: ['storage_locations'] });
+      if (error) {
+        toast.error(sanitizeError(error));
+      } else {
+        toast.success('Location updated');
+        setEditingId(null);
+        queryClient.invalidateQueries({ queryKey: ['storage_locations'] });
+      }
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        toast.error(err.errors[0].message);
+      } else {
+        toast.error(sanitizeError(err));
+      }
     }
   };
 
@@ -70,7 +101,7 @@ export function StorageLocationManager() {
       .eq('id', id);
 
     if (error) {
-      toast.error('Failed to delete location');
+      toast.error(sanitizeError(error));
     } else {
       toast.success('Location deleted');
       queryClient.invalidateQueries({ queryKey: ['storage_locations'] });

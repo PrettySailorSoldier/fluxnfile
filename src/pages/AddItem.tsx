@@ -13,6 +13,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { toast } from 'sonner';
 import { Camera, X, Loader2, Plus, ImagePlus } from 'lucide-react';
 import { z } from 'zod';
+import { sanitizeError } from '@/lib/errorHandler';
 
 const itemSchema = z.object({
   title: z.string().max(200, 'Title must be less than 200 characters').optional(),
@@ -77,7 +78,7 @@ export default function AddItem() {
       navigate('/inventory');
     },
     onError: (error) => {
-      toast.error(error.message);
+      toast.error(sanitizeError(error));
     },
   });
 
