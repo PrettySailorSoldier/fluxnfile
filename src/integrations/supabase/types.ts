@@ -222,7 +222,9 @@ export type Database = {
           created_at: string
           id: string
           is_default: boolean | null
+          latitude: number | null
           location_type: string | null
+          longitude: number | null
           name: string
           notes: string | null
           team_id: string
@@ -232,7 +234,9 @@ export type Database = {
           created_at?: string
           id?: string
           is_default?: boolean | null
+          latitude?: number | null
           location_type?: string | null
+          longitude?: number | null
           name: string
           notes?: string | null
           team_id: string
@@ -242,12 +246,115 @@ export type Database = {
           created_at?: string
           id?: string
           is_default?: boolean | null
+          latitude?: number | null
           location_type?: string | null
+          longitude?: number | null
           name?: string
           notes?: string | null
           team_id?: string
         }
         Relationships: []
+      }
+      meetups: {
+        Row: {
+          agreed_price: number | null
+          buyer_contact: string | null
+          buyer_name: string | null
+          completed_at: string | null
+          created_at: string
+          created_by: string | null
+          custom_latitude: number | null
+          custom_location: string | null
+          custom_longitude: number | null
+          id: string
+          item_id: string
+          meeting_started_at: string | null
+          meetup_location_id: string | null
+          notes: string | null
+          offer_id: string | null
+          partner_notified: boolean
+          safe_checkin_at: string | null
+          scheduled_at: string
+          status: string
+          team_id: string
+          updated_at: string
+        }
+        Insert: {
+          agreed_price?: number | null
+          buyer_contact?: string | null
+          buyer_name?: string | null
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          custom_latitude?: number | null
+          custom_location?: string | null
+          custom_longitude?: number | null
+          id?: string
+          item_id: string
+          meeting_started_at?: string | null
+          meetup_location_id?: string | null
+          notes?: string | null
+          offer_id?: string | null
+          partner_notified?: boolean
+          safe_checkin_at?: string | null
+          scheduled_at: string
+          status?: string
+          team_id: string
+          updated_at?: string
+        }
+        Update: {
+          agreed_price?: number | null
+          buyer_contact?: string | null
+          buyer_name?: string | null
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          custom_latitude?: number | null
+          custom_location?: string | null
+          custom_longitude?: number | null
+          id?: string
+          item_id?: string
+          meeting_started_at?: string | null
+          meetup_location_id?: string | null
+          notes?: string | null
+          offer_id?: string | null
+          partner_notified?: boolean
+          safe_checkin_at?: string | null
+          scheduled_at?: string
+          status?: string
+          team_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meetups_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meetups_meetup_location_id_fkey"
+            columns: ["meetup_location_id"]
+            isOneToOne: false
+            referencedRelation: "meetup_locations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meetups_offer_id_fkey"
+            columns: ["offer_id"]
+            isOneToOne: false
+            referencedRelation: "offers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meetups_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       message_templates: {
         Row: {
@@ -287,6 +394,69 @@ export type Database = {
           use_count?: number | null
         }
         Relationships: []
+      }
+      offers: {
+        Row: {
+          buyer_contact: string | null
+          buyer_name: string | null
+          conversation_thread: string | null
+          counter_amount: number | null
+          created_at: string
+          id: string
+          is_lowball: boolean
+          item_id: string
+          notes: string | null
+          offer_amount: number
+          status: string
+          team_id: string
+          updated_at: string
+        }
+        Insert: {
+          buyer_contact?: string | null
+          buyer_name?: string | null
+          conversation_thread?: string | null
+          counter_amount?: number | null
+          created_at?: string
+          id?: string
+          is_lowball?: boolean
+          item_id: string
+          notes?: string | null
+          offer_amount: number
+          status?: string
+          team_id: string
+          updated_at?: string
+        }
+        Update: {
+          buyer_contact?: string | null
+          buyer_name?: string | null
+          conversation_thread?: string | null
+          counter_amount?: number | null
+          created_at?: string
+          id?: string
+          is_lowball?: boolean
+          item_id?: string
+          notes?: string | null
+          offer_amount?: number
+          status?: string
+          team_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "offers_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "offers_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       platforms: {
         Row: {
@@ -360,6 +530,57 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "profiles_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      safety_checkins: {
+        Row: {
+          checkin_type: string
+          created_at: string
+          id: string
+          latitude: number | null
+          longitude: number | null
+          meetup_id: string
+          message: string | null
+          team_id: string
+          user_id: string
+        }
+        Insert: {
+          checkin_type: string
+          created_at?: string
+          id?: string
+          latitude?: number | null
+          longitude?: number | null
+          meetup_id: string
+          message?: string | null
+          team_id: string
+          user_id: string
+        }
+        Update: {
+          checkin_type?: string
+          created_at?: string
+          id?: string
+          latitude?: number | null
+          longitude?: number | null
+          meetup_id?: string
+          message?: string | null
+          team_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "safety_checkins_meetup_id_fkey"
+            columns: ["meetup_id"]
+            isOneToOne: false
+            referencedRelation: "meetups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "safety_checkins_team_id_fkey"
             columns: ["team_id"]
             isOneToOne: false
             referencedRelation: "teams"
