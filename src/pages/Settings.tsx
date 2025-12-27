@@ -5,6 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { LogOut, Users, User, Copy, MessageSquare } from 'lucide-react';
 import { toast } from 'sonner';
 import { TemplateLibrary } from '@/components/fb/TemplateLibrary';
+import { CategoryManager } from '@/components/settings/CategoryManager';
+import { StorageLocationManager } from '@/components/settings/StorageLocationManager';
+import { ThemeCustomizer } from '@/components/settings/ThemeCustomizer';
 
 export default function Settings() {
   const { profile, team, signOut } = useAuth();
@@ -57,6 +60,15 @@ export default function Settings() {
           </p>
         </CardContent>
       </Card>
+
+      {/* Categories */}
+      <CategoryManager />
+
+      {/* Storage Locations */}
+      <StorageLocationManager />
+
+      {/* Theme */}
+      <ThemeCustomizer />
 
       {/* Message Templates */}
       <Card>

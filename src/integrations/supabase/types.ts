@@ -399,6 +399,90 @@ export type Database = {
           },
         ]
       }
+      tasks: {
+        Row: {
+          assigned_to: string | null
+          completed_at: string | null
+          completed_by: string | null
+          created_at: string
+          created_by: string | null
+          deadline: string | null
+          id: string
+          item_id: string | null
+          notes: string | null
+          status: Database["public"]["Enums"]["task_status"]
+          task_type: Database["public"]["Enums"]["task_type"]
+          team_id: string
+          updated_at: string
+        }
+        Insert: {
+          assigned_to?: string | null
+          completed_at?: string | null
+          completed_by?: string | null
+          created_at?: string
+          created_by?: string | null
+          deadline?: string | null
+          id?: string
+          item_id?: string | null
+          notes?: string | null
+          status?: Database["public"]["Enums"]["task_status"]
+          task_type: Database["public"]["Enums"]["task_type"]
+          team_id: string
+          updated_at?: string
+        }
+        Update: {
+          assigned_to?: string | null
+          completed_at?: string | null
+          completed_by?: string | null
+          created_at?: string
+          created_by?: string | null
+          deadline?: string | null
+          id?: string
+          item_id?: string | null
+          notes?: string | null
+          status?: Database["public"]["Enums"]["task_status"]
+          task_type?: Database["public"]["Enums"]["task_type"]
+          team_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tasks_assigned_to_fkey"
+            columns: ["assigned_to"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_completed_by_fkey"
+            columns: ["completed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       teams: {
         Row: {
           created_at: string
@@ -423,6 +507,39 @@ export type Database = {
         }
         Relationships: []
       }
+      user_preferences: {
+        Row: {
+          accent_color: string | null
+          background_image_url: string | null
+          created_at: string
+          id: string
+          primary_color: string | null
+          text_color: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          accent_color?: string | null
+          background_image_url?: string | null
+          created_at?: string
+          id?: string
+          primary_color?: string | null
+          text_color?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          accent_color?: string | null
+          background_image_url?: string | null
+          created_at?: string
+          id?: string
+          primary_color?: string | null
+          text_color?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -440,6 +557,16 @@ export type Database = {
         | "listed"
         | "sold"
         | "shipped"
+      task_status: "pending" | "in_progress" | "completed"
+      task_type:
+        | "needs_photos"
+        | "needs_cleaning"
+        | "needs_pricing"
+        | "ready_to_list"
+        | "needs_packaging"
+        | "ready_to_ship"
+        | "meetup_scheduled"
+        | "needs_discussion"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -575,6 +702,17 @@ export const Constants = {
         "listed",
         "sold",
         "shipped",
+      ],
+      task_status: ["pending", "in_progress", "completed"],
+      task_type: [
+        "needs_photos",
+        "needs_cleaning",
+        "needs_pricing",
+        "ready_to_list",
+        "needs_packaging",
+        "ready_to_ship",
+        "meetup_scheduled",
+        "needs_discussion",
       ],
     },
   },
