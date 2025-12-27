@@ -70,6 +70,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
+    let initialLoadDone = false;
+
     // Set up auth state listener FIRST
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
@@ -79,13 +81,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Defer profile fetch with setTimeout to avoid deadlock
         if (session?.user) {
           setTimeout(() => {
-            fetchProfile(session.user.id);
+            fetchProfile(session.user.id).finally(() => {
+              if (!initialLoadDone) {
+                initialLoadDone = true;
+                setLoading(false);
+              }
+            });
           }, 0);
         } else {
           setProfile(null);
           setTeam(null);
+          if (!initialLoadDone) {
+            initialLoadDone = true;
+            setLoading(false);
+          }
         }
-        setLoading(false);
       }
     );
 
@@ -94,9 +104,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        fetchProfile(session.user.id);
+        fetchProfile(session.user.id).finally(() => {
+          if (!initialLoadDone) {
+            initialLoadDone = true;
+            setLoading(false);
+          }
+        });
+      } else {
+        if (!initialLoadDone) {
+          initialLoadDone = true;
+          setLoading(false);
+        }
       }
-      setLoading(false);
     });
 
     return () => subscription.unsubscribe();
