@@ -26,6 +26,7 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   createTeam: (teamName: string) => Promise<{ error: Error | null }>;
   joinTeam: (teamId: string) => Promise<{ error: Error | null }>;
+  leaveTeam: () => Promise<{ error: Error | null }>;
   refreshProfile: () => Promise<void>;
 }
 
@@ -257,6 +258,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: null };
   };
 
+  const leaveTeam = async () => {
+    if (!user) return { error: new Error('Not authenticated') };
+
+    // Update profile to remove team_id
+    const { data: updatedProfile, error: profileError } = await supabase
+      .from('profiles')
+      .update({ team_id: null })
+      .eq('id', user.id)
+      .select()
+      .single();
+
+    if (profileError) return { error: profileError as Error };
+
+    // Update state immediately
+    setProfile(updatedProfile);
+    setTeam(null);
+
+    return { error: null };
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -271,6 +292,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signOut,
         createTeam,
         joinTeam,
+        leaveTeam,
         refreshProfile,
       }}
     >
