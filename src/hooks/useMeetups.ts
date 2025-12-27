@@ -97,7 +97,7 @@ export function useMeetups(itemId?: string) {
       const { data, error } = await query;
 
       if (error) throw error;
-      return data as Meetup[];
+      return (data || []) as unknown as Meetup[];
     },
     enabled: !!team?.id,
   });
@@ -125,7 +125,7 @@ export function useUpcomingMeetups() {
         .limit(10);
 
       if (error) throw error;
-      return data as Meetup[];
+      return (data || []) as unknown as Meetup[];
     },
     enabled: !!team?.id,
   });
@@ -165,7 +165,7 @@ export function useCreateMeetup() {
         .single();
 
       if (error) throw error;
-      return data;
+      return data as unknown as Meetup;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['meetups'] });
@@ -244,7 +244,7 @@ export function useSafetyCheckins(meetupId: string) {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      return data as SafetyCheckin[];
+      return (data || []) as unknown as SafetyCheckin[];
     },
     enabled: !!team?.id && !!meetupId,
   });
