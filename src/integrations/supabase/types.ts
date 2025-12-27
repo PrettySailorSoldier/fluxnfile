@@ -222,13 +222,9 @@ export type Database = {
           created_at: string
           id: string
           is_default: boolean | null
-          is_suggested: boolean | null
-          latitude: number | null
-          longitude: number | null
           location_type: string | null
           name: string
           notes: string | null
-          safety_rating: number | null
           team_id: string
         }
         Insert: {
@@ -236,13 +232,9 @@ export type Database = {
           created_at?: string
           id?: string
           is_default?: boolean | null
-          is_suggested?: boolean | null
-          latitude?: number | null
-          longitude?: number | null
           location_type?: string | null
           name: string
           notes?: string | null
-          safety_rating?: number | null
           team_id: string
         }
         Update: {
@@ -250,245 +242,12 @@ export type Database = {
           created_at?: string
           id?: string
           is_default?: boolean | null
-          is_suggested?: boolean | null
-          latitude?: number | null
-          longitude?: number | null
           location_type?: string | null
           name?: string
           notes?: string | null
-          safety_rating?: number | null
           team_id?: string
         }
         Relationships: []
-      }
-      meetups: {
-        Row: {
-          id: string
-          item_id: string
-          team_id: string
-          offer_id: string | null
-          meetup_location_id: string | null
-          custom_location: string | null
-          custom_latitude: number | null
-          custom_longitude: number | null
-          scheduled_at: string
-          buyer_name: string | null
-          buyer_contact: string | null
-          agreed_price: number | null
-          status: "scheduled" | "in_progress" | "completed" | "no_show" | "cancelled" | "declined"
-          partner_notified: boolean | null
-          meeting_started_at: string | null
-          safe_checkin_at: string | null
-          completed_at: string | null
-          notes: string | null
-          created_by: string | null
-          created_at: string
-          updated_at: string
-        }
-        Insert: {
-          id?: string
-          item_id: string
-          team_id: string
-          offer_id?: string | null
-          meetup_location_id?: string | null
-          custom_location?: string | null
-          custom_latitude?: number | null
-          custom_longitude?: number | null
-          scheduled_at: string
-          buyer_name?: string | null
-          buyer_contact?: string | null
-          agreed_price?: number | null
-          status?: "scheduled" | "in_progress" | "completed" | "no_show" | "cancelled" | "declined"
-          partner_notified?: boolean | null
-          meeting_started_at?: string | null
-          safe_checkin_at?: string | null
-          completed_at?: string | null
-          notes?: string | null
-          created_by?: string | null
-          created_at?: string
-          updated_at?: string
-        }
-        Update: {
-          id?: string
-          item_id?: string
-          team_id?: string
-          offer_id?: string | null
-          meetup_location_id?: string | null
-          custom_location?: string | null
-          custom_latitude?: number | null
-          custom_longitude?: number | null
-          scheduled_at?: string
-          buyer_name?: string | null
-          buyer_contact?: string | null
-          agreed_price?: number | null
-          status?: "scheduled" | "in_progress" | "completed" | "no_show" | "cancelled" | "declined"
-          partner_notified?: boolean | null
-          meeting_started_at?: string | null
-          safe_checkin_at?: string | null
-          completed_at?: string | null
-          notes?: string | null
-          created_by?: string | null
-          created_at?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "meetups_item_id_fkey"
-            columns: ["item_id"]
-            isOneToOne: false
-            referencedRelation: "items"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "meetups_team_id_fkey"
-            columns: ["team_id"]
-            isOneToOne: false
-            referencedRelation: "teams"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "meetups_offer_id_fkey"
-            columns: ["offer_id"]
-            isOneToOne: false
-            referencedRelation: "offers"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "meetups_meetup_location_id_fkey"
-            columns: ["meetup_location_id"]
-            isOneToOne: false
-            referencedRelation: "meetup_locations"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "meetups_created_by_fkey"
-            columns: ["created_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          }
-        ]
-      }
-      offers: {
-        Row: {
-          id: string
-          item_id: string
-          team_id: string
-          buyer_name: string | null
-          buyer_contact: string | null
-          offer_amount: number
-          counter_amount: number | null
-          status: "pending" | "accepted" | "declined" | "countered" | "expired"
-          is_lowball: boolean | null
-          notes: string | null
-          conversation_thread: string | null
-          created_at: string
-          updated_at: string
-        }
-        Insert: {
-          id?: string
-          item_id: string
-          team_id: string
-          buyer_name?: string | null
-          buyer_contact?: string | null
-          offer_amount: number
-          counter_amount?: number | null
-          status?: "pending" | "accepted" | "declined" | "countered" | "expired"
-          is_lowball?: boolean | null
-          notes?: string | null
-          conversation_thread?: string | null
-          created_at?: string
-          updated_at?: string
-        }
-        Update: {
-          id?: string
-          item_id?: string
-          team_id?: string
-          buyer_name?: string | null
-          buyer_contact?: string | null
-          offer_amount?: number
-          counter_amount?: number | null
-          status?: "pending" | "accepted" | "declined" | "countered" | "expired"
-          is_lowball?: boolean | null
-          notes?: string | null
-          conversation_thread?: string | null
-          created_at?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "offers_item_id_fkey"
-            columns: ["item_id"]
-            isOneToOne: false
-            referencedRelation: "items"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "offers_team_id_fkey"
-            columns: ["team_id"]
-            isOneToOne: false
-            referencedRelation: "teams"
-            referencedColumns: ["id"]
-          }
-        ]
-      }
-      safety_checkins: {
-        Row: {
-          id: string
-          meetup_id: string
-          team_id: string
-          user_id: string
-          checkin_type: "meeting_now" | "safe" | "help_needed"
-          latitude: number | null
-          longitude: number | null
-          message: string | null
-          created_at: string
-        }
-        Insert: {
-          id?: string
-          meetup_id: string
-          team_id: string
-          user_id: string
-          checkin_type: "meeting_now" | "safe" | "help_needed"
-          latitude?: number | null
-          longitude?: number | null
-          message?: string | null
-          created_at?: string
-        }
-        Update: {
-          id?: string
-          meetup_id?: string
-          team_id?: string
-          user_id?: string
-          checkin_type?: "meeting_now" | "safe" | "help_needed"
-          latitude?: number | null
-          longitude?: number | null
-          message?: string | null
-          created_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "safety_checkins_meetup_id_fkey"
-            columns: ["meetup_id"]
-            isOneToOne: false
-            referencedRelation: "meetups"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "safety_checkins_team_id_fkey"
-            columns: ["team_id"]
-            isOneToOne: false
-            referencedRelation: "teams"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "safety_checkins_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          }
-        ]
       }
       message_templates: {
         Row: {

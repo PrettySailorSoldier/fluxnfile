@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { toast } from 'sonner';
 import { ArrowLeft, Save, Trash2, Package, ChevronRight, Loader2, Edit2, Facebook, MessageSquare, Calendar, DollarSign } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { sanitizeError } from '@/lib/errorHandler';
 import { QuickListDialog } from '@/components/fb/QuickListDialog';
 import { FBTrackingSection } from '@/components/fb/FBTrackingSection';
 import { TemplateLibrary } from '@/components/fb/TemplateLibrary';
@@ -120,7 +121,7 @@ export default function ItemDetail() {
       setIsEditing(false);
     },
     onError: (error) => {
-      toast.error(error.message);
+      toast.error(sanitizeError(error));
     },
   });
 
@@ -139,7 +140,7 @@ export default function ItemDetail() {
       navigate('/inventory');
     },
     onError: (error) => {
-      toast.error(error.message);
+      toast.error(sanitizeError(error));
     },
   });
 
