@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { 
   Check, 
   Clock, 
@@ -32,6 +33,16 @@ const iconMap: Record<string, React.ElementType> = {
   MapPin,
   MessageSquare,
 };
+
+function getInitials(name: string | null) {
+  if (!name) return '?';
+  return name
+    .split(' ')
+    .map((n) => n[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2);
+}
 
 function TaskCard({ task, onComplete, onDelete }: { 
   task: Task; 
@@ -81,7 +92,15 @@ function TaskCard({ task, onComplete, onDelete }: {
                 <span>Due: {format(new Date(task.deadline), 'MMM d, h:mm a')}</span>
               )}
               {task.assignee && (
-                <span>Assigned to: {task.assignee.full_name || 'Team member'}</span>
+                <div className="flex items-center gap-1.5">
+                  <Avatar className="w-5 h-5">
+                    <AvatarImage src={task.assignee.avatar_url || undefined} alt={task.assignee.full_name || 'User'} />
+                    <AvatarFallback className="text-[10px] bg-primary text-primary-foreground">
+                      {getInitials(task.assignee.full_name)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span>{task.assignee.full_name || 'Team member'}</span>
+                </div>
               )}
             </div>
           </div>
