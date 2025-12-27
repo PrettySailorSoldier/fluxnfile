@@ -1,13 +1,16 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { Copy, ExternalLink, Check, Facebook } from 'lucide-react';
-import { generateFBListingText, fbConditionMap } from '@/hooks/useMessageTemplates';
+import { Copy, ExternalLink, Check, Facebook, Sparkles, RefreshCw, FileText } from 'lucide-react';
+import { generateFBListingText, generateTitleVariations, getDescriptionTemplates, fbConditionMap } from '@/hooks/useMessageTemplates';
+import { cn } from '@/lib/utils';
 
 interface QuickListDialogProps {
   open: boolean;
@@ -22,19 +25,40 @@ interface QuickListDialogProps {
     description?: string | null;
     refurbish_notes?: string | null;
     photos?: string[];
+    default_pickup_location?: string | null;
   };
   onListingComplete: (listingUrl: string) => void;
 }
 
 export function QuickListDialog({ open, onOpenChange, item, onListingComplete }: QuickListDialogProps) {
   const generated = generateFBListingText(item);
-  
+  const titleVariations = generateTitleVariations(item);
+  const descriptionTemplates = getDescriptionTemplates(item);
+
   const [title, setTitle] = useState(generated.title);
   const [description, setDescription] = useState(generated.description);
   const [price, setPrice] = useState(generated.price.toString());
   const [listingUrl, setListingUrl] = useState('');
   const [step, setStep] = useState<'edit' | 'confirm'>('edit');
   const [copied, setCopied] = useState<'title' | 'description' | 'all' | null>(null);
+  const [showTitleOptions, setShowTitleOptions] = useState(false);
+  const [showDescTemplates, setShowDescTemplates] = useState(false);
+  const [selectedTitleIndex, setSelectedTitleIndex] = useState(0);
+
+  // Reset state when dialog opens
+  useEffect(() => {
+    if (open) {
+      const newGenerated = generateFBListingText(item);
+      setTitle(newGenerated.title);
+      setDescription(newGenerated.description);
+      setPrice(newGenerated.price.toString());
+      setStep('edit');
+      setListingUrl('');
+      setShowTitleOptions(false);
+      setShowDescTemplates(false);
+      setSelectedTitleIndex(0);
+    }
+  }, [open, item]);
 
   const fbCondition = fbConditionMap[item.condition] || 'Used - Good';
 
@@ -113,13 +137,23 @@ export function QuickListDialog({ open, onOpenChange, item, onListingComplete }:
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="fb-title">Title</Label>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => copyToClipboard(title, 'title')}
-                >
-                  {copied === 'title' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                </Button>
+                <div className="flex gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowTitleOptions(!showTitleOptions)}
+                    title="Title suggestions"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => copyToClipboard(title, 'title')}
+                  >
+                    {copied === 'title' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  </Button>
+                </div>
               </div>
               <Input
                 id="fb-title"
@@ -128,6 +162,31 @@ export function QuickListDialog({ open, onOpenChange, item, onListingComplete }:
                 maxLength={100}
               />
               <p className="text-xs text-muted-foreground">{title.length}/100</p>
+
+              {/* Title Variations */}
+              {showTitleOptions && (
+                <div className="space-y-1 p-2 bg-muted/50 rounded-lg">
+                  <p className="text-xs font-medium text-muted-foreground mb-2">
+                    Click to use a title variation:
+                  </p>
+                  {titleVariations.map((variation, index) => (
+                    <button
+                      key={index}
+                      onClick={() => {
+                        setTitle(variation);
+                        setSelectedTitleIndex(index);
+                        setShowTitleOptions(false);
+                      }}
+                      className={cn(
+                        'w-full text-left p-2 rounded text-sm hover:bg-muted transition-colors',
+                        selectedTitleIndex === index && 'bg-primary/10 border border-primary/30'
+                      )}
+                    >
+                      {variation}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Price */}
@@ -155,13 +214,23 @@ export function QuickListDialog({ open, onOpenChange, item, onListingComplete }:
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="fb-desc">Description</Label>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => copyToClipboard(description, 'description')}
-                >
-                  {copied === 'description' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                </Button>
+                <div className="flex gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowDescTemplates(!showDescTemplates)}
+                    title="Description templates"
+                  >
+                    <FileText className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => copyToClipboard(description, 'description')}
+                  >
+                    {copied === 'description' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  </Button>
+                </div>
               </div>
               <Textarea
                 id="fb-desc"
@@ -169,6 +238,44 @@ export function QuickListDialog({ open, onOpenChange, item, onListingComplete }:
                 onChange={(e) => setDescription(e.target.value)}
                 rows={5}
               />
+
+              {/* Description Templates */}
+              {showDescTemplates && (
+                <div className="space-y-2 p-2 bg-muted/50 rounded-lg">
+                  <p className="text-xs font-medium text-muted-foreground mb-2">
+                    Choose a description style:
+                  </p>
+                  <div className="flex gap-2">
+                    {descriptionTemplates.map((template, index) => (
+                      <Button
+                        key={index}
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setDescription(template.template);
+                          setShowDescTemplates(false);
+                        }}
+                        className="flex-1"
+                      >
+                        {template.name}
+                      </Button>
+                    ))}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full text-muted-foreground"
+                    onClick={() => {
+                      const newGenerated = generateFBListingText(item);
+                      setDescription(newGenerated.description);
+                      setShowDescTemplates(false);
+                    }}
+                  >
+                    <RefreshCw className="w-3 h-3 mr-1" />
+                    Reset to default
+                  </Button>
+                </div>
+              )}
             </div>
 
             {/* Actions */}

@@ -8,7 +8,7 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children, requireTeam = true }: ProtectedRouteProps) {
-  const { user, team, loading } = useAuth();
+  const { user, team, profile, loading } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -23,7 +23,8 @@ export function ProtectedRoute({ children, requireTeam = true }: ProtectedRouteP
     return <Navigate to="/auth" state={{ from: location }} replace />;
   }
 
-  if (requireTeam && !team) {
+  // Check both team state and profile.team_id to avoid false redirects
+  if (requireTeam && !team && !profile?.team_id) {
     return <Navigate to="/team-setup" replace />;
   }
 

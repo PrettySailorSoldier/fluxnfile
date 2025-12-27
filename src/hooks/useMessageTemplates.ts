@@ -131,6 +131,17 @@ export function useIncrementTemplateUse() {
   });
 }
 
+// SEO keywords that help FB Marketplace visibility
+const fbKeywords: Record<string, string[]> = {
+  Electronics: ['works great', 'tested', 'fully functional'],
+  Furniture: ['solid', 'sturdy', 'must see'],
+  Clothing: ['size', 'fits', 'worn once'],
+  'Home & Garden': ['great condition', 'works perfectly'],
+  Sports: ['ready to use', 'great for'],
+  Toys: ['complete', 'all pieces included'],
+  default: ['great deal', 'priced to sell'],
+};
+
 // Generate FB-optimized listing text from item
 export function generateFBListingText(item: {
   title?: string | null;
@@ -140,7 +151,8 @@ export function generateFBListingText(item: {
   actual_price?: number | null;
   description?: string | null;
   refurbish_notes?: string | null;
-}): { title: string; description: string; price: number } {
+  default_pickup_location?: string | null;
+}): { title: string; description: string; price: number; seoTitle: string } {
   // Generate SEO-optimized title
   const conditionMap: Record<string, string> = {
     new: 'Brand New',
@@ -150,24 +162,158 @@ export function generateFBListingText(item: {
     for_parts: 'For Parts/Repair',
   };
 
+  const shortConditionMap: Record<string, string> = {
+    new: 'NEW',
+    like_new: 'Like New',
+    good: 'Great Cond',
+    fair: 'Good Cond',
+    for_parts: 'Parts/Repair',
+  };
+
   const conditionText = conditionMap[item.condition] || '';
+  const shortCondition = shortConditionMap[item.condition] || '';
   const categoryText = item.category?.name || '';
   const baseTitle = item.title || categoryText;
-  
-  const title = `${baseTitle} - ${conditionText}`.slice(0, 100);
-  
-  // Generate description
-  const descParts = [];
-  if (item.description) descParts.push(item.description);
-  if (conditionText) descParts.push(`Condition: ${conditionText}`);
-  if (item.refurbish_notes) descParts.push(`Notes: ${item.refurbish_notes}`);
-  descParts.push('\n📍 Local pickup available');
-  descParts.push('💬 Message me with any questions!');
-  
-  const description = descParts.join('\n\n');
   const price = item.actual_price || item.target_price || 0;
 
-  return { title, description, price };
+  // Generate multiple title options
+  const title = `${baseTitle} - ${conditionText}`.slice(0, 100);
+
+  // SEO-optimized title with price and urgency
+  const seoTitle = `${baseTitle} | ${shortCondition} | $${price}`.slice(0, 100);
+
+  // Generate enhanced description with emojis and structure
+  const descParts: string[] = [];
+
+  // Header with condition
+  if (conditionText) {
+    descParts.push(`✨ ${conditionText} ✨`);
+  }
+
+  // Main description
+  if (item.description) {
+    descParts.push(item.description);
+  }
+
+  // Category-specific keywords
+  const keywords = fbKeywords[categoryText] || fbKeywords.default;
+  if (keywords.length > 0 && !item.description?.toLowerCase().includes(keywords[0])) {
+    descParts.push(`${keywords[0].charAt(0).toUpperCase() + keywords[0].slice(1)}!`);
+  }
+
+  // Refurbish notes as selling points
+  if (item.refurbish_notes) {
+    descParts.push(`📝 ${item.refurbish_notes}`);
+  }
+
+  // Pricing info
+  descParts.push(`💰 Asking $${price} - Price is firm/negotiable`);
+
+  // Pickup info
+  if (item.default_pickup_location) {
+    descParts.push(`📍 Pickup: ${item.default_pickup_location}`);
+  } else {
+    descParts.push('📍 Local pickup available');
+  }
+
+  // Call to action
+  descParts.push('');
+  descParts.push('💬 Message me with any questions!');
+  descParts.push('⚡ First come, first served');
+
+  const description = descParts.join('\n\n');
+
+  return { title, description, price, seoTitle };
+}
+
+// Generate title variations for A/B testing
+export function generateTitleVariations(item: {
+  title?: string | null;
+  category?: { name: string } | null;
+  condition: string;
+  target_price?: number | null;
+  actual_price?: number | null;
+}): string[] {
+  const conditionMap: Record<string, string[]> = {
+    new: ['Brand New', 'NEW', 'Never Used'],
+    like_new: ['Like New', 'Excellent', 'Mint'],
+    good: ['Great Condition', 'Good Cond', 'Works Great'],
+    fair: ['Good Condition', 'Works Well', 'Functional'],
+    for_parts: ['For Parts', 'Parts/Repair', 'As-Is'],
+  };
+
+  const conditions = conditionMap[item.condition] || [''];
+  const baseTitle = item.title || item.category?.name || 'Item';
+  const price = item.actual_price || item.target_price || 0;
+
+  const variations: string[] = [];
+
+  // Standard: Title - Condition
+  variations.push(`${baseTitle} - ${conditions[0]}`);
+
+  // With price: Title | Condition | $Price
+  variations.push(`${baseTitle} | ${conditions[1] || conditions[0]} | $${price}`);
+
+  // Urgent style: Title - Condition - Must Go!
+  variations.push(`${baseTitle} - ${conditions[0]} - Must See!`);
+
+  // Simple: Condition Title
+  variations.push(`${conditions[0]} ${baseTitle}`);
+
+  return variations.map(v => v.slice(0, 100));
+}
+
+// Generate description templates
+export function getDescriptionTemplates(item: {
+  title?: string | null;
+  category?: { name: string } | null;
+  condition: string;
+  target_price?: number | null;
+  actual_price?: number | null;
+  description?: string | null;
+  default_pickup_location?: string | null;
+}): { name: string; template: string }[] {
+  const price = item.actual_price || item.target_price || 0;
+  const title = item.title || item.category?.name || 'Item';
+  const location = item.default_pickup_location || 'Local area';
+
+  return [
+    {
+      name: 'Simple',
+      template: `${title} for sale.
+
+${item.description || 'Great item in good condition.'}
+
+$${price} - Message for details.
+Pickup: ${location}`,
+    },
+    {
+      name: 'Detailed',
+      template: `${title}
+
+✨ Condition: ${item.condition.replace('_', ' ')}
+
+${item.description || 'Well maintained and ready to use.'}
+
+💰 Price: $${price}
+📍 Pickup: ${location}
+💬 Message me with questions!
+
+⚡ Serious buyers only, please.`,
+    },
+    {
+      name: 'Urgent',
+      template: `🔥 ${title} - MUST GO! 🔥
+
+${item.description || 'Great condition!'}
+
+💰 Only $${price}!
+📍 ${location}
+
+First come first served!
+Message NOW before it's gone! 💨`,
+    },
+  ];
 }
 
 // Map condition to FB Marketplace options
