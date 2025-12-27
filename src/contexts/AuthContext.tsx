@@ -140,7 +140,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Create the team
     const { data: teamData, error: teamError } = await supabase
       .from('teams')
-      .insert({ name: teamName })
+      .insert({ name: teamName, created_by: user.id })
       .select()
       .single();
 
