@@ -547,6 +547,13 @@ export type Database = {
     Functions: {
       get_user_team_id: { Args: never; Returns: string }
       is_team_member: { Args: { team_uuid: string }; Returns: boolean }
+      verify_team_exists: {
+        Args: { team_uuid: string }
+        Returns: {
+          id: string
+          name: string
+        }[]
+      }
     }
     Enums: {
       item_condition: "new" | "like_new" | "good" | "fair" | "for_parts"

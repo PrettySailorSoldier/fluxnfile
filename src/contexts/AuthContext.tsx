@@ -230,16 +230,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const joinTeam = async (teamId: string) => {
     if (!user) return { error: new Error('Not authenticated') };
 
-    // Get the team data first to verify it exists
-    const { data: teamData, error: teamError } = await supabase
-      .from('teams')
-      .select()
-      .eq('id', teamId)
-      .single();
+    // Use security definer function to verify team exists (bypasses RLS)
+    const { data: teamResult, error: verifyError } = await supabase
+      .rpc('verify_team_exists', { team_uuid: teamId });
 
-    if (teamError || !teamData) {
+    if (verifyError || !teamResult || teamResult.length === 0) {
       return { error: new Error('Team not found') };
     }
+
+    const teamData = teamResult[0];
 
     // Update profile with team_id
     const { data: updatedProfile, error: profileError } = await supabase
@@ -253,7 +252,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // Update state immediately
     setProfile(updatedProfile);
-    setTeam(teamData);
+    setTeam({ id: teamData.id, name: teamData.name });
 
     return { error: null };
   };
