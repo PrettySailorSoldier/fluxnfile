@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useTheme } from '@/contexts/ThemeContext';
+import { useTheme, BackgroundSettings } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -8,9 +8,10 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Palette, Upload, X, RotateCcw, Sun, Moon, Monitor, Check, Undo2 } from 'lucide-react';
+import { Palette, Upload, X, RotateCcw, Sun, Moon, Monitor, Check, Undo2, Move } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { BackgroundImageEditor } from './BackgroundImageEditor';
 
 const presetThemes = [
   {
@@ -60,12 +61,15 @@ export function ThemeCustomizer() {
     accentColor,
     textColor,
     backgroundImageUrl,
+    backgroundSettings,
     updateColors,
+    updateBackgroundSettings,
     resetTheme,
   } = useTheme();
 
   const [open, setOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [bgEditorOpen, setBgEditorOpen] = useState(false);
 
   const [localPrimary, setLocalPrimary] = useState(primaryColor);
   const [localAccent, setLocalAccent] = useState(accentColor);
@@ -348,22 +352,35 @@ export function ThemeCustomizer() {
 
               {/* Background Tab */}
               <TabsContent value="background" className="space-y-4">
-                <div className="space-y-2">
+                <div className="space-y-3">
                   <Label>Background Image</Label>
                   {localBgImage ? (
-                    <div className="relative">
-                      <img
-                        src={localBgImage}
-                        alt="Background preview"
-                        className="w-full h-40 object-cover rounded-lg border"
-                      />
-                      <Button
-                        size="icon"
-                        variant="destructive"
-                        className="absolute top-2 right-2"
-                        onClick={removeBackground}
+                    <div className="space-y-3">
+                      <div
+                        className="relative w-full h-40 rounded-lg border overflow-hidden"
+                        style={{
+                          backgroundImage: `url(${localBgImage})`,
+                          backgroundSize: `${backgroundSettings.zoom}%`,
+                          backgroundPosition: `${backgroundSettings.positionX}% ${backgroundSettings.positionY}%`,
+                          backgroundRepeat: 'no-repeat',
+                        }}
                       >
-                        <X className="w-4 h-4" />
+                        <Button
+                          size="icon"
+                          variant="destructive"
+                          className="absolute top-2 right-2"
+                          onClick={removeBackground}
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                      <Button
+                        variant="outline"
+                        className="w-full"
+                        onClick={() => setBgEditorOpen(true)}
+                      >
+                        <Move className="w-4 h-4 mr-2" />
+                        Adjust Position & Zoom
                       </Button>
                     </div>
                   ) : (
@@ -456,6 +473,24 @@ export function ThemeCustomizer() {
           </DialogContent>
         </Dialog>
       </CardContent>
+
+      {/* Background Image Editor Dialog */}
+      {localBgImage && (
+        <BackgroundImageEditor
+          imageUrl={localBgImage}
+          open={bgEditorOpen}
+          onOpenChange={setBgEditorOpen}
+          initialSettings={backgroundSettings}
+          onSave={(settings) => {
+            updateBackgroundSettings({
+              zoom: settings.zoom,
+              positionX: settings.positionX,
+              positionY: settings.positionY,
+            });
+            toast.success('Background position updated');
+          }}
+        />
+      )}
     </Card>
   );
 }

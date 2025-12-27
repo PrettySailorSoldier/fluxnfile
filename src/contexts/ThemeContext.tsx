@@ -4,6 +4,12 @@ import { useAuth } from '@/contexts/AuthContext';
 
 type ThemeMode = 'light' | 'dark' | 'system';
 
+export interface BackgroundSettings {
+  zoom: number;
+  positionX: number;
+  positionY: number;
+}
+
 interface ThemeContextType {
   mode: ThemeMode;
   setMode: (mode: ThemeMode) => void;
@@ -12,9 +18,11 @@ interface ThemeContextType {
   accentColor: string;
   textColor: string;
   backgroundImageUrl: string | null;
+  backgroundSettings: BackgroundSettings;
   cardColor: string;
   mutedColor: string;
   updateColors: (colors: Partial<CustomColors>) => Promise<void>;
+  updateBackgroundSettings: (settings: BackgroundSettings) => void;
   resetTheme: () => Promise<void>;
 }
 
@@ -26,6 +34,12 @@ interface CustomColors {
   cardColor: string;
   mutedColor: string;
 }
+
+const defaultBackgroundSettings: BackgroundSettings = {
+  zoom: 100,
+  positionX: 50,
+  positionY: 50,
+};
 
 const defaultColors = {
   primaryColor: '#7FE8D8',
@@ -70,6 +84,34 @@ function hexToHsl(hex: string): string {
   return `${Math.round(h * 360)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%`;
 }
 
+// Calculate relative luminance for accessibility
+function getLuminance(hex: string): number {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (!result) return 0.5;
+
+  const rgb = [
+    parseInt(result[1], 16) / 255,
+    parseInt(result[2], 16) / 255,
+    parseInt(result[3], 16) / 255,
+  ].map((c) => {
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+
+  return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+}
+
+// Determine if text should be light or dark based on background color
+function getContrastingTextColor(bgColor: string): 'light' | 'dark' {
+  const luminance = getLuminance(bgColor);
+  return luminance > 0.179 ? 'dark' : 'light';
+}
+
+// Get accessible foreground HSL based on primary color
+function getAccessibleForeground(primaryColor: string): string {
+  const contrast = getContrastingTextColor(primaryColor);
+  return contrast === 'dark' ? '0 0% 9%' : '0 0% 98%';
+}
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const { data: preferences, isLoading } = useUserPreferences();
@@ -86,6 +128,19 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [colors, setColors] = useState<CustomColors>({
     ...defaultColors,
     backgroundImageUrl: null,
+  });
+  const [backgroundSettings, setBackgroundSettings] = useState<BackgroundSettings>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('background-settings');
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch {
+          return defaultBackgroundSettings;
+        }
+      }
+    }
+    return defaultBackgroundSettings;
   });
 
   // Handle system preference changes
@@ -147,18 +202,22 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       root.style.setProperty('--primary', hexToHsl(colors.primaryColor));
       root.style.setProperty('--ring', hexToHsl(colors.primaryColor));
       root.style.setProperty('--nav-active', hexToHsl(colors.primaryColor));
+      // Auto-set accessible foreground color for primary buttons
+      root.style.setProperty('--primary-foreground', getAccessibleForeground(colors.primaryColor));
     }
 
     // Apply accent color - works in both light and dark mode
     if (colors.accentColor) {
       root.style.setProperty('--accent', hexToHsl(colors.accentColor));
+      // Auto-set accessible foreground color for accent elements
+      root.style.setProperty('--accent-foreground', getAccessibleForeground(colors.accentColor));
     }
 
-    // Apply background image - works in both light and dark mode
+    // Apply background image with custom positioning - works in both light and dark mode
     if (colors.backgroundImageUrl) {
       document.body.style.backgroundImage = `url(${colors.backgroundImageUrl})`;
-      document.body.style.backgroundSize = 'cover';
-      document.body.style.backgroundPosition = 'center';
+      document.body.style.backgroundSize = `${backgroundSettings.zoom}%`;
+      document.body.style.backgroundPosition = `${backgroundSettings.positionX}% ${backgroundSettings.positionY}%`;
       document.body.style.backgroundAttachment = 'fixed';
       document.body.style.backgroundRepeat = 'no-repeat';
     } else {
@@ -172,12 +231,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return () => {
       // Cleanup
       root.style.removeProperty('--primary');
+      root.style.removeProperty('--primary-foreground');
       root.style.removeProperty('--accent');
+      root.style.removeProperty('--accent-foreground');
       root.style.removeProperty('--ring');
       root.style.removeProperty('--nav-active');
       document.body.style.backgroundImage = '';
     };
-  }, [colors]);
+  }, [colors, backgroundSettings]);
 
   const setMode = (newMode: ThemeMode) => {
     setModeState(newMode);
@@ -197,8 +258,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const updateBackgroundSettings = (settings: BackgroundSettings) => {
+    setBackgroundSettings(settings);
+    localStorage.setItem('background-settings', JSON.stringify(settings));
+  };
+
   const resetTheme = async () => {
     setColors({ ...defaultColors, backgroundImageUrl: null });
+    setBackgroundSettings(defaultBackgroundSettings);
+    localStorage.removeItem('background-settings');
 
     if (user?.id) {
       await updatePreferences.mutateAsync({
@@ -220,9 +288,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         accentColor: colors.accentColor,
         textColor: colors.textColor,
         backgroundImageUrl: colors.backgroundImageUrl,
+        backgroundSettings,
         cardColor: colors.cardColor,
         mutedColor: colors.mutedColor,
         updateColors,
+        updateBackgroundSettings,
         resetTheme,
       }}
     >
