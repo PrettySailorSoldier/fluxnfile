@@ -90,7 +90,7 @@ export default function Auth() {
         toast.error(error.message);
       }
     } else {
-      toast.success('Account created! Welcome to File & Flux!');
+      toast.success('Account created! Welcome to Flux&File!');
       navigate('/');
     }
 
@@ -124,7 +124,7 @@ export default function Auth() {
             <Package className="w-7 h-7 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-foreground">File & Flux</h1>
+            <h1 className="text-2xl font-bold text-foreground">Flux&File</h1>
             <p className="text-sm text-muted-foreground">Inventory Management</p>
           </div>
         </div>
