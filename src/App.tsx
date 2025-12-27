@@ -11,6 +11,7 @@ import TeamSetup from "./pages/TeamSetup";
 import Dashboard from "./pages/Dashboard";
 import Inventory from "./pages/Inventory";
 import AddItem from "./pages/AddItem";
+import ItemDetail from "./pages/ItemDetail";
 import Analytics from "./pages/Analytics";
 import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
@@ -44,6 +45,11 @@ const App = () => (
             <Route path="/add" element={
               <ProtectedRoute>
                 <AppLayout><AddItem /></AppLayout>
+              </ProtectedRoute>
+            } />
+            <Route path="/item/:id" element={
+              <ProtectedRoute>
+                <AppLayout><ItemDetail /></AppLayout>
               </ProtectedRoute>
             } />
             <Route path="/analytics" element={
