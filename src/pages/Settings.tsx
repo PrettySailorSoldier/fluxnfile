@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { TemplateLibrary } from '@/components/fb/TemplateLibrary';
 import { CategoryManager } from '@/components/settings/CategoryManager';
 import { StorageLocationManager } from '@/components/settings/StorageLocationManager';
+import { MeetupLocationManager } from '@/components/settings/MeetupLocationManager';
 import { ThemeCustomizer } from '@/components/settings/ThemeCustomizer';
 import { ProfileEditor } from '@/components/settings/ProfileEditor';
 import {
@@ -111,6 +112,9 @@ export default function Settings() {
 
       {/* Storage Locations */}
       <StorageLocationManager />
+
+      {/* Meetup Locations */}
+      <MeetupLocationManager />
 
       {/* Theme */}
       <ThemeCustomizer />

@@ -12,11 +12,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { ArrowLeft, Save, Trash2, Package, ChevronRight, Loader2, Edit2, Facebook, MessageSquare } from 'lucide-react';
+import { ArrowLeft, Save, Trash2, Package, ChevronRight, Loader2, Edit2, Facebook, MessageSquare, Calendar, DollarSign } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { QuickListDialog } from '@/components/fb/QuickListDialog';
 import { FBTrackingSection } from '@/components/fb/FBTrackingSection';
 import { TemplateLibrary } from '@/components/fb/TemplateLibrary';
+import { OfferTracker } from '@/components/fb/OfferTracker';
+import { MeetupScheduler, MeetupsList } from '@/components/fb/MeetupScheduler';
+import { SafetyCheckIn, QuickSafetyButton } from '@/components/fb/SafetyCheckIn';
+import { useMeetups, useUpdateMeetup, Meetup } from '@/hooks/useMeetups';
+import { Offer } from '@/hooks/useOffers';
 
 const statusOrder: ItemStatus[] = ['acquired', 'refurbishing', 'ready_to_list', 'listed', 'sold', 'shipped'];
 
@@ -32,6 +37,19 @@ export default function ItemDetail() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showQuickList, setShowQuickList] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
+  const [showMeetupScheduler, setShowMeetupScheduler] = useState(false);
+  const [showSafetyCheckIn, setShowSafetyCheckIn] = useState(false);
+  const [selectedOfferForMeetup, setSelectedOfferForMeetup] = useState<Offer | null>(null);
+  const [selectedMeetupForCheckIn, setSelectedMeetupForCheckIn] = useState<Meetup | null>(null);
+
+  // Fetch meetups for this item
+  const { data: meetups = [] } = useMeetups(id);
+  const updateMeetup = useUpdateMeetup();
+
+  // Get active meetup if exists
+  const activeMeetup = meetups.find(
+    (m) => m.status === 'scheduled' || m.status === 'in_progress'
+  );
 
   // Form state
   const [title, setTitle] = useState('');
@@ -326,6 +344,17 @@ export default function ItemDetail() {
         </div>
       )}
 
+      {/* Active Meetup Safety Check-in */}
+      {!isEditing && activeMeetup && (
+        <QuickSafetyButton
+          meetup={activeMeetup}
+          onOpenSafetyCheckIn={() => {
+            setSelectedMeetupForCheckIn(activeMeetup);
+            setShowSafetyCheckIn(true);
+          }}
+        />
+      )}
+
       {/* Facebook Tracking Section */}
       {!isEditing && (
         <FBTrackingSection
@@ -335,6 +364,29 @@ export default function ItemDetail() {
           fbConversationNotes={item.fb_conversation_notes}
           onUpdate={handleFBUpdate}
           isUpdating={updateItem.isPending}
+        />
+      )}
+
+      {/* Offer Tracker */}
+      {!isEditing && item.status !== 'sold' && item.status !== 'shipped' && item.fb_listing_url && (
+        <OfferTracker
+          itemId={item.id}
+          askingPrice={item.target_price || item.actual_price || 0}
+          onScheduleMeetup={(offer) => {
+            setSelectedOfferForMeetup(offer);
+            setShowMeetupScheduler(true);
+          }}
+        />
+      )}
+
+      {/* Meetups List */}
+      {!isEditing && item.status !== 'sold' && item.status !== 'shipped' && (
+        <MeetupsList
+          itemId={item.id}
+          onScheduleMeetup={() => {
+            setSelectedOfferForMeetup(null);
+            setShowMeetupScheduler(true);
+          }}
         />
       )}
 
@@ -596,6 +648,33 @@ export default function ItemDetail() {
           condition_notes: item.refurbish_notes || undefined,
         }}
       />
+
+      {/* Meetup Scheduler */}
+      <MeetupScheduler
+        open={showMeetupScheduler}
+        onOpenChange={setShowMeetupScheduler}
+        itemId={item.id}
+        itemTitle={item.title || item.category?.name || undefined}
+        askingPrice={item.target_price || item.actual_price || undefined}
+        prefillOffer={selectedOfferForMeetup}
+        onScheduled={() => {
+          setShowMeetupScheduler(false);
+          setSelectedOfferForMeetup(null);
+        }}
+      />
+
+      {/* Safety Check-In */}
+      {selectedMeetupForCheckIn && (
+        <SafetyCheckIn
+          open={showSafetyCheckIn}
+          onOpenChange={setShowSafetyCheckIn}
+          meetup={selectedMeetupForCheckIn}
+          onComplete={() => {
+            setShowSafetyCheckIn(false);
+            setSelectedMeetupForCheckIn(null);
+          }}
+        />
+      )}
     </div>
   );
 }
