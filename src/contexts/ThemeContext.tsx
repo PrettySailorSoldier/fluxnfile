@@ -138,29 +138,23 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
   }, [preferences]);
 
-  // Apply custom colors to CSS variables
+  // Apply custom colors to CSS variables - these persist regardless of dark mode
   useEffect(() => {
     const root = document.documentElement;
 
-    // Apply primary color
+    // Apply primary color - works in both light and dark mode
     if (colors.primaryColor) {
       root.style.setProperty('--primary', hexToHsl(colors.primaryColor));
       root.style.setProperty('--ring', hexToHsl(colors.primaryColor));
       root.style.setProperty('--nav-active', hexToHsl(colors.primaryColor));
     }
 
-    // Apply accent color
+    // Apply accent color - works in both light and dark mode
     if (colors.accentColor) {
       root.style.setProperty('--accent', hexToHsl(colors.accentColor));
     }
 
-    // Apply text color (foreground)
-    if (colors.textColor && !isDark) {
-      root.style.setProperty('--foreground', hexToHsl(colors.textColor));
-      root.style.setProperty('--card-foreground', hexToHsl(colors.textColor));
-    }
-
-    // Apply background image
+    // Apply background image - works in both light and dark mode
     if (colors.backgroundImageUrl) {
       document.body.style.backgroundImage = `url(${colors.backgroundImageUrl})`;
       document.body.style.backgroundSize = 'cover';
@@ -179,13 +173,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       // Cleanup
       root.style.removeProperty('--primary');
       root.style.removeProperty('--accent');
-      root.style.removeProperty('--foreground');
-      root.style.removeProperty('--card-foreground');
       root.style.removeProperty('--ring');
       root.style.removeProperty('--nav-active');
       document.body.style.backgroundImage = '';
     };
-  }, [colors, isDark]);
+  }, [colors]);
 
   const setMode = (newMode: ThemeMode) => {
     setModeState(newMode);
