@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Palette, Upload, X, RotateCcw, Sun, Moon, Monitor, Check } from 'lucide-react';
+import { Palette, Upload, X, RotateCcw, Sun, Moon, Monitor, Check, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -72,15 +72,45 @@ export function ThemeCustomizer() {
   const [localText, setLocalText] = useState(textColor);
   const [localBgImage, setLocalBgImage] = useState<string | null>(backgroundImageUrl);
 
+  // Store original values when dialog opens for undo functionality
+  const [originalPrimary, setOriginalPrimary] = useState(primaryColor);
+  const [originalAccent, setOriginalAccent] = useState(accentColor);
+  const [originalText, setOriginalText] = useState(textColor);
+  const [originalBgImage, setOriginalBgImage] = useState<string | null>(backgroundImageUrl);
+
   // Sync local state when dialog opens
   const handleOpenChange = (isOpen: boolean) => {
     if (isOpen) {
+      // Store original values for undo
+      setOriginalPrimary(primaryColor);
+      setOriginalAccent(accentColor);
+      setOriginalText(textColor);
+      setOriginalBgImage(backgroundImageUrl);
+      // Set local editing values
       setLocalPrimary(primaryColor);
       setLocalAccent(accentColor);
       setLocalText(textColor);
       setLocalBgImage(backgroundImageUrl);
     }
     setOpen(isOpen);
+  };
+
+  // Undo all changes back to original values when dialog opened
+  const handleUndo = () => {
+    setLocalPrimary(originalPrimary);
+    setLocalAccent(originalAccent);
+    setLocalText(originalText);
+    setLocalBgImage(originalBgImage);
+    toast.info('Changes undone');
+  };
+
+  // Cancel and close without saving
+  const handleCancel = () => {
+    setLocalPrimary(originalPrimary);
+    setLocalAccent(originalAccent);
+    setLocalText(originalText);
+    setLocalBgImage(originalBgImage);
+    setOpen(false);
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -402,15 +432,26 @@ export function ThemeCustomizer() {
             </div>
 
             {/* Actions */}
-            <div className="flex gap-2 pt-2">
-              <Button onClick={handleSave} className="flex-1">
-                <Check className="w-4 h-4 mr-2" />
-                Save Theme
-              </Button>
-              <Button variant="outline" onClick={handleReset}>
-                <RotateCcw className="w-4 h-4 mr-2" />
-                Reset
-              </Button>
+            <div className="space-y-2 pt-2">
+              <div className="flex gap-2">
+                <Button onClick={handleSave} className="flex-1">
+                  <Check className="w-4 h-4 mr-2" />
+                  Save
+                </Button>
+                <Button variant="outline" onClick={handleCancel}>
+                  Cancel
+                </Button>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="ghost" size="sm" onClick={handleUndo} className="flex-1">
+                  <Undo2 className="w-4 h-4 mr-2" />
+                  Undo Changes
+                </Button>
+                <Button variant="ghost" size="sm" onClick={handleReset} className="flex-1 text-destructive hover:text-destructive">
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  Reset All
+                </Button>
+              </div>
             </div>
           </DialogContent>
         </Dialog>
