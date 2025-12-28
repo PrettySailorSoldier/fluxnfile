@@ -58,6 +58,7 @@ const NOISE_PATTERNS = [
  * Clean up Amazon product titles by removing noise words and SEO spam
  */
 export function sanitizeTitle(title: string): string {
+  console.log('[sanitizeTitle] Input:', title.substring(0, 80) + (title.length > 80 ? '...' : ''));
   let clean = title.trim();
   
   for (const pattern of NOISE_PATTERNS) {
@@ -75,6 +76,7 @@ export function sanitizeTitle(title: string): string {
     clean = lastSpace > 150 ? truncated.slice(0, lastSpace) + '...' : truncated + '...';
   }
   
+  console.log('[sanitizeTitle] Output:', clean.substring(0, 80) + (clean.length > 80 ? '...' : ''));
   return clean;
 }
 
@@ -123,6 +125,7 @@ const NEGATIVE_PRICE_LABELS = [
  * Parse price from text, handling various formats
  */
 function parsePrice(text: string): number {
+  console.log('[parsePrice] Input text:', text.substring(0, 50));
   // Remove currency symbols and clean up
   const cleaned = text.replace(/[^0-9.,]/g, '');
   
@@ -138,7 +141,9 @@ function parsePrice(text: string): number {
   }
   
   const price = parseFloat(normalized);
-  return isNaN(price) ? 0 : Math.round(price * 100) / 100;
+  const result = isNaN(price) ? 0 : Math.round(price * 100) / 100;
+  console.log('[parsePrice] Result:', result);
+  return result;
 }
 
 /**
@@ -195,6 +200,8 @@ export function extractPrice(
   element: Element,
   textContent: string
 ): { price: number; guessed: boolean } {
+  console.log('[extractPrice] Starting price extraction, text length:', textContent.length);
+  
   // Strategy 1: Try CSS selectors (most reliable)
   for (const selector of PRICE_SELECTORS) {
     try {
@@ -205,6 +212,7 @@ export function extractPrice(
         if (!NEGATIVE_PRICE_LABELS.some(neg => parentText.includes(neg))) {
           const price = parsePrice(el.textContent);
           if (price > 0) {
+            console.log('[extractPrice] Found via selector:', selector, '-> $' + price);
             return { price, guessed: false };
           }
         }
@@ -219,12 +227,14 @@ export function extractPrice(
   if (priceAttr) {
     const price = parseFloat(priceAttr);
     if (price > 0) {
+      console.log('[extractPrice] Found via data-price attr: $' + price);
       return { price, guessed: false };
     }
   }
   
   // Strategy 3: Contextual regex - find all $XX.XX patterns and score them
   const pricesWithContext = extractPricesWithContext(textContent);
+  console.log('[extractPrice] Contextual regex found', pricesWithContext.length, 'candidates');
   
   if (pricesWithContext.length > 0) {
     // Sort by score (positive first), then by price (lower first to avoid order totals)
@@ -236,6 +246,7 @@ export function extractPrice(
     // Take the best-scored price that's not in negative context
     for (const { price, score } of pricesWithContext) {
       if (score >= 0 && price > 0) {
+        console.log('[extractPrice] Selected from context: $' + price, 'score:', score);
         return { price, guessed: score === 0 };
       }
     }
@@ -245,6 +256,7 @@ export function extractPrice(
       curr.price < min.price ? curr : min
     );
     if (smallestPrice.price > 0 && smallestPrice.price < 1000) {
+      console.log('[extractPrice] Fallback to smallest: $' + smallestPrice.price);
       return { price: smallestPrice.price, guessed: true };
     }
   }
@@ -255,10 +267,12 @@ export function extractPrice(
   if (numMatch) {
     const price = parsePrice(numMatch[0]);
     if (price > 0 && price < 10000) {
+      console.log('[extractPrice] Found via numeric pattern: $' + price);
       return { price, guessed: true };
     }
   }
   
+  console.log('[extractPrice] No price found, returning $0');
   return { price: 0, guessed: true };
 }
 
@@ -286,10 +300,12 @@ const DATE_PATTERNS = [
  */
 export function extractDate(element: Element): { date: string; guessed: boolean } {
   const text = element.textContent || '';
+  console.log('[extractDate] Searching in text length:', text.length);
   
   for (const pattern of DATE_PATTERNS) {
     const match = text.match(pattern);
     if (match && match[1]) {
+      console.log('[extractDate] Pattern matched:', match[1]);
       try {
         const parsed = new Date(match[1]);
         if (!isNaN(parsed.getTime())) {
@@ -298,6 +314,7 @@ export function extractDate(element: Element): { date: string; guessed: boolean 
           const tenYearsAgo = new Date(now.getFullYear() - 10, 0, 1);
           
           if (parsed <= now && parsed >= tenYearsAgo) {
+            console.log('[extractDate] Valid date found:', parsed.toISOString());
             return { date: parsed.toISOString(), guessed: false };
           }
         }
@@ -307,6 +324,7 @@ export function extractDate(element: Element): { date: string; guessed: boolean 
     }
   }
   
+  console.log('[extractDate] No date found, using today');
   // Fallback: use today's date
   return { date: new Date().toISOString(), guessed: true };
 }
@@ -327,11 +345,14 @@ const ASIN_PATTERNS = [
  * Extract Amazon ASIN (Standard Identification Number) from element
  */
 export function extractASIN(element: Element): string | null {
+  console.log('[extractASIN] Starting ASIN extraction');
+  
   // Check data-asin attribute first
   const dataAsin = element.getAttribute('data-asin') 
     || element.querySelector('[data-asin]')?.getAttribute('data-asin');
   
   if (dataAsin && /^[A-Z0-9]{10}$/i.test(dataAsin)) {
+    console.log('[extractASIN] Found via data-asin attr:', dataAsin.toUpperCase());
     return dataAsin.toUpperCase();
   }
   
@@ -343,6 +364,7 @@ export function extractASIN(element: Element): string | null {
     for (const pattern of ASIN_PATTERNS) {
       const match = href.match(pattern);
       if (match && match[1]) {
+        console.log('[extractASIN] Found via href pattern:', match[1].toUpperCase());
         return match[1].toUpperCase();
       }
     }
@@ -353,10 +375,12 @@ export function extractASIN(element: Element): string | null {
   for (const pattern of ASIN_PATTERNS) {
     const match = html.match(pattern);
     if (match && match[1]) {
+      console.log('[extractASIN] Found in innerHTML:', match[1].toUpperCase());
       return match[1].toUpperCase();
     }
   }
   
+  console.log('[extractASIN] No ASIN found');
   return null;
 }
 
@@ -368,23 +392,29 @@ export function extractASIN(element: Element): string | null {
  * Detect if HTML is from Amazon Vine portal
  */
 export function isVineHTML(doc: Document): boolean {
-  return doc.querySelector('.vvp-reviews-table') !== null;
+  const isVine = doc.querySelector('.vvp-reviews-table') !== null;
+  console.log('[isVineHTML] Vine mode detected:', isVine);
+  return isVine;
 }
 
 /**
  * Parse Unix timestamp (milliseconds) to ISO date string
  */
 function parseVineTimestamp(timestamp: string | null): string {
+  console.log('[parseVineTimestamp] Input:', timestamp);
   if (!timestamp) {
+    console.log('[parseVineTimestamp] No timestamp, using today');
     return new Date().toISOString();
   }
   
   const ms = parseInt(timestamp, 10);
   if (isNaN(ms)) {
+    console.log('[parseVineTimestamp] Invalid timestamp, using today');
     return new Date().toISOString();
   }
   
   const date = new Date(ms);
+  console.log('[parseVineTimestamp] Parsed date:', date.toISOString());
   // Validate it's a reasonable date
   const now = new Date();
   const tenYearsAgo = new Date(now.getFullYear() - 10, 0, 1);
@@ -394,6 +424,7 @@ function parseVineTimestamp(timestamp: string | null): string {
     return date.toISOString();
   }
   
+  console.log('[parseVineTimestamp] Date out of range, using today');
   return new Date().toISOString();
 }
 
@@ -401,15 +432,19 @@ function parseVineTimestamp(timestamp: string | null): string {
  * Extract ASIN from Vine row using /dp/ link pattern
  */
 function extractVineASINFromDpLink(row: Element): string | null {
+  console.log('[extractVineASINFromDpLink] Searching for /dp/ links');
   // Look for links with /dp/ in the href
   const dpLink = row.querySelector('a[href*="/dp/"]');
   if (dpLink) {
     const href = dpLink.getAttribute('href') || '';
+    console.log('[extractVineASINFromDpLink] Found link:', href.substring(0, 60));
     const asinMatch = href.match(/\/dp\/([A-Z0-9]{10})/i);
     if (asinMatch && asinMatch[1]) {
+      console.log('[extractVineASINFromDpLink] Extracted ASIN:', asinMatch[1].toUpperCase());
       return asinMatch[1].toUpperCase();
     }
   }
+  console.log('[extractVineASINFromDpLink] No ASIN found');
   return null;
 }
 
@@ -570,6 +605,7 @@ const TITLE_SELECTORS = [
  * Extract product title from element
  */
 export function extractTitle(element: Element): { title: string; found: boolean } {
+  console.log('[extractTitle] Starting title extraction');
   // Try selectors
   for (const selector of TITLE_SELECTORS) {
     try {
@@ -578,6 +614,7 @@ export function extractTitle(element: Element): { title: string; found: boolean 
         // Prefer title attribute if available
         const title = el.getAttribute('title') || el.textContent;
         if (title && title.trim().length > 5) {
+          console.log('[extractTitle] Found via selector:', selector, '->', title.trim().substring(0, 50));
           return { title: title.trim(), found: true };
         }
       }
@@ -593,11 +630,13 @@ export function extractTitle(element: Element): { title: string; found: boolean 
     if (text && text.length > 10 && text.length < 500) {
       // Avoid navigation links
       if (!/^(Buy|Add|View|Track|Return|Cancel|Help)/i.test(text)) {
+        console.log('[extractTitle] Found via link fallback:', text.substring(0, 50));
         return { title: text, found: true };
       }
     }
   }
   
+  console.log('[extractTitle] No title found');
   return { title: '', found: false };
 }
 
@@ -611,6 +650,7 @@ const PLACEHOLDER_IMAGE = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/20
  * Extract product image URL with fallback placeholder
  */
 export function extractImage(element: Element): string | null {
+  console.log('[extractImage] Starting image extraction');
   const img = element.querySelector('img');
   
   if (img) {
@@ -629,14 +669,17 @@ export function extractImage(element: Element): string | null {
         const w = parseInt(width);
         const h = parseInt(height);
         if (w < 30 || h < 30) {
+          console.log('[extractImage] Skipping tiny image:', w, 'x', h);
           return null; // Too small, likely an icon
         }
       }
       
+      console.log('[extractImage] Found image:', src.substring(0, 60) + '...');
       return src;
     }
   }
   
+  console.log('[extractImage] No image found');
   return null;
 }
 
@@ -684,6 +727,8 @@ function calculateConfidence(details: ParsedAmazonItem['confidenceDetails']): 'h
  * Main parsing function - extracts items from Amazon HTML
  */
 export function parseAmazonHTML(html: string): ParseResult {
+  console.log('[parseAmazonHTML] ====== STARTING AMAZON HTML PARSER ======');
+  console.log('[parseAmazonHTML] HTML length:', html.length, 'characters');
   const warnings: string[] = [];
   const items: ParsedAmazonItem[] = [];
   const seenItems = new Set<string>(); // For deduplication
@@ -691,9 +736,11 @@ export function parseAmazonHTML(html: string): ParseResult {
   try {
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
+    console.log('[parseAmazonHTML] Document parsed successfully');
     
     // Check if this is Vine HTML
     if (isVineHTML(doc)) {
+      console.log('[parseAmazonHTML] Switching to VINE MODE parser');
       return parseVineHTML(doc);
     }
     
