@@ -99,6 +99,7 @@ export type Database = {
           acquisition_date: string
           acquisition_source: string | null
           actual_price: number | null
+          amazon_review_status: string | null
           category_id: string | null
           condition: Database["public"]["Enums"]["item_condition"]
           created_at: string
@@ -115,6 +116,8 @@ export type Database = {
           platform_fees: number | null
           refurbish_cost: number | null
           refurbish_notes: string | null
+          review_notes: string | null
+          reviewed_by: string[] | null
           sale_date: string | null
           shipping_cost: number | null
           status: Database["public"]["Enums"]["item_status"]
@@ -129,6 +132,7 @@ export type Database = {
           acquisition_date?: string
           acquisition_source?: string | null
           actual_price?: number | null
+          amazon_review_status?: string | null
           category_id?: string | null
           condition?: Database["public"]["Enums"]["item_condition"]
           created_at?: string
@@ -145,6 +149,8 @@ export type Database = {
           platform_fees?: number | null
           refurbish_cost?: number | null
           refurbish_notes?: string | null
+          review_notes?: string | null
+          reviewed_by?: string[] | null
           sale_date?: string | null
           shipping_cost?: number | null
           status?: Database["public"]["Enums"]["item_status"]
@@ -159,6 +165,7 @@ export type Database = {
           acquisition_date?: string
           acquisition_source?: string | null
           actual_price?: number | null
+          amazon_review_status?: string | null
           category_id?: string | null
           condition?: Database["public"]["Enums"]["item_condition"]
           created_at?: string
@@ -175,6 +182,8 @@ export type Database = {
           platform_fees?: number | null
           refurbish_cost?: number | null
           refurbish_notes?: string | null
+          review_notes?: string | null
+          reviewed_by?: string[] | null
           sale_date?: string | null
           shipping_cost?: number | null
           status?: Database["public"]["Enums"]["item_status"]

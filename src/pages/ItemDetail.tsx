@@ -24,6 +24,7 @@ import { SafetyCheckIn, QuickSafetyButton } from '@/components/fb/SafetyCheckIn'
 import { useMeetups, useUpdateMeetup, Meetup } from '@/hooks/useMeetups';
 import { Offer } from '@/hooks/useOffers';
 import { CommentsSection } from '@/components/items/CommentsSection';
+import { ReviewStatusBadge, ReviewActions } from '@/components/amazon';
 
 const statusOrder: ItemStatus[] = ['acquired', 'refurbishing', 'ready_to_list', 'listed', 'sold', 'shipped'];
 
@@ -286,6 +287,22 @@ export default function ItemDetail() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Amazon Review Section */}
+      {!isEditing && item.acquisition_source === 'Amazon' && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-muted-foreground">Amazon Item:</span>
+            <ReviewStatusBadge status={(item as any).amazon_review_status} />
+          </div>
+          <ReviewActions
+            itemId={item.id}
+            currentStatus={(item as any).amazon_review_status}
+            reviewedBy={(item as any).reviewed_by || []}
+            reviewNotes={(item as any).review_notes}
+          />
+        </div>
+      )}
 
       {/* Profit Summary (when not editing) */}
       {!isEditing && displayPrice && (
