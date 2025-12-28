@@ -1,13 +1,15 @@
 import { useItems, calculateProfit } from '@/hooks/useInventory';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Package, DollarSign, TrendingUp, Clock, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Package, DollarSign, TrendingUp, Clock, AlertCircle, CheckCircle2, Plus } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { statusConfig } from '@/hooks/useInventory';
 import { cn } from '@/lib/utils';
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const { team, profile } = useAuth();
   const { data: items = [], isLoading } = useItems();
 
@@ -55,9 +57,22 @@ export default function Dashboard() {
         <p className="text-muted-foreground text-sm">{team?.name}</p>
       </div>
 
-      {/* Quick Stats */}
+      {/* Quick Add Button */}
+      <Button
+        onClick={() => navigate('/add')}
+        className="w-full"
+        size="lg"
+      >
+        <Plus className="w-5 h-5 mr-2" />
+        Add New Item
+      </Button>
+
+      {/* Quick Stats - Clickable */}
       <div className="grid grid-cols-2 gap-3">
-        <Card className="bg-card">
+        <Card
+          className="bg-card cursor-pointer hover:shadow-md transition-shadow"
+          onClick={() => navigate('/inventory')}
+        >
           <CardHeader className="pb-2 pt-4 px-4">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <Package className="w-4 h-4" />
@@ -70,7 +85,10 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className="bg-card">
+        <Card
+          className="bg-card cursor-pointer hover:shadow-md transition-shadow"
+          onClick={() => navigate('/analytics')}
+        >
           <CardHeader className="pb-2 pt-4 px-4">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <DollarSign className="w-4 h-4" />
@@ -83,7 +101,10 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className="bg-card">
+        <Card
+          className="bg-card cursor-pointer hover:shadow-md transition-shadow"
+          onClick={() => navigate('/inventory?status=sold')}
+        >
           <CardHeader className="pb-2 pt-4 px-4">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <TrendingUp className="w-4 h-4" />
@@ -101,7 +122,10 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className="bg-card">
+        <Card
+          className="bg-card cursor-pointer hover:shadow-md transition-shadow"
+          onClick={() => navigate('/inventory?status=listed')}
+        >
           <CardHeader className="pb-2 pt-4 px-4">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <Clock className="w-4 h-4" />
