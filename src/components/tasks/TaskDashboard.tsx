@@ -1,24 +1,25 @@
-import { useState } from 'react';
-import { useTasks, useMyTasks, useUpdateTask, useDeleteTask, taskTypeLabels, Task, TaskType, TaskStatus } from '@/hooks/useTasks';
+import { useTasks, useMyTasks, useUpdateTask, useDeleteTask, taskTypeLabels, Task, TaskStatus } from '@/hooks/useTasks';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { 
-  Check, 
-  Clock, 
-  Camera, 
-  Sparkles, 
-  DollarSign, 
-  Upload, 
-  Package, 
-  Truck, 
-  MapPin, 
+import {
+  Check,
+  Clock,
+  Camera,
+  Sparkles,
+  DollarSign,
+  Upload,
+  Package,
+  Truck,
+  MapPin,
   MessageSquare,
   Trash2,
-  ChevronRight
+  ChevronRight,
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
@@ -123,7 +124,7 @@ function TaskCard({ task, onComplete, onDelete }: {
 
 export function TaskDashboard() {
   const { user } = useAuth();
-  const { data: allTasks = [] } = useTasks();
+  const { data: allTasks = [], isLoading, error } = useTasks();
   const { data: myTasks = [] } = useMyTasks();
   const updateTask = useUpdateTask();
   const deleteTask = useDeleteTask();
@@ -139,6 +140,26 @@ export function TaskDashboard() {
   const pendingTasks = allTasks.filter(t => t.status !== 'completed');
   const completedTasks = allTasks.filter(t => t.status === 'completed');
   const theirTasks = pendingTasks.filter(t => t.assigned_to && t.assigned_to !== user?.id);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card className="border-destructive">
+        <CardContent className="p-6 text-center">
+          <AlertCircle className="w-8 h-8 text-destructive mx-auto mb-2" />
+          <p className="text-destructive font-medium">Error loading tasks</p>
+          <p className="text-sm text-muted-foreground mt-1">Please try refreshing the page</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <div className="space-y-4">
