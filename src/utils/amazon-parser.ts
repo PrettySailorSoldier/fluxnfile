@@ -33,6 +33,7 @@ export interface ParseResult {
   items: ParsedAmazonItem[];
   totalFound: number;
   parseWarnings: string[];
+  isVineMode: boolean;
 }
 
 // ============================================================================
@@ -360,6 +361,159 @@ export function extractASIN(element: Element): string | null {
 }
 
 // ============================================================================
+// VINE MODE DETECTION & PARSING
+// ============================================================================
+
+/**
+ * Detect if HTML is from Amazon Vine portal
+ */
+export function isVineHTML(doc: Document): boolean {
+  return doc.querySelector('.vvp-reviews-table') !== null;
+}
+
+/**
+ * Parse Unix timestamp (milliseconds) to ISO date string
+ */
+function parseVineTimestamp(timestamp: string | null): string {
+  if (!timestamp) {
+    return new Date().toISOString();
+  }
+  
+  const ms = parseInt(timestamp, 10);
+  if (isNaN(ms)) {
+    return new Date().toISOString();
+  }
+  
+  const date = new Date(ms);
+  // Validate it's a reasonable date
+  const now = new Date();
+  const tenYearsAgo = new Date(now.getFullYear() - 10, 0, 1);
+  const tenYearsFromNow = new Date(now.getFullYear() + 10, 0, 1);
+  
+  if (date >= tenYearsAgo && date <= tenYearsFromNow) {
+    return date.toISOString();
+  }
+  
+  return new Date().toISOString();
+}
+
+/**
+ * Extract ASIN from Vine "Review item" button href
+ */
+function extractVineASIN(row: Element): string | null {
+  // Look for links with asin= parameter
+  const links = row.querySelectorAll('a[href*="asin="]');
+  for (const link of links) {
+    const href = link.getAttribute('href') || '';
+    const asinMatch = href.match(/asin=([A-Z0-9]{10})/i);
+    if (asinMatch && asinMatch[1]) {
+      return asinMatch[1].toUpperCase();
+    }
+  }
+  
+  // Also check data-asin attributes
+  const asinEl = row.querySelector('[data-asin]');
+  if (asinEl) {
+    const asin = asinEl.getAttribute('data-asin');
+    if (asin && /^[A-Z0-9]{10}$/i.test(asin)) {
+      return asin.toUpperCase();
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Parse Amazon Vine HTML structure
+ */
+export function parseVineHTML(doc: Document): ParseResult {
+  const warnings: string[] = [];
+  const items: ParsedAmazonItem[] = [];
+  const seenItems = new Set<string>();
+  
+  // Find all Vine table rows
+  const rows = doc.querySelectorAll('tr.vvp-reviews-table--row');
+  
+  if (rows.length === 0) {
+    warnings.push('No Vine items found in the HTML');
+    return { items, totalFound: 0, parseWarnings: warnings, isVineMode: true };
+  }
+  
+  for (const row of rows) {
+    try {
+      // Extract title from .a-truncate-full
+      const titleEl = row.querySelector('.a-truncate-full');
+      const title = titleEl?.textContent?.trim() || '';
+      
+      if (!title || title.length < 3) continue;
+      
+      // Extract image from .vvp-reviews-table--image-col img
+      const imgEl = row.querySelector('.vvp-reviews-table--image-col img');
+      let imageUrl = imgEl?.getAttribute('src') || null;
+      
+      // Fallback to any img in the row
+      if (!imageUrl) {
+        const anyImg = row.querySelector('img');
+        imageUrl = anyImg?.getAttribute('src') || null;
+      }
+      
+      // Filter out tiny/icon images
+      if (imageUrl && !imageUrl.startsWith('http')) {
+        imageUrl = null;
+      }
+      
+      // Extract date from data-order-timestamp attribute
+      const timestampCell = row.querySelector('td[data-order-timestamp]');
+      const timestamp = timestampCell?.getAttribute('data-order-timestamp');
+      const orderDate = parseVineTimestamp(timestamp);
+      const dateGuessed = !timestamp;
+      
+      // Extract ASIN from Review button link
+      const asin = extractVineASIN(row);
+      
+      // Vine items have no price - default to $0.00
+      const price = 0;
+      
+      // Create deduplication key
+      const dedupKey = asin || title.toLowerCase();
+      if (seenItems.has(dedupKey)) continue;
+      seenItems.add(dedupKey);
+      
+      const confidenceDetails = {
+        titleFound: true,
+        priceFound: false, // Vine items don't have prices
+        priceGuessed: true,
+        dateFound: !dateGuessed,
+        dateGuessed,
+        asinFound: !!asin,
+      };
+      
+      items.push({
+        id: generateId(),
+        title,
+        cleanTitle: sanitizeTitle(title),
+        orderDate,
+        price,
+        asin,
+        imageUrl,
+        selected: true, // Select all Vine items by default
+        confidence: dateGuessed ? 'medium' : 'high',
+        confidenceDetails,
+      });
+    } catch (error) {
+      warnings.push(`Error parsing Vine row: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+  
+  return {
+    items,
+    totalFound: items.length,
+    parseWarnings: warnings,
+    isVineMode: true,
+  };
+}
+
+// ============================================================================
 // TITLE EXTRACTION
 // ============================================================================
 
@@ -499,6 +653,11 @@ export function parseAmazonHTML(html: string): ParseResult {
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
     
+    // Check if this is Vine HTML
+    if (isVineHTML(doc)) {
+      return parseVineHTML(doc);
+    }
+    
     // Strategy 1: Look for order containers
     let orderCards: Element[] = [];
     for (const selector of ORDER_SELECTORS) {
@@ -628,6 +787,7 @@ export function parseAmazonHTML(html: string): ParseResult {
     items,
     totalFound: items.length,
     parseWarnings: warnings,
+    isVineMode: false,
   };
 }
 

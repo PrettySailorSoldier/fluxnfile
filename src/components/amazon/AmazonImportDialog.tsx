@@ -37,7 +37,8 @@ import {
   ArrowLeft,
   Sparkles,
   ShieldAlert,
-  Edit2
+  Edit2,
+  Grape
 } from 'lucide-react';
 import { 
   parseAmazonHTML, 
@@ -291,6 +292,8 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
   const [parseWarnings, setParseWarnings] = useState<string[]>([]);
   const [isParsing, setIsParsing] = useState(false);
   const [defaultMarkup, setDefaultMarkup] = useState(50);
+  const [isVineMode, setIsVineMode] = useState(false);
+  const [vineETV, setVineETV] = useState<string>('');
 
   // Fetch existing items for duplicate detection
   // Note: amazon_asin column may not exist until migration runs
@@ -344,6 +347,8 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
       setHtmlInput('');
       setParsedItems([]);
       setParseWarnings([]);
+      setIsVineMode(false);
+      setVineETV('');
     }
   }, [open]);
 
@@ -362,8 +367,14 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
         } else {
           setParsedItems(result.items);
           setParseWarnings(result.parseWarnings);
+          setIsVineMode(result.isVineMode);
           setStep('preview');
-          toast.success(`Found ${result.items.length} items!`);
+          
+          if (result.isVineMode) {
+            toast.success(`Found ${result.items.length} Vine items!`);
+          } else {
+            toast.success(`Found ${result.items.length} items!`);
+          }
         }
       } catch (error) {
         console.error('Parse error:', error);
@@ -398,6 +409,17 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     setParsedItems(items =>
       items.map(item => ({ ...item, selected: !allSelected }))
     );
+  };
+
+  // Apply bulk ETV to all Vine items
+  const applyBulkETV = () => {
+    const etv = parseFloat(vineETV);
+    if (!isNaN(etv) && etv >= 0) {
+      setParsedItems(items =>
+        items.map(item => ({ ...item, price: etv }))
+      );
+      toast.success(`Applied $${etv.toFixed(2)} ETV to all items`);
+    }
   };
 
   // Import items mutation
@@ -572,7 +594,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                     <CheckCircle className="w-3 h-3 text-success" />
                     {highConfidenceCount} high confidence
                   </span>
-                  {duplicateCount > 0 && (
+                    {duplicateCount > 0 && (
                     <span className="flex items-center gap-1 text-warning">
                       <ShieldAlert className="w-3 h-3" />
                       {duplicateCount} potential duplicates
@@ -580,6 +602,37 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                   )}
                 </div>
               </div>
+
+              {/* Vine Mode Banner */}
+              {isVineMode && (
+                <div className="flex items-center justify-between gap-4 p-3 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Grape className="w-5 h-5 text-purple-500" />
+                    <div>
+                      <span className="font-medium text-purple-600 dark:text-purple-400">Vine Page Detected</span>
+                      <p className="text-xs text-muted-foreground">All items default to $0.00. Set an Estimated Tax Value (ETV) below.</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="vine-etv" className="text-xs whitespace-nowrap">Bulk ETV:</Label>
+                    <div className="flex items-center gap-1">
+                      <span className="text-sm">$</span>
+                      <Input
+                        id="vine-etv"
+                        type="number"
+                        step="0.01"
+                        placeholder="0.00"
+                        value={vineETV}
+                        onChange={(e) => setVineETV(e.target.value)}
+                        className="w-20 text-sm h-8"
+                      />
+                    </div>
+                    <Button size="sm" variant="outline" onClick={applyBulkETV} disabled={!vineETV}>
+                      Apply All
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               {/* Markup setting */}
               <div className="flex items-center gap-4">
