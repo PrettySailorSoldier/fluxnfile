@@ -40,7 +40,7 @@ export function CreateTaskDialog({ open, onOpenChange, itemId, onSuccess }: Crea
   const queryClient = useQueryClient();
   
   const [taskType, setTaskType] = useState('');
-  const [assignedTo, setAssignedTo] = useState('');
+  const [assignedTo, setAssignedTo] = useState('unassigned');
   const [notes, setNotes] = useState('');
 
   // Fetch team members
@@ -65,7 +65,7 @@ export function CreateTaskDialog({ open, onOpenChange, itemId, onSuccess }: Crea
         team_id: team.id,
         item_id: itemId || null,
         task_type: taskType as 'needs_photos' | 'needs_cleaning' | 'needs_pricing' | 'ready_to_list' | 'needs_packaging' | 'ready_to_ship' | 'meetup_scheduled' | 'needs_discussion',
-        assigned_to: assignedTo || null,
+        assigned_to: assignedTo === 'unassigned' ? null : assignedTo,
         created_by: user.id,
         notes: notes.trim() || null,
         status: 'pending' as const,
@@ -74,7 +74,7 @@ export function CreateTaskDialog({ open, onOpenChange, itemId, onSuccess }: Crea
       if (error) throw error;
 
       // Create notification for assigned user
-      if (assignedTo && assignedTo !== user.id) {
+      if (assignedTo && assignedTo !== 'unassigned' && assignedTo !== user.id) {
         await (supabase as any).from('notifications').insert({
           user_id: assignedTo,
           type: 'task_assigned',
@@ -89,7 +89,7 @@ export function CreateTaskDialog({ open, onOpenChange, itemId, onSuccess }: Crea
       queryClient.invalidateQueries({ queryKey: ['item', itemId] });
       toast.success('Task created successfully!');
       setTaskType('');
-      setAssignedTo('');
+      setAssignedTo('unassigned');
       setNotes('');
       onOpenChange(false);
       onSuccess?.();
@@ -133,7 +133,7 @@ export function CreateTaskDialog({ open, onOpenChange, itemId, onSuccess }: Crea
                 <SelectValue placeholder="Either (first available)" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Either (first available)</SelectItem>
+                <SelectItem value="unassigned">Either (first available)</SelectItem>
                 {teamMembers?.map((member) => (
                   <SelectItem key={member.id} value={member.id}>
                     {member.full_name || 'Team Member'} {member.id === user?.id ? '(You)' : ''}

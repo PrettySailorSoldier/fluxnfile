@@ -275,6 +275,14 @@ export function NotificationBell() {
     localStorage.setItem('notification-volume', String(newVolume));
   };
 
+  // Handle volume change commit (after user finishes adjusting) - play preview
+  const handleVolumeCommit = (value: number[]) => {
+    const newVolume = value[0];
+    if (notificationTone !== 'none' && newVolume > 0) {
+      playSound(notificationTone, newVolume);
+    }
+  };
+
   // Handle custom tone file upload
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -408,6 +416,7 @@ export function NotificationBell() {
                   <Slider
                     value={[notificationVolume]}
                     onValueChange={handleVolumeChange}
+                    onValueCommit={handleVolumeCommit}
                     max={100}
                     min={0}
                     step={5}
