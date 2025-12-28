@@ -50,14 +50,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setProfile(profileData);
 
       if (profileData.team_id) {
-        const { data: teamData } = await supabase
-          .from('teams')
-          .select('*')
-          .eq('id', profileData.team_id)
-          .single();
+        // Use RPC function to fetch team (bypasses RLS issues)
+        const { data: teamResult } = await supabase
+          .rpc('verify_team_exists', { team_uuid: profileData.team_id });
 
-        if (teamData) {
-          setTeam(teamData);
+        if (teamResult && teamResult.length > 0) {
+          setTeam({ id: teamResult[0].id, name: teamResult[0].name });
+        } else {
+          // Fallback to direct query
+          const { data: teamData } = await supabase
+            .from('teams')
+            .select('*')
+            .eq('id', profileData.team_id)
+            .single();
+
+          if (teamData) {
+            setTeam(teamData);
+          } else {
+            setTeam(null);
+          }
         }
       } else {
         setTeam(null);
