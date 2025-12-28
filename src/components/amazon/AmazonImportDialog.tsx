@@ -38,7 +38,8 @@ import {
   Sparkles,
   ShieldAlert,
   Edit2,
-  Grape
+  Grape,
+  DollarSign
 } from 'lucide-react';
 import { 
   parseAmazonHTML, 
@@ -294,6 +295,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
   const [defaultMarkup, setDefaultMarkup] = useState(50);
   const [isVineMode, setIsVineMode] = useState(false);
   const [vineETV, setVineETV] = useState<string>('');
+  const [isFetchingPrices, setIsFetchingPrices] = useState(false);
 
   // Fetch existing items for duplicate detection
   // Note: amazon_asin column may not exist until migration runs
@@ -349,6 +351,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
       setParseWarnings([]);
       setIsVineMode(false);
       setVineETV('');
+      setIsFetchingPrices(false);
     }
   }, [open]);
 
@@ -419,6 +422,69 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
         items.map(item => ({ ...item, price: etv }))
       );
       toast.success(`Applied $${etv.toFixed(2)} ETV to all items`);
+    }
+  };
+
+  // Fetch retail prices from Amazon via Edge Function
+  const fetchRetailPrices = async () => {
+    const asins = parsedItems
+      .filter(item => item.asin)
+      .map(item => item.asin as string);
+    
+    if (asins.length === 0) {
+      toast.error('No ASINs found to look up prices');
+      return;
+    }
+    
+    setIsFetchingPrices(true);
+    console.log('[fetchRetailPrices] Fetching prices for', asins.length, 'ASINs');
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('fetch-amazon-prices', {
+        body: { asins },
+      });
+      
+      if (error) {
+        console.error('[fetchRetailPrices] Error:', error);
+        toast.error(`Failed to fetch prices: ${error.message}`);
+        return;
+      }
+      
+      console.log('[fetchRetailPrices] Response:', data);
+      
+      if (data?.results) {
+        // Create a map of ASIN to price
+        const priceMap = new Map<string, number>();
+        for (const result of data.results) {
+          if (result.success && result.price !== null) {
+            priceMap.set(result.asin, result.price);
+          }
+        }
+        
+        // Update parsed items with fetched prices
+        setParsedItems(items =>
+          items.map(item => {
+            if (item.asin && priceMap.has(item.asin)) {
+              return { ...item, price: priceMap.get(item.asin)! };
+            }
+            return item;
+          })
+        );
+        
+        const successCount = data.summary?.success || priceMap.size;
+        const failedCount = data.summary?.failed || (asins.length - priceMap.size);
+        
+        if (successCount > 0) {
+          toast.success(`Fetched ${successCount} price${successCount !== 1 ? 's' : ''}${failedCount > 0 ? ` (${failedCount} failed)` : ''}`);
+        } else {
+          toast.error('Could not fetch any prices. Amazon may be blocking requests.');
+        }
+      }
+    } catch (err) {
+      console.error('[fetchRetailPrices] Exception:', err);
+      toast.error('Failed to fetch prices. Check console for details.');
+    } finally {
+      setIsFetchingPrices(false);
     }
   };
 
@@ -605,31 +671,61 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
 
               {/* Vine Mode Banner */}
               {isVineMode && (
-                <div className="flex items-center justify-between gap-4 p-3 bg-purple-500/10 border border-purple-500/30 rounded-lg">
-                  <div className="flex items-center gap-2">
-                    <Grape className="w-5 h-5 text-purple-500" />
-                    <div>
-                      <span className="font-medium text-purple-600 dark:text-purple-400">Vine Page Detected</span>
-                      <p className="text-xs text-muted-foreground">All items default to $0.00. Set an Estimated Tax Value (ETV) below.</p>
+                <div className="space-y-3 p-3 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-2">
+                      <Grape className="w-5 h-5 text-purple-500" />
+                      <div>
+                        <span className="font-medium text-purple-600 dark:text-purple-400">Vine Page Detected</span>
+                        <p className="text-xs text-muted-foreground">All items default to $0.00. Fetch retail prices or set ETV manually.</p>
+                      </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="vine-etv" className="text-xs whitespace-nowrap">Bulk ETV:</Label>
-                    <div className="flex items-center gap-1">
-                      <span className="text-sm">$</span>
-                      <Input
-                        id="vine-etv"
-                        type="number"
-                        step="0.01"
-                        placeholder="0.00"
-                        value={vineETV}
-                        onChange={(e) => setVineETV(e.target.value)}
-                        className="w-20 text-sm h-8"
-                      />
-                    </div>
-                    <Button size="sm" variant="outline" onClick={applyBulkETV} disabled={!vineETV}>
-                      Apply All
+                  
+                  {/* Price Actions Row */}
+                  <div className="flex items-center gap-3 flex-wrap">
+                    {/* Fetch Retail Prices Button */}
+                    <Button
+                      size="sm"
+                      variant="default"
+                      onClick={fetchRetailPrices}
+                      disabled={isFetchingPrices || parsedItems.filter(i => i.asin).length === 0}
+                      className="bg-purple-600 hover:bg-purple-700"
+                    >
+                      {isFetchingPrices ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Fetching...
+                        </>
+                      ) : (
+                        <>
+                          <DollarSign className="w-4 h-4 mr-2" />
+                          Fetch Retail Prices
+                        </>
+                      )}
                     </Button>
+                    
+                    <span className="text-xs text-muted-foreground">or</span>
+                    
+                    {/* Bulk ETV */}
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="vine-etv" className="text-xs whitespace-nowrap">Bulk ETV:</Label>
+                      <div className="flex items-center gap-1">
+                        <span className="text-sm">$</span>
+                        <Input
+                          id="vine-etv"
+                          type="number"
+                          step="0.01"
+                          placeholder="0.00"
+                          value={vineETV}
+                          onChange={(e) => setVineETV(e.target.value)}
+                          className="w-20 text-sm h-8"
+                        />
+                      </div>
+                      <Button size="sm" variant="outline" onClick={applyBulkETV} disabled={!vineETV}>
+                        Apply All
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}
