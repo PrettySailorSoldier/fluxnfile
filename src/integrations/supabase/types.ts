@@ -99,6 +99,7 @@ export type Database = {
           acquisition_date: string
           acquisition_source: string | null
           actual_price: number | null
+          amazon_asin: string | null
           amazon_review_status: string | null
           category_id: string | null
           condition: Database["public"]["Enums"]["item_condition"]
@@ -132,6 +133,7 @@ export type Database = {
           acquisition_date?: string
           acquisition_source?: string | null
           actual_price?: number | null
+          amazon_asin?: string | null
           amazon_review_status?: string | null
           category_id?: string | null
           condition?: Database["public"]["Enums"]["item_condition"]
@@ -165,6 +167,7 @@ export type Database = {
           acquisition_date?: string
           acquisition_source?: string | null
           actual_price?: number | null
+          amazon_asin?: string | null
           amazon_review_status?: string | null
           category_id?: string | null
           condition?: Database["public"]["Enums"]["item_condition"]
