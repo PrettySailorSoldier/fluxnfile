@@ -398,91 +398,127 @@ function parseVineTimestamp(timestamp: string | null): string {
 }
 
 /**
- * Extract ASIN from Vine "Review item" button href
+ * Extract ASIN from Vine row using /dp/ link pattern
  */
-function extractVineASIN(row: Element): string | null {
-  // Look for links with asin= parameter
-  const links = row.querySelectorAll('a[href*="asin="]');
-  for (const link of links) {
-    const href = link.getAttribute('href') || '';
-    const asinMatch = href.match(/asin=([A-Z0-9]{10})/i);
+function extractVineASINFromDpLink(row: Element): string | null {
+  // Look for links with /dp/ in the href
+  const dpLink = row.querySelector('a[href*="/dp/"]');
+  if (dpLink) {
+    const href = dpLink.getAttribute('href') || '';
+    const asinMatch = href.match(/\/dp\/([A-Z0-9]{10})/i);
     if (asinMatch && asinMatch[1]) {
       return asinMatch[1].toUpperCase();
     }
   }
-  
-  // Also check data-asin attributes
-  const asinEl = row.querySelector('[data-asin]');
-  if (asinEl) {
-    const asin = asinEl.getAttribute('data-asin');
-    if (asin && /^[A-Z0-9]{10}$/i.test(asin)) {
-      return asin.toUpperCase();
-    }
-  }
-  
   return null;
 }
 
 /**
- * Parse Amazon Vine HTML structure
+ * Parse Amazon Vine HTML structure - STRICT MODE
+ * Uses exact selectors for the vine-reviews page DOM structure
  */
 export function parseVineHTML(doc: Document): ParseResult {
   const warnings: string[] = [];
   const items: ParsedAmazonItem[] = [];
   const seenItems = new Set<string>();
   
-  // Find all Vine table rows
+  console.log('[Vine Parser] Starting strict Vine mode parsing...');
+  
+  // Find all Vine table rows using EXACT selector
   const rows = doc.querySelectorAll('tr.vvp-reviews-table--row');
   
+  console.log(`[Vine Parser] Found ${rows.length} rows with selector 'tr.vvp-reviews-table--row'`);
+  
   if (rows.length === 0) {
-    warnings.push('No Vine items found in the HTML');
+    warnings.push('No Vine items found in the HTML. Expected tr.vvp-reviews-table--row elements.');
     return { items, totalFound: 0, parseWarnings: warnings, isVineMode: true };
   }
   
+  let rowIndex = 0;
   for (const row of rows) {
+    rowIndex++;
     try {
-      // Extract title from .a-truncate-full
-      const titleEl = row.querySelector('.a-truncate-full');
-      const title = titleEl?.textContent?.trim() || '';
+      // =========================================================
+      // TITLE: Target .a-truncate-full, fallback .a-link-normal
+      // =========================================================
+      let title = '';
+      const truncateEl = row.querySelector('.a-truncate-full');
+      if (truncateEl?.textContent?.trim()) {
+        title = truncateEl.textContent.trim();
+      } else {
+        // Fallback to .a-link-normal text content
+        const linkEl = row.querySelector('.a-link-normal');
+        if (linkEl?.textContent?.trim()) {
+          title = linkEl.textContent.trim();
+        }
+      }
       
-      if (!title || title.length < 3) continue;
-      
-      // Extract image from .vvp-reviews-table--image-col img
+      // =========================================================
+      // IMAGE: Target .vvp-reviews-table--image-col img, attr src
+      // =========================================================
       const imgEl = row.querySelector('.vvp-reviews-table--image-col img');
       let imageUrl = imgEl?.getAttribute('src') || null;
       
-      // Fallback to any img in the row
+      // Fallback to any img in the row if primary selector fails
       if (!imageUrl) {
         const anyImg = row.querySelector('img');
         imageUrl = anyImg?.getAttribute('src') || null;
       }
       
-      // Filter out tiny/icon images
+      // Validate image URL (must be http/https)
       if (imageUrl && !imageUrl.startsWith('http')) {
         imageUrl = null;
       }
       
-      // Extract date from data-order-timestamp attribute
-      const timestampCell = row.querySelector('td[data-order-timestamp]');
-      const timestamp = timestampCell?.getAttribute('data-order-timestamp');
-      const orderDate = parseVineTimestamp(timestamp);
-      const dateGuessed = !timestamp;
+      // =========================================================
+      // ORDER DATE (CRITICAL): Target [data-order-timestamp] attr
+      // The attribute contains Unix timestamp in milliseconds
+      // =========================================================
+      const timestampEl = row.querySelector('[data-order-timestamp]');
+      const timestampAttr = timestampEl?.getAttribute('data-order-timestamp');
+      const orderDate = parseVineTimestamp(timestampAttr);
+      const dateGuessed = !timestampAttr;
       
-      // Extract ASIN from Review button link
-      const asin = extractVineASIN(row);
+      // =========================================================
+      // ASIN: Target a[href*="/dp/"], extract from href regex
+      // =========================================================
+      const asin = extractVineASINFromDpLink(row);
       
-      // Vine items have no price - default to $0.00
+      // =========================================================
+      // PRICE: Hardcode to $0 for Vine imports (no price on page)
+      // =========================================================
       const price = 0;
       
-      // Create deduplication key
+      // =========================================================
+      // DEBUGGING: Log every row processed
+      // =========================================================
+      console.log("Vine Row:", { 
+        rowIndex,
+        title: title ? title.substring(0, 50) + (title.length > 50 ? '...' : '') : '(empty)', 
+        asin, 
+        timestamp: timestampAttr || '(not found)',
+        parsedDate: orderDate,
+        image: imageUrl ? 'Found' : '(not found)'
+      });
+      
+      // Skip rows without a valid title
+      if (!title || title.length < 3) {
+        console.log(`[Vine Parser] Row ${rowIndex} skipped: title too short or empty`);
+        continue;
+      }
+      
+      // Create deduplication key (prefer ASIN, fallback to title)
       const dedupKey = asin || title.toLowerCase();
-      if (seenItems.has(dedupKey)) continue;
+      if (seenItems.has(dedupKey)) {
+        console.log(`[Vine Parser] Row ${rowIndex} skipped: duplicate key "${dedupKey.substring(0, 30)}"`);
+        continue;
+      }
       seenItems.add(dedupKey);
       
       const confidenceDetails = {
         titleFound: true,
-        priceFound: false, // Vine items don't have prices
-        priceGuessed: true,
+        priceFound: false, // Vine items don't have prices - this is expected
+        priceGuessed: true, // Price is always "guessed" as $0 for Vine
         dateFound: !dateGuessed,
         dateGuessed,
         asinFound: !!asin,
@@ -493,7 +529,7 @@ export function parseVineHTML(doc: Document): ParseResult {
         title,
         cleanTitle: sanitizeTitle(title),
         orderDate,
-        price,
+        price, // Always $0 for Vine
         asin,
         imageUrl,
         selected: true, // Select all Vine items by default
@@ -501,9 +537,12 @@ export function parseVineHTML(doc: Document): ParseResult {
         confidenceDetails,
       });
     } catch (error) {
-      warnings.push(`Error parsing Vine row: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error(`[Vine Parser] Error parsing row ${rowIndex}:`, error);
+      warnings.push(`Error parsing Vine row ${rowIndex}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
+  
+  console.log(`[Vine Parser] Successfully parsed ${items.length} items from ${rows.length} rows`);
   
   return {
     items,
