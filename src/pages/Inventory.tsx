@@ -8,11 +8,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Package, Search, Filter, Loader2, CheckSquare, X, Tag, Trash2, FileSpreadsheet } from 'lucide-react';
+import { Package, Search, Filter, Loader2, CheckSquare, X, Tag, Trash2, ShoppingCart } from 'lucide-react';
 import { toast } from 'sonner';
 import { SwipeableItem } from '@/components/inventory/SwipeableItem';
 import { MarketplaceExport } from '@/components/fb/MarketplaceExport';
-
+import { AmazonImportDialog } from '@/components/amazon/AmazonImportDialog';
+import { ReviewStatusBadge } from '@/components/amazon/ReviewStatusBadge';
 export default function Inventory() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -23,10 +24,12 @@ export default function Inventory() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>(searchParams.get('status') || 'all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [reviewFilter, setReviewFilter] = useState<string>('all');
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
+  const [showAmazonImport, setShowAmazonImport] = useState(false);
 
   const filteredItems = items.filter((item) => {
     const matchesSearch = !search ||
@@ -36,8 +39,22 @@ export default function Inventory() {
 
     const matchesStatus = statusFilter === 'all' || item.status === statusFilter;
     const matchesCategory = categoryFilter === 'all' || item.category_id === categoryFilter;
+    
+    // Review filter - only applies to Amazon items
+    let matchesReview = true;
+    if (reviewFilter !== 'all') {
+      const amazonStatus = (item as any).amazon_review_status;
+      if (reviewFilter === 'pending') {
+        matchesReview = item.acquisition_source === 'Amazon' && amazonStatus === 'pending';
+      } else if (reviewFilter === 'reviewed') {
+        matchesReview = item.acquisition_source === 'Amazon' && 
+          (amazonStatus === 'reviewed_grant' || amazonStatus === 'reviewed_crybaby');
+      } else if (reviewFilter === 'reviewed_both') {
+        matchesReview = item.acquisition_source === 'Amazon' && amazonStatus === 'reviewed_both';
+      }
+    }
 
-    return matchesSearch && matchesStatus && matchesCategory;
+    return matchesSearch && matchesStatus && matchesCategory && matchesReview;
   });
 
   // Status counts for filter badges
@@ -134,6 +151,14 @@ export default function Inventory() {
       <div className="flex items-center justify-between pt-2">
         <h1 className="text-2xl font-bold text-foreground">Inventory</h1>
         <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowAmazonImport(true)}
+          >
+            <ShoppingCart className="w-4 h-4 mr-1" />
+            Amazon Import
+          </Button>
           {items.length > 0 && <MarketplaceExport items={items} />}
           <Button
             variant={isSelecting ? 'default' : 'outline'}
@@ -217,6 +242,17 @@ export default function Inventory() {
               ))}
             </SelectContent>
           </Select>
+          <Select value={reviewFilter} onValueChange={setReviewFilter}>
+            <SelectTrigger className="flex-1">
+              <SelectValue placeholder="Review Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Reviews</SelectItem>
+              <SelectItem value="pending">Needs Review</SelectItem>
+              <SelectItem value="reviewed">Partially Reviewed</SelectItem>
+              <SelectItem value="reviewed_both">Both Reviewed</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -287,6 +323,12 @@ export default function Inventory() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Amazon Import Dialog */}
+      <AmazonImportDialog
+        open={showAmazonImport}
+        onOpenChange={setShowAmazonImport}
+      />
     </div>
   );
 }
