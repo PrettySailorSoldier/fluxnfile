@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { LogOut, Users, Copy, MessageSquare, UserMinus } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { LogOut, Users, Copy, MessageSquare, UserMinus, ShoppingBag, FileSpreadsheet, Megaphone, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { TemplateLibrary } from '@/components/fb/TemplateLibrary';
 import { CategoryManager } from '@/components/settings/CategoryManager';
@@ -118,6 +118,47 @@ export default function Settings() {
 
       {/* Theme */}
       <ThemeCustomizer />
+
+      {/* Facebook Tools */}
+      <Card className="border-blue-200 dark:border-blue-800 bg-gradient-to-r from-blue-50 to-white dark:from-blue-950/30 dark:to-background">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <img
+              src="https://upload.wikimedia.org/wikipedia/commons/5/51/Facebook_f_logo_%282019%29.svg"
+              alt="Facebook"
+              className="w-4 h-4"
+            />
+            Facebook Tools
+          </CardTitle>
+          <CardDescription>
+            Marketplace exports, custom audiences, and ad creation
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="p-2 bg-background rounded-lg border">
+              <FileSpreadsheet className="w-5 h-5 mx-auto mb-1 text-blue-500" />
+              <p className="text-xs text-muted-foreground">CSV Export</p>
+            </div>
+            <div className="p-2 bg-background rounded-lg border">
+              <Users className="w-5 h-5 mx-auto mb-1 text-purple-500" />
+              <p className="text-xs text-muted-foreground">Audiences</p>
+            </div>
+            <div className="p-2 bg-background rounded-lg border">
+              <Megaphone className="w-5 h-5 mx-auto mb-1 text-green-500" />
+              <p className="text-xs text-muted-foreground">Ad Creator</p>
+            </div>
+          </div>
+          <Button 
+            variant="outline" 
+            className="w-full justify-between" 
+            onClick={() => navigate('/facebook-tools')}
+          >
+            Open Facebook Tools
+            <ChevronRight className="w-4 h-4" />
+          </Button>
+        </CardContent>
+      </Card>
 
       {/* Message Templates */}
       <Card>

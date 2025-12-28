@@ -8,9 +8,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Package, Search, Filter, Loader2, CheckSquare, X, Tag, Trash2 } from 'lucide-react';
+import { Package, Search, Filter, Loader2, CheckSquare, X, Tag, Trash2, FileSpreadsheet } from 'lucide-react';
 import { toast } from 'sonner';
 import { SwipeableItem } from '@/components/inventory/SwipeableItem';
+import { MarketplaceExport } from '@/components/fb/MarketplaceExport';
 
 export default function Inventory() {
   const navigate = useNavigate();
@@ -132,26 +133,29 @@ export default function Inventory() {
       {/* Header with bulk select toggle */}
       <div className="flex items-center justify-between pt-2">
         <h1 className="text-2xl font-bold text-foreground">Inventory</h1>
-        <Button
-          variant={isSelecting ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => {
-            setIsSelecting(!isSelecting);
-            setSelectedItems(new Set());
-          }}
-        >
-          {isSelecting ? (
-            <>
-              <X className="w-4 h-4 mr-1" />
-              Cancel
-            </>
-          ) : (
-            <>
-              <CheckSquare className="w-4 h-4 mr-1" />
-              Select
-            </>
-          )}
-        </Button>
+        <div className="flex gap-2">
+          {items.length > 0 && <MarketplaceExport items={items} />}
+          <Button
+            variant={isSelecting ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => {
+              setIsSelecting(!isSelecting);
+              setSelectedItems(new Set());
+            }}
+          >
+            {isSelecting ? (
+              <>
+                <X className="w-4 h-4 mr-1" />
+                Cancel
+              </>
+            ) : (
+              <>
+                <CheckSquare className="w-4 h-4 mr-1" />
+                Select
+              </>
+            )}
+          </Button>
+        </div>
       </div>
 
       {/* Bulk Actions Bar */}

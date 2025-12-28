@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { useUserPreferences, useUpdateUserPreferences, CustomNotificationTone } from '@/hooks/useUserPreferences';
+import { CustomNotificationTone } from '@/hooks/useUserPreferences';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -62,14 +62,21 @@ export function NotificationBell() {
   const [showCustomUpload, setShowCustomUpload] = useState(false);
   const [customToneName, setCustomToneName] = useState('');
   
-  // Load user preferences
-  const { data: preferences } = useUserPreferences();
-  const updatePreferences = useUpdateUserPreferences();
+  // Load notification settings from localStorage
+  const [notificationTone, setNotificationTone] = useState<string>(() => {
+    const saved = localStorage.getItem('notification-tone');
+    return saved || 'default';
+  });
   
-  // Get current settings from preferences or use defaults
-  const notificationTone = preferences?.notification_tone || 'default';
-  const notificationVolume = preferences?.notification_volume ?? 50;
-  const customTones: CustomNotificationTone[] = preferences?.custom_notification_tones || [];
+  const [notificationVolume, setNotificationVolume] = useState<number>(() => {
+    const saved = localStorage.getItem('notification-volume');
+    return saved ? parseInt(saved, 10) : 50;
+  });
+  
+  const [customTones, setCustomTones] = useState<CustomNotificationTone[]>(() => {
+    const saved = localStorage.getItem('custom-notification-tones');
+    return saved ? JSON.parse(saved) : [];
+  });
   
   // Combine default and custom tones
   const allTones: ToneOption[] = [
@@ -245,7 +252,8 @@ export function NotificationBell() {
 
   // Handle tone selection with preview
   const handleToneSelect = (toneId: string) => {
-    updatePreferences.mutate({ notification_tone: toneId });
+    setNotificationTone(toneId);
+    localStorage.setItem('notification-tone', toneId);
     // Play preview
     if (toneId !== 'none') {
       playSound(toneId);
@@ -263,7 +271,8 @@ export function NotificationBell() {
   // Handle volume change
   const handleVolumeChange = (value: number[]) => {
     const newVolume = value[0];
-    updatePreferences.mutate({ notification_volume: newVolume });
+    setNotificationVolume(newVolume);
+    localStorage.setItem('notification-volume', String(newVolume));
   };
 
   // Handle custom tone file upload
@@ -297,10 +306,10 @@ export function NotificationBell() {
         };
         
         const updatedTones = [...customTones, newTone];
-        updatePreferences.mutate({ 
-          custom_notification_tones: updatedTones,
-          notification_tone: newTone.id,
-        });
+        setCustomTones(updatedTones);
+        setNotificationTone(newTone.id);
+        localStorage.setItem('custom-notification-tones', JSON.stringify(updatedTones));
+        localStorage.setItem('notification-tone', newTone.id);
         
         toast.success(`Added custom tone: ${name}`);
         setCustomToneName('');
@@ -324,16 +333,15 @@ export function NotificationBell() {
   const handleDeleteCustomTone = (e: React.MouseEvent, toneId: string) => {
     e.stopPropagation();
     const updatedTones = customTones.filter(t => t.id !== toneId);
-    const updates: { custom_notification_tones: CustomNotificationTone[]; notification_tone?: string } = {
-      custom_notification_tones: updatedTones,
-    };
+    setCustomTones(updatedTones);
+    localStorage.setItem('custom-notification-tones', JSON.stringify(updatedTones));
     
     // If current tone is being deleted, switch to default
     if (notificationTone === toneId) {
-      updates.notification_tone = 'default';
+      setNotificationTone('default');
+      localStorage.setItem('notification-tone', 'default');
     }
     
-    updatePreferences.mutate(updates);
     toast.success('Custom tone deleted');
   };
 
