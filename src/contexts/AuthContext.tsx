@@ -278,26 +278,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: null };
   };
 
-  const leaveTeam = async () => {
-    if (!user) return { error: new Error('Not authenticated') };
-
-    // Update profile to remove team_id
-    const { data: updatedProfile, error: profileError } = await supabase
-      .from('profiles')
-      .update({ team_id: null })
-      .eq('id', user.id)
-      .select()
-      .single();
-
-    if (profileError) return { error: profileError as Error };
-
-    // Update state immediately
-    setProfile(updatedProfile);
-    setTeam(null);
-
-    return { error: null };
-  };
-
   return (
     <AuthContext.Provider
       value={{

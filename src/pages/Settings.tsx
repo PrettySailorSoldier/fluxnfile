@@ -3,24 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-<<<<<<< HEAD
-import { LogOut, MessageSquare } from 'lucide-react';
-=======
 import { LogOut, Users, Copy, MessageSquare, UserMinus } from 'lucide-react';
 import { toast } from 'sonner';
->>>>>>> c2eb81959cf42c59472a9c09f1df34ae13472867
 import { TemplateLibrary } from '@/components/fb/TemplateLibrary';
 import { CategoryManager } from '@/components/settings/CategoryManager';
 import { StorageLocationManager } from '@/components/settings/StorageLocationManager';
 import { MeetupLocationManager } from '@/components/settings/MeetupLocationManager';
 import { ThemeCustomizer } from '@/components/settings/ThemeCustomizer';
 import { ProfileEditor } from '@/components/settings/ProfileEditor';
-<<<<<<< HEAD
-import { TeamManager } from '@/components/settings/TeamManager';
-
-export default function Settings() {
-  const { signOut } = useAuth();
-=======
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,13 +25,10 @@ import {
 
 export default function Settings() {
   const { team, leaveTeam, signOut } = useAuth();
->>>>>>> c2eb81959cf42c59472a9c09f1df34ae13472867
   const [showTemplates, setShowTemplates] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
   const navigate = useNavigate();
 
-<<<<<<< HEAD
-=======
   const copyTeamId = () => {
     if (team?.id) {
       navigator.clipboard.writeText(team.id);
@@ -63,18 +50,13 @@ export default function Settings() {
     navigate('/team-setup');
   };
 
->>>>>>> c2eb81959cf42c59472a9c09f1df34ae13472867
   return (
     <div className="p-4 space-y-4 pb-24">
       <h1 className="text-2xl font-bold text-foreground pt-2">Settings</h1>
-
+      
       {/* Profile */}
       <ProfileEditor />
 
-<<<<<<< HEAD
-      {/* Team Management */}
-      <TeamManager />
-=======
       {/* Team */}
       <Card>
         <CardHeader className="pb-2">
@@ -124,7 +106,6 @@ export default function Settings() {
           </AlertDialog>
         </CardContent>
       </Card>
->>>>>>> c2eb81959cf42c59472a9c09f1df34ae13472867
 
       {/* Categories */}
       <CategoryManager />
