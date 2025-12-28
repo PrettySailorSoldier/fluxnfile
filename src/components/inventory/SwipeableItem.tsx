@@ -5,6 +5,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Package, ChevronRight, Tag, Trash2, CheckCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Item, statusConfig, calculateProfit, getProfitLevel, ItemStatus } from '@/hooks/useInventory';
+import { ReviewStatusBadge } from '@/components/amazon/ReviewStatusBadge';
 
 interface SwipeableItemProps {
   item: Item;
@@ -226,13 +227,21 @@ export function SwipeableItem({
                 <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-1" />
               </div>
 
-              <div className="flex items-center gap-2 mt-2">
+              <div className="flex items-center gap-2 mt-2 flex-wrap">
                 <Badge
                   variant="secondary"
                   className={cn('text-xs', statusConfig[item.status].className)}
                 >
                   {statusConfig[item.status].label}
                 </Badge>
+                
+                {/* Amazon review badge */}
+                {item.acquisition_source === 'Amazon' && (item as any).amazon_review_status && (
+                  <ReviewStatusBadge 
+                    status={(item as any).amazon_review_status} 
+                    size="sm" 
+                  />
+                )}
 
                 <div className="flex-1 text-right">
                   <span className="text-sm text-muted-foreground">

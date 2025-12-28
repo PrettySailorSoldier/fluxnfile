@@ -293,7 +293,10 @@ export default function ItemDetail() {
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-muted-foreground">Amazon Item:</span>
-            <ReviewStatusBadge status={(item as any).amazon_review_status} />
+            <ReviewStatusBadge 
+              status={(item as any).amazon_review_status} 
+              reviewedBy={(item as any).reviewed_by || []}
+            />
           </div>
           <ReviewActions
             itemId={item.id}

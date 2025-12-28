@@ -5,35 +5,40 @@ type ReviewStatus = 'pending' | 'reviewed_grant' | 'reviewed_crybaby' | 'reviewe
 
 interface ReviewStatusBadgeProps {
   status: ReviewStatus;
+  reviewedBy?: string[];
   size?: 'sm' | 'default';
 }
 
-export function ReviewStatusBadge({ status, size = 'default' }: ReviewStatusBadgeProps) {
+export function ReviewStatusBadge({ status, reviewedBy, size = 'default' }: ReviewStatusBadgeProps) {
   const getStatusConfig = () => {
     switch (status) {
       case 'pending':
         return {
           icon: Clock,
           label: 'Needs Review',
-          className: 'bg-warning/20 text-warning-foreground border-warning/30',
+          variant: 'secondary' as const,
+          className: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300',
         };
       case 'reviewed_grant':
         return {
           icon: CheckCircle,
           label: 'Reviewed by Grant',
-          className: 'bg-primary/20 text-primary border-primary/30',
+          variant: 'default' as const,
+          className: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
         };
       case 'reviewed_crybaby':
         return {
           icon: CheckCircle,
           label: 'Reviewed by CryBaby',
-          className: 'bg-accent/20 text-accent-foreground border-accent/30',
+          variant: 'default' as const,
+          className: 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300',
         };
       case 'reviewed_both':
         return {
           icon: Users,
           label: 'Reviewed by Both',
-          className: 'bg-success/20 text-success border-success/30',
+          variant: 'default' as const,
+          className: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
         };
       default:
         return null;
@@ -45,10 +50,9 @@ export function ReviewStatusBadge({ status, size = 'default' }: ReviewStatusBadg
   
   const Icon = config.icon;
   const iconSize = size === 'sm' ? 'w-3 h-3' : 'w-4 h-4';
-  const textSize = size === 'sm' ? 'text-xs' : 'text-sm';
 
   return (
-    <Badge variant="outline" className={`${config.className} ${textSize}`}>
+    <Badge variant={config.variant} className={config.className}>
       <Icon className={`${iconSize} mr-1`} />
       {config.label}
     </Badge>

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState, useEffect, useMemo } from 'react';
+import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -16,149 +16,391 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { Progress } from '@/components/ui/progress';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { toast } from 'sonner';
-import { Package, Loader2, Upload, AlertCircle, Info } from 'lucide-react';
+import { 
+  Package, 
+  Loader2, 
+  Upload, 
+  AlertCircle, 
+  Info, 
+  CheckCircle, 
+  AlertTriangle,
+  Copy,
+  ArrowRight,
+  ArrowLeft,
+  Sparkles,
+  ShieldAlert,
+  Edit2
+} from 'lucide-react';
+import { 
+  parseAmazonHTML, 
+  ParsedAmazonItem, 
+  PLACEHOLDER_IMAGE 
+} from '@/utils/amazon-parser';
 
-interface ParsedItem {
-  title: string;
-  orderDate: string;
-  price: number;
-  imageUrl?: string;
-  selected: boolean;
-}
+// ============================================================================
+// TYPES
+// ============================================================================
+
+type WizardStep = 'paste' | 'preview' | 'confirm';
 
 interface AmazonImportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
+// ============================================================================
+// CONFIDENCE BADGE COMPONENT
+// ============================================================================
+
+function ConfidenceBadge({ 
+  confidence, 
+  details 
+}: { 
+  confidence: 'high' | 'medium' | 'low';
+  details: ParsedAmazonItem['confidenceDetails'];
+}) {
+  const config = {
+    high: {
+      icon: CheckCircle,
+      label: 'High Confidence',
+      className: 'bg-success/20 text-success border-success/30',
+      description: 'All fields found accurately',
+    },
+    medium: {
+      icon: AlertTriangle,
+      label: 'Medium',
+      className: 'bg-warning/20 text-warning border-warning/30',
+      description: 'Some fields were estimated',
+    },
+    low: {
+      icon: AlertCircle,
+      label: 'Low',
+      className: 'bg-destructive/20 text-destructive border-destructive/30',
+      description: 'Data may be incomplete',
+    },
+  };
+
+  const { icon: Icon, label, className, description } = config[confidence];
+
+  const detailItems = [
+    { label: 'Title', found: details.titleFound },
+    { label: 'Price', found: details.priceFound, guessed: details.priceGuessed },
+    { label: 'Date', found: details.dateFound, guessed: details.dateGuessed },
+    { label: 'ASIN', found: details.asinFound },
+  ];
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge variant="outline" className={`${className} cursor-help`}>
+            <Icon className="w-3 h-3 mr-1" />
+            {label}
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs">
+          <p className="font-medium mb-2">{description}</p>
+          <ul className="text-xs space-y-1">
+            {detailItems.map(({ label, found, guessed }) => (
+              <li key={label} className="flex items-center gap-2">
+                {found ? (
+                  guessed ? (
+                    <AlertTriangle className="w-3 h-3 text-warning" />
+                  ) : (
+                    <CheckCircle className="w-3 h-3 text-success" />
+                  )
+                ) : (
+                  <AlertCircle className="w-3 h-3 text-destructive" />
+                )}
+                <span>
+                  {label}: {found ? (guessed ? 'Estimated' : 'Found') : 'Not found'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+// ============================================================================
+// DUPLICATE BADGE COMPONENT
+// ============================================================================
+
+function DuplicateBadge({ type }: { type: 'asin' | 'title' }) {
+  return (
+    <Badge variant="outline" className="bg-warning/20 text-warning border-warning/30">
+      <ShieldAlert className="w-3 h-3 mr-1" />
+      {type === 'asin' ? 'Duplicate ASIN' : 'Similar Title'}
+    </Badge>
+  );
+}
+
+// ============================================================================
+// ITEM PREVIEW CARD
+// ============================================================================
+
+interface ItemPreviewProps {
+  item: ParsedAmazonItem;
+  index: number;
+  isDuplicateAsin: boolean;
+  isDuplicateTitle: boolean;
+  defaultMarkup: number;
+  onToggleSelect: (index: number) => void;
+  onUpdatePrice: (index: number, price: number) => void;
+}
+
+function ItemPreviewCard({
+  item,
+  index,
+  isDuplicateAsin,
+  isDuplicateTitle,
+  defaultMarkup,
+  onToggleSelect,
+  onUpdatePrice,
+}: ItemPreviewProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editPrice, setEditPrice] = useState(item.price.toString());
+  const [imageError, setImageError] = useState(false);
+
+  const targetPrice = item.price * (1 + defaultMarkup / 100);
+  const isDuplicate = isDuplicateAsin || isDuplicateTitle;
+
+  const handlePriceSubmit = () => {
+    const newPrice = parseFloat(editPrice);
+    if (!isNaN(newPrice) && newPrice > 0) {
+      onUpdatePrice(index, newPrice);
+    }
+    setIsEditing(false);
+  };
+
+  return (
+    <div
+      className={`flex items-start gap-3 p-3 rounded-lg transition-all ${
+        isDuplicate 
+          ? 'bg-warning/10 border border-warning/30' 
+          : 'bg-muted/50'
+      } ${!item.selected ? 'opacity-60' : ''}`}
+    >
+      <Checkbox
+        checked={item.selected}
+        onCheckedChange={() => onToggleSelect(index)}
+        className="mt-1"
+      />
+      
+      {/* Image */}
+      <div className="w-16 h-16 rounded overflow-hidden bg-muted flex-shrink-0">
+        {item.imageUrl && !imageError ? (
+          <img
+            src={item.imageUrl}
+            alt={item.cleanTitle}
+            className="w-full h-full object-cover"
+            onError={() => setImageError(true)}
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <Package className="w-6 h-6 text-muted-foreground" />
+          </div>
+        )}
+      </div>
+      
+      <div className="flex-1 min-w-0 space-y-1">
+        {/* Title */}
+        <h4 className="font-medium text-sm line-clamp-2">{item.cleanTitle}</h4>
+        
+        {/* Badges row */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <ConfidenceBadge confidence={item.confidence} details={item.confidenceDetails} />
+          {isDuplicateAsin && <DuplicateBadge type="asin" />}
+          {isDuplicateTitle && !isDuplicateAsin && <DuplicateBadge type="title" />}
+          {item.asin && (
+            <Badge variant="secondary" className="text-xs font-mono">
+              {item.asin}
+            </Badge>
+          )}
+        </div>
+        
+        {/* Price row */}
+        <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
+          <span className="flex items-center gap-1">
+            Cost: 
+            {isEditing ? (
+              <div className="flex items-center gap-1">
+                <span>$</span>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={editPrice}
+                  onChange={(e) => setEditPrice(e.target.value)}
+                  onBlur={handlePriceSubmit}
+                  onKeyDown={(e) => e.key === 'Enter' && handlePriceSubmit()}
+                  className="w-20 h-6 text-xs"
+                  autoFocus
+                />
+              </div>
+            ) : (
+              <button
+                onClick={() => setIsEditing(true)}
+                className="flex items-center gap-1 hover:text-foreground transition-colors"
+              >
+                ${item.price.toFixed(2)}
+                <Edit2 className="w-3 h-3" />
+              </button>
+            )}
+          </span>
+          <span>→</span>
+          <span>Target: ${targetPrice.toFixed(2)}</span>
+          <span className="text-success">
+            (+{defaultMarkup}%)
+          </span>
+        </div>
+        
+        {/* Date */}
+        <p className="text-xs text-muted-foreground">
+          Ordered: {new Date(item.orderDate).toLocaleDateString()}
+          {item.confidenceDetails.dateGuessed && (
+            <span className="text-warning ml-1">(estimated)</span>
+          )}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
+
 export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogProps) {
   const { team, user } = useAuth();
   const queryClient = useQueryClient();
   
+  // Wizard state
+  const [step, setStep] = useState<WizardStep>('paste');
   const [htmlInput, setHtmlInput] = useState('');
-  const [parsedItems, setParsedItems] = useState<ParsedItem[]>([]);
+  const [parsedItems, setParsedItems] = useState<ParsedAmazonItem[]>([]);
+  const [parseWarnings, setParseWarnings] = useState<string[]>([]);
   const [isParsing, setIsParsing] = useState(false);
-  const [defaultMarkup, setDefaultMarkup] = useState('50');
+  const [defaultMarkup, setDefaultMarkup] = useState(50);
 
-  // Parse Amazon HTML
-  const parseAmazonHTML = () => {
+  // Fetch existing items for duplicate detection
+  // Note: amazon_asin column may not exist until migration runs
+  const { data: existingItems = [] } = useQuery({
+    queryKey: ['existing-amazon-items', team?.id],
+    queryFn: async () => {
+      if (!team?.id) return [];
+      const { data, error } = await supabase
+        .from('items')
+        .select('id, title, acquisition_date')
+        .eq('team_id', team.id)
+        .eq('acquisition_source', 'Amazon');
+      
+      if (error) throw error;
+      
+      // Cast to include optional amazon_asin
+      return (data || []) as Array<{
+        id: string;
+        title: string | null;
+        amazon_asin?: string | null;
+        acquisition_date: string;
+      }>;
+    },
+    enabled: !!team?.id && open,
+  });
+
+  // Calculate duplicates
+  const { duplicateAsins, duplicateTitles } = useMemo(() => {
+    const asins = new Set(
+      existingItems
+        .filter((e): e is typeof e & { amazon_asin: string } => 
+          !!e.amazon_asin
+        )
+        .map(e => e.amazon_asin.toUpperCase())
+    );
+    const titles = new Set(
+      existingItems
+        .filter((e): e is typeof e & { title: string } => !!e.title)
+        .map(e => e.title.toLowerCase())
+    );
+    return {
+      duplicateAsins: asins,
+      duplicateTitles: titles,
+    };
+  }, [existingItems]);
+
+  // Reset state when dialog closes
+  useEffect(() => {
+    if (!open) {
+      setStep('paste');
+      setHtmlInput('');
+      setParsedItems([]);
+      setParseWarnings([]);
+    }
+  }, [open]);
+
+  // Parse HTML
+  const handleParse = () => {
     setIsParsing(true);
     
-    try {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(htmlInput, 'text/html');
-      
-      const items: ParsedItem[] = [];
-      
-      // Amazon's order item structure - multiple selectors for different page versions
-      const orderCards = doc.querySelectorAll('.order, .order-card, [data-order-id], .a-box-group');
-      
-      orderCards.forEach((orderCard) => {
-        // Extract order date
-        const dateElement = orderCard.querySelector('.order-date, [data-order-date], .a-color-secondary');
-        let orderDate = new Date().toISOString();
-        if (dateElement?.textContent) {
-          const dateMatch = dateElement.textContent.match(/(\w+\s+\d+,?\s+\d{4})|(\d+\/\d+\/\d{4})/);
-          if (dateMatch) {
-            try {
-              const parsed = new Date(dateMatch[0]);
-              if (!isNaN(parsed.getTime())) {
-                orderDate = parsed.toISOString();
-              }
-            } catch {
-              // Keep default date
-            }
-          }
+    // Use setTimeout to allow UI to update
+    setTimeout(() => {
+      try {
+        const result = parseAmazonHTML(htmlInput);
+        
+        if (result.items.length === 0) {
+          toast.error('No items found. Make sure you copied the full Amazon orders page HTML.');
+          setParseWarnings(result.parseWarnings);
+        } else {
+          setParsedItems(result.items);
+          setParseWarnings(result.parseWarnings);
+          setStep('preview');
+          toast.success(`Found ${result.items.length} items!`);
         }
-        
-        // Find all items in this order
-        const itemElements = orderCard.querySelectorAll('.product, .item, [data-asin], .yohtmlc-item, .a-fixed-left-grid');
-        
-        itemElements.forEach((itemEl) => {
-          // Extract title - try multiple selectors
-          const titleElement = itemEl.querySelector(
-            '.product-title, .item-title, a[href*="/dp/"], .a-link-normal[href*="/gp/product"]'
-          );
-          const title = titleElement?.textContent?.trim() || '';
-          
-          // Extract price - try multiple selectors
-          const priceElement = itemEl.querySelector(
-            '.product-price, .item-price, .a-price .a-offscreen, .a-color-price, .yohtmlc-item .a-text-bold'
-          );
-          const priceText = priceElement?.textContent?.trim().replace(/[$,]/g, '') || '0';
-          const price = parseFloat(priceText) || 0;
-          
-          // Extract image
-          const imgElement = itemEl.querySelector('img');
-          const imageUrl = imgElement?.src || imgElement?.getAttribute('data-src') || undefined;
-          
-          if (title && title.length > 5 && price > 0) {
-            // Avoid duplicates
-            const isDuplicate = items.some(i => i.title === title && i.price === price);
-            if (!isDuplicate) {
-              items.push({
-                title,
-                orderDate,
-                price,
-                imageUrl,
-                selected: true,
-              });
-            }
-          }
-        });
-      });
-      
-      // If orderCards approach didn't work, try a broader search
-      if (items.length === 0) {
-        // Look for any product links with prices nearby
-        const allLinks = doc.querySelectorAll('a[href*="/dp/"], a[href*="/gp/product"]');
-        allLinks.forEach((link) => {
-          const title = link.textContent?.trim();
-          if (!title || title.length < 5) return;
-          
-          // Look for price in parent containers
-          let parent = link.parentElement;
-          let price = 0;
-          for (let i = 0; i < 5 && parent; i++) {
-            const priceEl = parent.querySelector('.a-price .a-offscreen, .a-color-price');
-            if (priceEl) {
-              price = parseFloat(priceEl.textContent?.replace(/[$,]/g, '') || '0');
-              break;
-            }
-            parent = parent.parentElement;
-          }
-          
-          if (price > 0) {
-            const isDuplicate = items.some(i => i.title === title && i.price === price);
-            if (!isDuplicate) {
-              items.push({
-                title,
-                orderDate: new Date().toISOString(),
-                price,
-                imageUrl: undefined,
-                selected: true,
-              });
-            }
-          }
-        });
+      } catch (error) {
+        console.error('Parse error:', error);
+        toast.error('Failed to parse HTML. Please try again.');
+      } finally {
+        setIsParsing(false);
       }
-      
-      if (items.length === 0) {
-        toast.error('No items found. Make sure you copied the full Amazon orders page HTML.');
-      } else {
-        setParsedItems(items);
-        toast.success(`Found ${items.length} items!`);
-      }
-    } catch (error) {
-      console.error('Parse error:', error);
-      toast.error('Failed to parse HTML. Please try again.');
-    } finally {
-      setIsParsing(false);
-    }
+    }, 100);
   };
 
-  // Import selected items
+  // Toggle item selection
+  const toggleItemSelection = (index: number) => {
+    setParsedItems(items =>
+      items.map((item, i) =>
+        i === index ? { ...item, selected: !item.selected } : item
+      )
+    );
+  };
+
+  // Update item price
+  const updateItemPrice = (index: number, price: number) => {
+    setParsedItems(items =>
+      items.map((item, i) =>
+        i === index ? { ...item, price } : item
+      )
+    );
+  };
+
+  // Toggle all
+  const toggleAll = () => {
+    const allSelected = parsedItems.every(item => item.selected);
+    setParsedItems(items =>
+      items.map(item => ({ ...item, selected: !allSelected }))
+    );
+  };
+
+  // Import items mutation
   const importItems = useMutation({
     mutationFn: async () => {
       if (!team?.id || !user?.id) throw new Error('Not authenticated');
@@ -168,21 +410,19 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
         throw new Error('No items selected');
       }
 
-      const markup = parseFloat(defaultMarkup) / 100;
-      
       const itemsToInsert = selectedItems.map(item => ({
         team_id: team.id,
         created_by: user.id,
-        title: item.title.slice(0, 255), // Limit title length
+        title: item.cleanTitle.slice(0, 255),
         original_cost: item.price,
-        target_price: Math.round(item.price * (1 + markup) * 100) / 100,
+        target_price: Math.round(item.price * (1 + defaultMarkup / 100) * 100) / 100,
         acquisition_date: new Date(item.orderDate).toISOString().split('T')[0],
         acquisition_source: 'Amazon',
         condition: 'new' as const,
         status: 'acquired' as const,
         photos: item.imageUrl ? [item.imageUrl] : [],
         amazon_review_status: 'pending',
-        reviewed_by: [],
+        reviewed_by: [] as string[],
       }));
 
       const { error } = await supabase.from('items').insert(itemsToInsert);
@@ -192,9 +432,8 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     },
     onSuccess: (count) => {
       queryClient.invalidateQueries({ queryKey: ['items'] });
+      queryClient.invalidateQueries({ queryKey: ['existing-amazon-items'] });
       toast.success(`Successfully imported ${count} items!`);
-      setHtmlInput('');
-      setParsedItems([]);
       onOpenChange(false);
     },
     onError: (error: Error) => {
@@ -202,181 +441,208 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     },
   });
 
-  const toggleItemSelection = (index: number) => {
-    setParsedItems(items =>
-      items.map((item, i) =>
-        i === index ? { ...item, selected: !item.selected } : item
-      )
-    );
-  };
-
-  const toggleAll = () => {
-    const allSelected = parsedItems.every(item => item.selected);
-    setParsedItems(items =>
-      items.map(item => ({ ...item, selected: !allSelected }))
-    );
-  };
-
+  // Calculate stats
   const selectedCount = parsedItems.filter(item => item.selected).length;
+  const duplicateCount = parsedItems.filter(item => 
+    (item.asin && duplicateAsins.has(item.asin)) ||
+    duplicateTitles.has(item.cleanTitle.toLowerCase())
+  ).length;
+  const highConfidenceCount = parsedItems.filter(item => item.confidence === 'high').length;
+
+  // Step progress
+  const stepProgress = step === 'paste' ? 33 : step === 'preview' ? 66 : 100;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Package className="w-5 h-5 text-primary" />
             Import from Amazon Orders
           </DialogTitle>
           <DialogDescription>
-            Paste your Amazon orders page HTML to bulk import items
+            {step === 'paste' && 'Paste your Amazon orders page HTML to get started'}
+            {step === 'preview' && 'Review and adjust items before importing'}
+            {step === 'confirm' && 'Confirm your import'}
           </DialogDescription>
         </DialogHeader>
 
-        {parsedItems.length === 0 ? (
-          // Step 1: Paste HTML
-          <div className="space-y-4">
-            <Card className="bg-muted/50 border-dashed">
-              <CardContent className="p-4">
-                <div className="flex items-start gap-2 mb-3">
-                  <Info className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
-                  <span className="font-medium text-sm">How to get Amazon orders HTML:</span>
-                </div>
-                <ol className="text-sm text-muted-foreground space-y-1 ml-6 list-decimal">
-                  <li>Go to Amazon.com → Your Orders</li>
-                  <li>Right-click anywhere on the page</li>
-                  <li>Select "View Page Source" (or press Ctrl+U / Cmd+Option+U)</li>
-                  <li>Press Ctrl+A (Cmd+A on Mac) to select all</li>
-                  <li>Copy and paste below</li>
-                </ol>
-              </CardContent>
-            </Card>
-
-            <div className="space-y-2">
-              <Label htmlFor="html-input">Amazon Orders HTML</Label>
-              <Textarea
-                id="html-input"
-                placeholder="Paste the full HTML source code here..."
-                value={htmlInput}
-                onChange={(e) => setHtmlInput(e.target.value)}
-                rows={10}
-                className="font-mono text-xs"
-              />
-            </div>
-
-            <Button
-              onClick={parseAmazonHTML}
-              disabled={!htmlInput.trim() || isParsing}
-              className="w-full"
-            >
-              {isParsing ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Parsing...
-                </>
-              ) : (
-                <>
-                  <Upload className="w-4 h-4 mr-2" />
-                  Parse Items
-                </>
-              )}
-            </Button>
+        {/* Progress bar */}
+        <div className="space-y-2">
+          <Progress value={stepProgress} className="h-2" />
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span className={step === 'paste' ? 'text-primary font-medium' : ''}>
+              1. Paste Source
+            </span>
+            <span className={step === 'preview' ? 'text-primary font-medium' : ''}>
+              2. Preview & Edit
+            </span>
+            <span className={step === 'confirm' ? 'text-primary font-medium' : ''}>
+              3. Import
+            </span>
           </div>
-        ) : (
-          // Step 2: Review and Import
-          <div className="space-y-4">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-4">
-                <Button variant="outline" size="sm" onClick={toggleAll}>
-                  {parsedItems.every(item => item.selected) ? 'Deselect All' : 'Select All'}
-                </Button>
-                <Badge variant="secondary">
-                  {selectedCount} of {parsedItems.length} selected
-                </Badge>
+        </div>
+
+        {/* Step content */}
+        <div className="flex-1 overflow-y-auto">
+          {step === 'paste' && (
+            <div className="space-y-4">
+              {/* Instructions */}
+              <Card className="bg-muted/50 border-dashed">
+                <CardContent className="p-4">
+                  <div className="flex items-start gap-2 mb-3">
+                    <Info className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
+                    <span className="font-medium text-sm">How to get Amazon orders HTML:</span>
+                  </div>
+                  <ol className="text-sm text-muted-foreground space-y-1 ml-6 list-decimal">
+                    <li>Go to <span className="font-mono text-xs bg-muted px-1 rounded">amazon.com/gp/your-account/order-history</span></li>
+                    <li>Right-click anywhere on the page</li>
+                    <li>Select "View Page Source" <span className="text-muted-foreground">(or press Ctrl+U / Cmd+Option+U)</span></li>
+                    <li>Press Ctrl+A (Cmd+A on Mac) to select all</li>
+                    <li>Copy and paste below</li>
+                  </ol>
+                </CardContent>
+              </Card>
+
+              {/* Textarea */}
+              <div className="space-y-2">
+                <Label htmlFor="html-input">Amazon Orders HTML</Label>
+                <Textarea
+                  id="html-input"
+                  placeholder="Paste the full HTML source code here..."
+                  value={htmlInput}
+                  onChange={(e) => setHtmlInput(e.target.value)}
+                  rows={12}
+                  className="font-mono text-xs"
+                />
               </div>
-              
-              <div className="flex items-center gap-2">
+
+              {/* Warnings */}
+              {parseWarnings.length > 0 && (
+                <div className="bg-warning/10 border border-warning/30 rounded-lg p-3">
+                  <div className="flex items-center gap-2 text-warning mb-2">
+                    <AlertTriangle className="w-4 h-4" />
+                    <span className="font-medium text-sm">Parse Warnings</span>
+                  </div>
+                  <ul className="text-xs text-muted-foreground space-y-1">
+                    {parseWarnings.map((warning, i) => (
+                      <li key={i}>• {warning}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Parse button */}
+              <Button
+                onClick={handleParse}
+                disabled={!htmlInput.trim() || isParsing}
+                className="w-full"
+                size="lg"
+              >
+                {isParsing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Parsing...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 mr-2" />
+                    Parse Items
+                  </>
+                )}
+              </Button>
+            </div>
+          )}
+
+          {step === 'preview' && (
+            <div className="space-y-4">
+              {/* Stats bar */}
+              <div className="flex items-center justify-between flex-wrap gap-2 p-3 bg-muted/50 rounded-lg">
+                <div className="flex items-center gap-4">
+                  <Button variant="outline" size="sm" onClick={toggleAll}>
+                    {parsedItems.every(item => item.selected) ? 'Deselect All' : 'Select All'}
+                  </Button>
+                  <Badge variant="secondary">
+                    {selectedCount} of {parsedItems.length} selected
+                  </Badge>
+                </div>
+                
+                <div className="flex items-center gap-4 text-xs">
+                  <span className="flex items-center gap-1">
+                    <CheckCircle className="w-3 h-3 text-success" />
+                    {highConfidenceCount} high confidence
+                  </span>
+                  {duplicateCount > 0 && (
+                    <span className="flex items-center gap-1 text-warning">
+                      <ShieldAlert className="w-3 h-3" />
+                      {duplicateCount} potential duplicates
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Markup setting */}
+              <div className="flex items-center gap-4">
                 <Label htmlFor="markup" className="text-sm whitespace-nowrap">Default Markup:</Label>
                 <div className="flex items-center gap-1">
                   <Input
                     id="markup"
                     type="number"
                     value={defaultMarkup}
-                    onChange={(e) => setDefaultMarkup(e.target.value)}
-                    className="w-16 text-sm"
+                    onChange={(e) => setDefaultMarkup(parseFloat(e.target.value) || 0)}
+                    className="w-20 text-sm"
                   />
                   <span className="text-sm">%</span>
                 </div>
               </div>
-            </div>
 
-            <div className="space-y-2 max-h-96 overflow-y-auto border rounded-lg p-4">
-              {parsedItems.map((item, index) => (
-                <div
-                  key={index}
-                  className="flex items-start gap-3 p-3 bg-muted/50 rounded-lg"
-                >
-                  <Checkbox
-                    checked={item.selected}
-                    onCheckedChange={() => toggleItemSelection(index)}
-                    className="mt-1"
+              {/* Items list */}
+              <div className="space-y-2 max-h-96 overflow-y-auto border rounded-lg p-4">
+                {parsedItems.map((item, index) => (
+                  <ItemPreviewCard
+                    key={item.id}
+                    item={item}
+                    index={index}
+                    isDuplicateAsin={item.asin ? duplicateAsins.has(item.asin) : false}
+                    isDuplicateTitle={duplicateTitles.has(item.cleanTitle.toLowerCase())}
+                    defaultMarkup={defaultMarkup}
+                    onToggleSelect={toggleItemSelection}
+                    onUpdatePrice={updateItemPrice}
                   />
-                  
-                  {item.imageUrl && (
-                    <img
-                      src={item.imageUrl}
-                      alt={item.title}
-                      className="w-16 h-16 object-cover rounded flex-shrink-0"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = 'none';
-                      }}
-                    />
-                  )}
-                  
-                  <div className="flex-1 min-w-0">
-                    <h4 className="font-medium text-sm line-clamp-2">{item.title}</h4>
-                    <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground flex-wrap">
-                      <span>Cost: ${item.price.toFixed(2)}</span>
-                      <span>→</span>
-                      <span>
-                        Target: ${(item.price * (1 + parseFloat(defaultMarkup || '0') / 100)).toFixed(2)}
-                      </span>
-                      <span className="text-green-600">
-                        (+{defaultMarkup || 0}%)
-                      </span>
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Ordered: {new Date(item.orderDate).toLocaleDateString()}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
 
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                onClick={() => setParsedItems([])}
-                className="flex-1"
-              >
-                Start Over
-              </Button>
-              <Button
-                onClick={() => importItems.mutate()}
-                disabled={selectedCount === 0 || importItems.isPending}
-                className="flex-1"
-              >
-                {importItems.isPending ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Importing...
-                  </>
-                ) : (
-                  `Import ${selectedCount} Item${selectedCount !== 1 ? 's' : ''}`
-                )}
-              </Button>
+              {/* Navigation */}
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setStep('paste')}
+                  className="flex-1"
+                >
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  Back
+                </Button>
+                <Button
+                  onClick={() => importItems.mutate()}
+                  disabled={selectedCount === 0 || importItems.isPending}
+                  className="flex-1"
+                >
+                  {importItems.isPending ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Importing...
+                    </>
+                  ) : (
+                    <>
+                      Import {selectedCount} Item{selectedCount !== 1 ? 's' : ''}
+                      <ArrowRight className="w-4 h-4 ml-2" />
+                    </>
+                  )}
+                </Button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );
