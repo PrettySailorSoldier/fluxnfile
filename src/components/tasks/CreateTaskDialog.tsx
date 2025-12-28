@@ -1,98 +1,125 @@
 import { useState } from 'react';
-import { useCreateTask, taskTypeLabels, TaskType } from '@/hooks/useTasks';
-import { useAuth } from '@/contexts/AuthContext';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { useQuery } from '@tanstack/react-query';
+import { useAuth } from '@/contexts/AuthContext';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Plus } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
+import { Loader2 } from 'lucide-react';
+
+const TASK_TYPES = [
+  { value: 'needs_photos', label: '📸 Needs Photos' },
+  { value: 'needs_cleaning', label: '🧹 Needs Cleaning' },
+  { value: 'needs_pricing', label: '💰 Needs Pricing' },
+  { value: 'ready_to_list', label: '✍️ Ready to List' },
+  { value: 'needs_packaging', label: '📦 Needs Packaging' },
+  { value: 'ready_to_ship', label: '🚚 Ready to Ship' },
+  { value: 'meetup_scheduled', label: '🤝 Meetup Scheduled' },
+  { value: 'needs_discussion', label: '💬 Needs Discussion' },
+];
 
 interface CreateTaskDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   itemId?: string;
-  trigger?: React.ReactNode;
+  onSuccess?: () => void;
 }
 
-export function CreateTaskDialog({ itemId, trigger }: CreateTaskDialogProps) {
-  const { team } = useAuth();
-  const createTask = useCreateTask();
-  const [open, setOpen] = useState(false);
-  const [taskType, setTaskType] = useState<TaskType>('needs_photos');
-  const [assignedTo, setAssignedTo] = useState<string>('');
+export function CreateTaskDialog({ open, onOpenChange, itemId, onSuccess }: CreateTaskDialogProps) {
+  const { team, user } = useAuth();
+  const queryClient = useQueryClient();
+  
+  const [taskType, setTaskType] = useState('');
+  const [assignedTo, setAssignedTo] = useState('');
   const [notes, setNotes] = useState('');
-  const [deadline, setDeadline] = useState('');
 
   // Fetch team members
-  const { data: teamMembers = [] } = useQuery({
+  const { data: teamMembers } = useQuery({
     queryKey: ['team-members', team?.id],
     queryFn: async () => {
-      if (!team?.id) return [];
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('profiles')
         .select('id, full_name')
-        .eq('team_id', team.id);
-      if (error) throw error;
-      return data;
+        .eq('team_id', team?.id);
+      return data || [];
     },
     enabled: !!team?.id,
   });
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const createTask = useMutation({
+    mutationFn: async () => {
+      if (!team?.id || !user?.id) throw new Error('Not authenticated');
+      if (!taskType) throw new Error('Please select a task type');
 
-    try {
-      await createTask.mutateAsync({
-        item_id: itemId,
-        task_type: taskType,
-        assigned_to: assignedTo || undefined,
-        notes: notes || undefined,
-        deadline: deadline ? new Date(deadline).toISOString() : undefined,
+      const { error } = await supabase.from('tasks').insert({
+        team_id: team.id,
+        item_id: itemId || null,
+        task_type: taskType as 'needs_photos' | 'needs_cleaning' | 'needs_pricing' | 'ready_to_list' | 'needs_packaging' | 'ready_to_ship' | 'meetup_scheduled' | 'needs_discussion',
+        assigned_to: assignedTo || null,
+        created_by: user.id,
+        notes: notes.trim() || null,
+        status: 'pending' as const,
       });
-      toast.success('Task created');
-      setOpen(false);
-      resetForm();
-    } catch (error) {
-      toast.error('Failed to create task');
-    }
-  };
 
-  const resetForm = () => {
-    setTaskType('needs_photos');
-    setAssignedTo('');
-    setNotes('');
-    setDeadline('');
-  };
+      if (error) throw error;
+
+      // Create notification for assigned user
+      if (assignedTo && assignedTo !== user.id) {
+        await (supabase as any).from('notifications').insert({
+          user_id: assignedTo,
+          type: 'task_assigned',
+          title: 'New Task Assigned',
+          message: `You have a new task: ${TASK_TYPES.find(t => t.value === taskType)?.label}`,
+          link: itemId ? `/item/${itemId}` : '/tasks',
+        });
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['item', itemId] });
+      toast.success('Task created successfully!');
+      setTaskType('');
+      setAssignedTo('');
+      setNotes('');
+      onOpenChange(false);
+      onSuccess?.();
+    },
+    onError: (error: Error) => {
+      toast.error(error.message);
+    },
+  });
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        {trigger || (
-          <Button>
-            <Plus className="w-4 h-4 mr-2" />
-            New Task
-          </Button>
-        )}
-      </DialogTrigger>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Create Task</DialogTitle>
+          <DialogDescription>
+            Assign a task to yourself or your partner
+          </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="space-y-4 py-4">
           <div className="space-y-2">
-            <Label>Task Type</Label>
-            <Select value={taskType} onValueChange={(v) => setTaskType(v as TaskType)}>
-              <SelectTrigger>
-                <SelectValue />
+            <Label htmlFor="task-type">Task Type *</Label>
+            <Select value={taskType} onValueChange={setTaskType}>
+              <SelectTrigger id="task-type">
+                <SelectValue placeholder="Select task type" />
               </SelectTrigger>
               <SelectContent>
-                {Object.entries(taskTypeLabels).map(([key, { label }]) => (
-                  <SelectItem key={key} value={key}>
-                    {label}
+                {TASK_TYPES.map((type) => (
+                  <SelectItem key={type.value} value={type.value}>
+                    {type.label}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -100,16 +127,16 @@ export function CreateTaskDialog({ itemId, trigger }: CreateTaskDialogProps) {
           </div>
 
           <div className="space-y-2">
-            <Label>Assign To</Label>
+            <Label htmlFor="assigned-to">Assign To</Label>
             <Select value={assignedTo} onValueChange={setAssignedTo}>
-              <SelectTrigger>
-                <SelectValue placeholder="Anyone (unassigned)" />
+              <SelectTrigger id="assigned-to">
+                <SelectValue placeholder="Either (first available)" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Anyone</SelectItem>
-                {teamMembers.map((member) => (
+                <SelectItem value="">Either (first available)</SelectItem>
+                {teamMembers?.map((member) => (
                   <SelectItem key={member.id} value={member.id}>
-                    {member.full_name || 'Team Member'}
+                    {member.full_name || 'Team Member'} {member.id === user?.id ? '(You)' : ''}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -117,28 +144,26 @@ export function CreateTaskDialog({ itemId, trigger }: CreateTaskDialogProps) {
           </div>
 
           <div className="space-y-2">
-            <Label>Deadline (optional)</Label>
-            <Input
-              type="datetime-local"
-              value={deadline}
-              onChange={(e) => setDeadline(e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Notes (optional)</Label>
+            <Label htmlFor="notes">Notes (optional)</Label>
             <Textarea
+              id="notes"
+              placeholder="Any additional details..."
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Any additional details..."
               rows={3}
             />
           </div>
+        </div>
 
-          <Button type="submit" className="w-full" disabled={createTask.isPending}>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={() => createTask.mutate()} disabled={createTask.isPending || !taskType}>
+            {createTask.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
             Create Task
           </Button>
-        </form>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

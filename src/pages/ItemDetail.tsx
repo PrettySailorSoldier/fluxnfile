@@ -23,6 +23,7 @@ import { MeetupScheduler, MeetupsList } from '@/components/fb/MeetupScheduler';
 import { SafetyCheckIn, QuickSafetyButton } from '@/components/fb/SafetyCheckIn';
 import { useMeetups, useUpdateMeetup, Meetup } from '@/hooks/useMeetups';
 import { Offer } from '@/hooks/useOffers';
+import { CommentsSection } from '@/components/items/CommentsSection';
 
 const statusOrder: ItemStatus[] = ['acquired', 'refurbishing', 'ready_to_list', 'listed', 'sold', 'shipped'];
 
@@ -618,6 +619,11 @@ export default function ItemDetail() {
             )}
           </CardContent>
         </Card>
+      )}
+
+      {/* Comments Section */}
+      {!isEditing && id && (
+        <CommentsSection itemId={id} />
       )}
 
       {/* Quick List Dialog */}

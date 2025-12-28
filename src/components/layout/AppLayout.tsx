@@ -1,6 +1,7 @@
 import { ReactNode } from 'react';
 import { BottomNav } from './BottomNav';
 import { useTheme } from '@/contexts/ThemeContext';
+import { NotificationBell } from '@/components/notifications/NotificationBell';
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -15,6 +16,15 @@ export function AppLayout({ children }: AppLayoutProps) {
       {backgroundImageUrl && (
         <div className="fixed inset-0 bg-background/70 backdrop-blur-[2px] -z-10" />
       )}
+      
+      {/* Header with notification bell */}
+      <header className="sticky top-0 z-40 bg-background/95 backdrop-blur-sm border-b border-border">
+        <div className="max-w-lg mx-auto px-4 h-12 flex items-center justify-between">
+          <span className="font-semibold text-foreground">FluxNFile</span>
+          <NotificationBell />
+        </div>
+      </header>
+      
       <main className="max-w-lg mx-auto relative z-0">
         {children}
       </main>
