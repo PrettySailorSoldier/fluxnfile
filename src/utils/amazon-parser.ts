@@ -27,6 +27,9 @@ export interface ParsedAmazonItem {
     dateGuessed: boolean;
     asinFound: boolean;
   };
+  // Vine-specific fields
+  vineReviewStatus?: 'not_reviewed' | 'reviewed' | null;
+  vineQualityScore?: 'pending' | 'poor' | 'fair' | 'excellent' | null;
 }
 
 export interface ParseResult {
@@ -525,6 +528,37 @@ export function parseVineHTML(doc: Document): ParseResult {
       const price = 0;
       
       // =========================================================
+      // REVIEW STATUS: Detect from button text or status column
+      // "Awaiting Review" tab: shows "Not yet reviewed" + "Review Item" button
+      // "Reviewed" tab: shows "Approved" + quality score + "See review" button
+      // =========================================================
+      let vineReviewStatus: 'not_reviewed' | 'reviewed' | null = null;
+      let vineQualityScore: 'pending' | 'poor' | 'fair' | 'excellent' | null = null;
+      
+      const rowText = row.textContent?.toLowerCase() || '';
+      
+      // Check for "Review Item" button (indicates not reviewed)
+      const reviewItemBtn = row.querySelector('span.a-button-text, a.a-button-text, button');
+      const buttonText = reviewItemBtn?.textContent?.toLowerCase().trim() || '';
+      
+      if (buttonText.includes('review item') || rowText.includes('not yet reviewed')) {
+        vineReviewStatus = 'not_reviewed';
+      } else if (buttonText.includes('see review') || rowText.includes('approved')) {
+        vineReviewStatus = 'reviewed';
+        
+        // Extract quality score for reviewed items
+        if (rowText.includes('excellent')) {
+          vineQualityScore = 'excellent';
+        } else if (rowText.includes('fair')) {
+          vineQualityScore = 'fair';
+        } else if (rowText.includes('poor')) {
+          vineQualityScore = 'poor';
+        } else if (rowText.includes('pending')) {
+          vineQualityScore = 'pending';
+        }
+      }
+      
+      // =========================================================
       // DEBUGGING: Log every row processed
       // =========================================================
       console.log("Vine Row:", { 
@@ -533,7 +567,9 @@ export function parseVineHTML(doc: Document): ParseResult {
         asin, 
         timestamp: timestampAttr || '(not found)',
         parsedDate: orderDate,
-        image: imageUrl ? 'Found' : '(not found)'
+        image: imageUrl ? 'Found' : '(not found)',
+        reviewStatus: vineReviewStatus,
+        qualityScore: vineQualityScore
       });
       
       // Skip rows without a valid title
@@ -570,6 +606,8 @@ export function parseVineHTML(doc: Document): ParseResult {
         selected: true, // Select all Vine items by default
         confidence: dateGuessed ? 'medium' : 'high',
         confidenceDetails,
+        vineReviewStatus,
+        vineQualityScore,
       });
     } catch (error) {
       console.error(`[Vine Parser] Error parsing row ${rowIndex}:`, error);

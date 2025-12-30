@@ -224,6 +224,17 @@ function ItemPreviewCard({
           <ConfidenceBadge confidence={item.confidence} details={item.confidenceDetails} />
           {isDuplicateAsin && <DuplicateBadge type="asin" />}
           {isDuplicateTitle && !isDuplicateAsin && <DuplicateBadge type="title" />}
+          {/* Vine Review Status Badge */}
+          {item.vineReviewStatus === 'reviewed' && (
+            <Badge variant="outline" className="text-xs bg-success/20 text-success border-success/30">
+              ✓ Reviewed{item.vineQualityScore ? ` (${item.vineQualityScore})` : ''}
+            </Badge>
+          )}
+          {item.vineReviewStatus === 'not_reviewed' && (
+            <Badge variant="outline" className="text-xs bg-warning/20 text-warning border-warning/30">
+              Needs Review
+            </Badge>
+          )}
           {item.asin && (
             <Badge variant="secondary" className="text-xs font-mono">
               {item.asin}
@@ -498,20 +509,32 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
         throw new Error('No items selected');
       }
 
-      const itemsToInsert = selectedItems.map(item => ({
-        team_id: team.id,
-        created_by: user.id,
-        title: item.cleanTitle.slice(0, 255),
-        original_cost: item.price,
-        target_price: Math.round(item.price * (1 + defaultMarkup / 100) * 100) / 100,
-        acquisition_date: new Date(item.orderDate).toISOString().split('T')[0],
-        acquisition_source: 'Amazon',
-        condition: 'new' as const,
-        status: 'acquired' as const,
-        photos: item.imageUrl ? [item.imageUrl] : [],
-        amazon_review_status: 'pending',
-        reviewed_by: [] as string[],
-      }));
+      const itemsToInsert = selectedItems.map(item => {
+        // Map vineReviewStatus to amazon_review_status
+        let amazonReviewStatus = 'pending';
+        if (item.vineReviewStatus === 'reviewed') {
+          // If reviewed with quality score, mark as reviewed_grant
+          // (in-app review tracking still applies)
+          amazonReviewStatus = 'reviewed_grant';
+        } else if (item.vineReviewStatus === 'not_reviewed') {
+          amazonReviewStatus = 'pending';
+        }
+        
+        return {
+          team_id: team.id,
+          created_by: user.id,
+          title: item.cleanTitle.slice(0, 255),
+          original_cost: item.price,
+          target_price: Math.round(item.price * (1 + defaultMarkup / 100) * 100) / 100,
+          acquisition_date: new Date(item.orderDate).toISOString().split('T')[0],
+          acquisition_source: isVineMode ? 'Vine' : 'Amazon',
+          condition: 'new' as const,
+          status: 'acquired' as const,
+          photos: item.imageUrl ? [item.imageUrl] : [],
+          amazon_review_status: amazonReviewStatus,
+          reviewed_by: [] as string[],
+        };
+      });
 
       const { error } = await supabase.from('items').insert(itemsToInsert);
       if (error) throw error;
