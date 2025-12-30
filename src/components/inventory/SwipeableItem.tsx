@@ -216,8 +216,15 @@ export function SwipeableItem({
             <div className="flex-1 min-w-0">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <h3 className="font-medium text-foreground truncate">
-                    {item.title || item.category?.name || 'Untitled Item'}
+                  <h3 className="font-medium text-foreground truncate flex items-center gap-2">
+                    {item.tracking_number && (
+                      <span className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded text-muted-foreground flex-shrink-0">
+                        #{item.tracking_number.toString().padStart(5, '0')}
+                      </span>
+                    )}
+                    <span className="truncate">
+                      {item.title || item.category?.name || 'Untitled Item'}
+                    </span>
                   </h3>
                   <p className="text-xs text-muted-foreground">
                     {item.category?.name}

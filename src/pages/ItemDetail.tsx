@@ -219,9 +219,18 @@ export default function ItemDetail() {
         <Button variant="ghost" size="icon" onClick={() => navigate('/inventory')}>
           <ArrowLeft className="w-5 h-5" />
         </Button>
-        <h1 className="text-xl font-bold text-foreground flex-1 truncate">
-          {item.title || item.category?.name || 'Item Details'}
-        </h1>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            {item.tracking_number && (
+              <Badge variant="outline" className="font-mono text-sm flex-shrink-0">
+                #{item.tracking_number.toString().padStart(5, '0')}
+              </Badge>
+            )}
+            <h1 className="text-xl font-bold text-foreground truncate">
+              {item.title || item.category?.name || 'Item Details'}
+            </h1>
+          </div>
+        </div>
         {!isEditing ? (
           <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
             <Edit2 className="w-4 h-4 mr-1" />

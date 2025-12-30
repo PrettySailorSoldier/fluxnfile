@@ -9,6 +9,7 @@ export interface Item {
   id: string;
   team_id: string;
   created_by: string | null;
+  tracking_number: number | null;
   title: string | null;
   description: string | null;
   category_id: string | null;

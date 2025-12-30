@@ -1,4 +1,5 @@
 import { ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { BottomNav } from './BottomNav';
 import { useTheme } from '@/contexts/ThemeContext';
 import { NotificationBell } from '@/components/notifications/NotificationBell';
@@ -20,7 +21,9 @@ export function AppLayout({ children }: AppLayoutProps) {
       {/* Header with notification bell */}
       <header className="sticky top-0 z-40 bg-background/95 backdrop-blur-sm border-b border-border">
         <div className="max-w-lg mx-auto px-4 h-12 flex items-center justify-between">
-          <span className="font-semibold text-foreground">FluxNFile</span>
+          <Link to="/" className="font-semibold text-foreground hover:text-primary transition-colors">
+            Flux&File
+          </Link>
           <NotificationBell />
         </div>
       </header>

@@ -183,15 +183,35 @@ export default function Inventory() {
         </div>
       </div>
 
-      {/* Bulk Actions Bar */}
-      {isSelecting && selectedItems.size > 0 && (
-        <div className="flex items-center gap-2 p-3 bg-muted rounded-lg">
-          <span className="text-sm font-medium flex-1">
-            {selectedItems.size} selected
+      {/* Selection Controls - Always visible when in select mode */}
+      {isSelecting && (
+        <div className="flex flex-wrap items-center gap-2 p-3 bg-muted rounded-lg">
+          <span className="text-sm font-medium">
+            {selectedItems.size} of {filteredItems.length} selected
           </span>
-          <Button size="sm" variant="outline" onClick={selectAll}>
-            {selectedItems.size === filteredItems.length ? 'Deselect All' : 'Select All'}
+          <div className="flex-1" />
+          <Button 
+            size="sm" 
+            variant="outline" 
+            onClick={() => setSelectedItems(new Set(filteredItems.map(i => i.id)))}
+            disabled={selectedItems.size === filteredItems.length}
+          >
+            Select All
           </Button>
+          <Button 
+            size="sm" 
+            variant="outline" 
+            onClick={() => setSelectedItems(new Set())}
+            disabled={selectedItems.size === 0}
+          >
+            Deselect All
+          </Button>
+        </div>
+      )}
+
+      {/* Bulk Actions Bar - Shows when items are selected */}
+      {isSelecting && selectedItems.size > 0 && (
+        <div className="flex items-center gap-2 p-3 bg-primary/10 rounded-lg border border-primary/20">
           <Button size="sm" onClick={handleBulkMarkListed}>
             <Tag className="w-4 h-4 mr-1" />
             Mark Listed
