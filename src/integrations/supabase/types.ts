@@ -127,6 +127,7 @@ export type Database = {
           team_id: string
           time_invested_minutes: number | null
           title: string | null
+          tracking_number: number | null
           updated_at: string
         }
         Insert: {
@@ -161,6 +162,7 @@ export type Database = {
           team_id: string
           time_invested_minutes?: number | null
           title?: string | null
+          tracking_number?: number | null
           updated_at?: string
         }
         Update: {
@@ -195,6 +197,7 @@ export type Database = {
           team_id?: string
           time_invested_minutes?: number | null
           title?: string | null
+          tracking_number?: number | null
           updated_at?: string
         }
         Relationships: [
