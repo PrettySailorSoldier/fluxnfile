@@ -596,6 +596,72 @@ export type Database = {
           },
         ]
       }
+      rough_items: {
+        Row: {
+          id: string
+          team_id: string
+          created_by: string | null
+          box_label: string
+          box_description: string | null
+          item_name: string
+          item_notes: string | null
+          estimated_quantity: number
+          estimated_value: number | null
+          is_processed: boolean
+          linked_item_id: string | null
+          created_at: string
+          updated_at: string
+          processed_at: string | null
+        }
+        Insert: {
+          id?: string
+          team_id: string
+          created_by?: string | null
+          box_label: string
+          box_description?: string | null
+          item_name: string
+          item_notes?: string | null
+          estimated_quantity?: number
+          estimated_value?: number | null
+          is_processed?: boolean
+          linked_item_id?: string | null
+          created_at?: string
+          updated_at?: string
+          processed_at?: string | null
+        }
+        Update: {
+          id?: string
+          team_id?: string
+          created_by?: string | null
+          box_label?: string
+          box_description?: string | null
+          item_name?: string
+          item_notes?: string | null
+          estimated_quantity?: number
+          estimated_value?: number | null
+          is_processed?: boolean
+          linked_item_id?: string | null
+          created_at?: string
+          updated_at?: string
+          processed_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rough_items_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "rough_items_linked_item_id_fkey"
+            columns: ["linked_item_id"]
+            isOneToOne: false
+            referencedRelation: "items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       safety_checkins: {
         Row: {
           checkin_type: string

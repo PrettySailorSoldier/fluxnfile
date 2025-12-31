@@ -17,6 +17,7 @@ import Analytics from "./pages/Analytics";
 import Settings from "./pages/Settings";
 import Tasks from "./pages/Tasks";
 import FacebookTools from "./pages/FacebookTools";
+import RoughNotes from "./pages/RoughNotes";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -74,6 +75,11 @@ const App = () => (
             <Route path="/facebook-tools" element={
               <ProtectedRoute>
                 <AppLayout><FacebookTools /></AppLayout>
+              </ProtectedRoute>
+            } />
+            <Route path="/rough-notes" element={
+              <ProtectedRoute>
+                <AppLayout><RoughNotes /></AppLayout>
               </ProtectedRoute>
             } />
             <Route path="*" element={<NotFound />} />

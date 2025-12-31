@@ -1,17 +1,20 @@
-import { useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useRef, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCategories, useStorageLocations, ItemCondition } from '@/hooks/useInventory';
+import { useUpdateRoughItem } from '@/hooks/useRoughItems';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { toast } from 'sonner';
-import { Camera, X, Loader2, Plus, ImagePlus } from 'lucide-react';
+import { Camera, X, Loader2, Plus, ImagePlus, ArrowRight, StickyNote } from 'lucide-react';
 import { z } from 'zod';
 import { sanitizeError } from '@/lib/errorHandler';
 
@@ -25,11 +28,21 @@ const itemSchema = z.object({
 
 export default function AddItem() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { team, user } = useAuth();
   const { data: categories = [] } = useCategories();
   const { data: locations = [] } = useStorageLocations();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const updateRoughItem = useUpdateRoughItem();
+
+  // Check if converting from a rough item
+  const fromRoughId = searchParams.get('from_rough');
+  const prefillTitle = searchParams.get('title');
+  const prefillNotes = searchParams.get('notes');
+  const prefillEstimatedValue = searchParams.get('estimated_value');
+  const prefillBoxLabel = searchParams.get('box_label');
+  const isConvertingRoughItem = !!fromRoughId;
 
   const [photos, setPhotos] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -41,6 +54,16 @@ export default function AddItem() {
   const [acquisitionSource, setAcquisitionSource] = useState('');
   const [storageLocationId, setStorageLocationId] = useState('');
   const [refurbishNotes, setRefurbishNotes] = useState('');
+
+  // Pre-fill form fields when converting from rough item
+  useEffect(() => {
+    if (isConvertingRoughItem) {
+      if (prefillTitle) setTitle(prefillTitle);
+      if (prefillNotes) setRefurbishNotes(prefillNotes);
+      if (prefillEstimatedValue) setTargetPrice(prefillEstimatedValue);
+      if (prefillBoxLabel) setAcquisitionSource(`Box: ${prefillBoxLabel}`);
+    }
+  }, [isConvertingRoughItem, prefillTitle, prefillNotes, prefillEstimatedValue, prefillBoxLabel]);
 
   const createItem = useMutation({
     mutationFn: async (data: {
@@ -72,9 +95,26 @@ export default function AddItem() {
 
       if (error) throw error;
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['items'] });
-      toast.success('Item added successfully!');
+      
+      // If converting from a rough item, mark it as processed
+      if (fromRoughId) {
+        try {
+          await updateRoughItem.mutateAsync({
+            id: fromRoughId,
+            is_processed: true,
+          });
+          queryClient.invalidateQueries({ queryKey: ['rough_items'] });
+          toast.success('Item added and rough note marked as processed!');
+        } catch {
+          // Still succeeded in creating item, but failed to mark rough item
+          toast.success('Item added! (Note: Failed to mark rough note as processed)');
+        }
+      } else {
+        toast.success('Item added successfully!');
+      }
+      
       navigate('/inventory');
     },
     onError: (error) => {
@@ -158,7 +198,30 @@ export default function AddItem() {
 
   return (
     <div className="p-4 space-y-4 pb-24">
-      <h1 className="text-2xl font-bold text-foreground pt-2">Add Item</h1>
+      <h1 className="text-2xl font-bold text-foreground pt-2">
+        {isConvertingRoughItem ? 'Convert Rough Note' : 'Add Item'}
+      </h1>
+
+      {/* Rough Item Conversion Banner */}
+      {isConvertingRoughItem && (
+        <Alert className="bg-primary/10 border-primary/30">
+          <StickyNote className="h-4 w-4" />
+          <AlertDescription className="flex items-center gap-2">
+            <span>
+              Converting rough note: <strong>{prefillTitle}</strong>
+              {prefillBoxLabel && (
+                <Badge variant="outline" className="ml-2">
+                  {prefillBoxLabel}
+                </Badge>
+              )}
+            </span>
+            <ArrowRight className="h-4 w-4 text-primary" />
+            <span className="text-muted-foreground text-sm">
+              Will be marked as processed after adding
+            </span>
+          </AlertDescription>
+        </Alert>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* Photo Upload */}
@@ -345,12 +408,21 @@ export default function AddItem() {
           {createItem.isPending ? (
             <>
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              Adding...
+              {isConvertingRoughItem ? 'Converting...' : 'Adding...'}
             </>
           ) : (
             <>
-              <Plus className="w-4 h-4 mr-2" />
-              Add Item
+              {isConvertingRoughItem ? (
+                <>
+                  <ArrowRight className="w-4 h-4 mr-2" />
+                  Convert to Item
+                </>
+              ) : (
+                <>
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Item
+                </>
+              )}
             </>
           )}
         </Button>
