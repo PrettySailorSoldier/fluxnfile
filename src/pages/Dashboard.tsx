@@ -1,7 +1,8 @@
 import { useItems, calculateProfit } from '@/hooks/useInventory';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTasks } from '@/hooks/useTasks';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Package, DollarSign, TrendingUp, Clock, AlertCircle, CheckCircle2, Plus } from 'lucide-react';
+import { Package, DollarSign, TrendingUp, Clock, AlertCircle, CheckCircle2, Plus, ListTodo } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -12,6 +13,8 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const { team, profile } = useAuth();
   const { data: items = [], isLoading } = useItems();
+  const { data: tasks = [] } = useTasks();
+  const pendingTasks = tasks.filter(t => t.status !== 'completed');
 
   // Calculate metrics
   const inventoryCount = items.filter(i => !['sold', 'shipped'].includes(i.status)).length;
@@ -138,6 +141,34 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Tasks Quick Access */}
+      {pendingTasks.length > 0 ? (
+        <Link to="/tasks">
+          <Card className="bg-primary/10 border-primary/30 hover:shadow-md transition-shadow">
+            <CardContent className="p-3 flex items-center gap-3">
+              <ListTodo className="w-5 h-5 text-primary" />
+              <div className="flex-1">
+                <p className="font-medium text-sm">{pendingTasks.length} pending task{pendingTasks.length !== 1 ? 's' : ''}</p>
+                <p className="text-xs text-muted-foreground">Tap to view and manage</p>
+              </div>
+              <Badge variant="secondary">{pendingTasks.length}</Badge>
+            </CardContent>
+          </Card>
+        </Link>
+      ) : (
+        <Link to="/tasks">
+          <Card className="bg-muted/30 hover:shadow-md transition-shadow border-dashed">
+            <CardContent className="p-3 flex items-center gap-3">
+              <ListTodo className="w-5 h-5 text-muted-foreground" />
+              <div className="flex-1">
+                <p className="font-medium text-sm text-muted-foreground">No pending tasks</p>
+                <p className="text-xs text-muted-foreground">Tap to create your first task</p>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+      )}
 
       {/* Alerts */}
       {(staleItems.length > 0 || readyToList.length > 0) && (

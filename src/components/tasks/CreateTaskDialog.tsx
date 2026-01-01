@@ -73,15 +73,35 @@ export function CreateTaskDialog({ open, onOpenChange, itemId, onSuccess }: Crea
 
       if (error) throw error;
 
-      // Create notification for assigned user
-      if (assignedTo && assignedTo !== 'unassigned' && assignedTo !== user.id) {
+      const taskLabel = TASK_TYPES.find(t => t.value === taskType)?.label || taskType;
+      
+      // Create notification(s) for the task
+      if (assignedTo && assignedTo !== 'unassigned') {
+        // Task is assigned to a specific person - notify them
         await (supabase as any).from('notifications').insert({
           user_id: assignedTo,
+          team_id: team.id,
           type: 'task_assigned',
-          title: 'New Task Assigned',
-          message: `You have a new task: ${TASK_TYPES.find(t => t.value === taskType)?.label}`,
+          title: assignedTo === user.id ? '📋 Task Created' : '📋 New Task Assigned',
+          message: assignedTo === user.id 
+            ? `You created a task for yourself: ${taskLabel}`
+            : `You have a new task: ${taskLabel}`,
           link: itemId ? `/item/${itemId}` : '/tasks',
         });
+      } else {
+        // Task is unassigned - notify all team members
+        const teamMembersToNotify = teamMembers?.filter(m => m.id !== user.id) || [];
+        if (teamMembersToNotify.length > 0) {
+          const notifications = teamMembersToNotify.map(member => ({
+            user_id: member.id,
+            team_id: team.id,
+            type: 'task_assigned',
+            title: '📋 New Team Task',
+            message: `A new task is available: ${taskLabel}`,
+            link: itemId ? `/item/${itemId}` : '/tasks',
+          }));
+          await (supabase as any).from('notifications').insert(notifications);
+        }
       }
     },
     onSuccess: () => {

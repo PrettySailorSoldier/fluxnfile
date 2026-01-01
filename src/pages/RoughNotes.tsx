@@ -25,6 +25,7 @@ import {
   StickyNote,
   Check,
   Clock,
+  AlertCircle,
 } from 'lucide-react';
 import { useRoughItemsByBox, useRoughItemsCounts, RoughItem } from '@/hooks/useRoughItems';
 import { AddRoughItemDialog } from '@/components/rough-notes/AddRoughItemDialog';
@@ -37,7 +38,7 @@ export default function RoughNotes() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'processed'>('all');
   const [expandedBoxes, setExpandedBoxes] = useState<Set<string>>(new Set());
 
-  const { data: itemsByBox, items, isLoading } = useRoughItemsByBox();
+  const { data: itemsByBox, items, isLoading, error } = useRoughItemsByBox();
   const counts = useRoughItemsCounts();
 
   // Filter items
@@ -90,6 +91,28 @@ export default function RoughNotes() {
     return (
       <div className="p-4 flex items-center justify-center min-h-[60vh]">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-4 space-y-4 pb-24">
+        <div className="flex items-center justify-between pt-2">
+          <h1 className="text-2xl font-bold text-foreground">Rough Notes</h1>
+        </div>
+        <Card className="border-destructive bg-destructive/10">
+          <CardContent className="py-8 text-center">
+            <AlertCircle className="w-12 h-12 mx-auto text-destructive mb-3" />
+            <h3 className="font-semibold text-foreground mb-1">Unable to load rough notes</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              The rough_items table may not exist in your database. Please run the database migration.
+            </p>
+            <p className="text-xs text-muted-foreground font-mono">
+              {error.message || 'Unknown error occurred'}
+            </p>
+          </CardContent>
+        </Card>
       </div>
     );
   }

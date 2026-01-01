@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { LogOut, Users, Copy, MessageSquare, UserMinus, ShoppingBag, FileSpreadsheet, Megaphone, ChevronRight } from 'lucide-react';
+import { LogOut, Users, Copy, MessageSquare, UserMinus, ShoppingBag, FileSpreadsheet, Megaphone, ChevronRight, ListTodo } from 'lucide-react';
 import { toast } from 'sonner';
 import { TemplateLibrary } from '@/components/fb/TemplateLibrary';
 import { CategoryManager } from '@/components/settings/CategoryManager';
@@ -115,6 +115,29 @@ export default function Settings() {
 
       {/* Meetup Locations */}
       <MeetupLocationManager />
+
+      {/* Tasks */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <ListTodo className="w-4 h-4" />
+            Tasks
+          </CardTitle>
+          <CardDescription>
+            Manage and assign tasks to yourself or team members
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button 
+            variant="outline" 
+            className="w-full justify-between" 
+            onClick={() => navigate('/tasks')}
+          >
+            View Tasks
+            <ChevronRight className="w-4 h-4" />
+          </Button>
+        </CardContent>
+      </Card>
 
       {/* Theme */}
       <ThemeCustomizer />
