@@ -5,7 +5,11 @@
       "Bash(npm run build:*)",
       "Bash(npm run lint)",
       "Bash(del \"c:\\\\Users\\\\xfore\\\\OneDrive\\\\Desktop\\\\SERRUH\\\\Ex Nihilo\\\\fluxnfile\\\\src\\\\components\\\\settings\\\\TeamManager.tsx\")",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(npx tsc *)",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(node_modules/typescript/bin/tsc --noEmit)"
     ]
   }
 }

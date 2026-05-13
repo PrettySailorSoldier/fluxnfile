@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { useItems, useCategories, statusConfig, ItemStatus } from '@/hooks/useInventory';
+import { useItems, useCategories, statusConfig, ItemStatus, Item } from '@/hooks/useInventory';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Package, Search, Filter, Loader2, CheckSquare, X, Tag, Trash2, ShoppingCart } from 'lucide-react';
 import { toast } from 'sonner';
 import { SwipeableItem } from '@/components/inventory/SwipeableItem';
+import { QuickEditSheet } from '@/components/inventory/QuickEditSheet';
 import { MarketplaceExport } from '@/components/fb/MarketplaceExport';
 import { AmazonImportDialog } from '@/components/amazon/AmazonImportDialog';
 import { ReviewStatusBadge } from '@/components/amazon/ReviewStatusBadge';
@@ -30,6 +31,7 @@ export default function Inventory() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
   const [showAmazonImport, setShowAmazonImport] = useState(false);
+  const [quickEditItem, setQuickEditItem] = useState<Item | null>(null);
 
   const filteredItems = items.filter((item) => {
     const matchesSearch = !search ||
@@ -308,6 +310,7 @@ export default function Inventory() {
               isSelected={selectedItems.has(item.id)}
               onSelect={toggleSelect}
               onClick={() => navigate(`/item/${item.id}`)}
+              onTap={() => setQuickEditItem(item)}
               onMarkListed={() => updateItemStatus.mutate({ ids: [item.id], status: 'listed' })}
               onMarkSold={() => updateItemStatus.mutate({ ids: [item.id], status: 'sold' })}
               onDelete={() => {
@@ -348,6 +351,16 @@ export default function Inventory() {
       <AmazonImportDialog
         open={showAmazonImport}
         onOpenChange={setShowAmazonImport}
+      />
+
+      <QuickEditSheet
+        item={quickEditItem}
+        open={!!quickEditItem}
+        onClose={() => setQuickEditItem(null)}
+        onSaved={() => {
+          queryClient.invalidateQueries({ queryKey: ['items'] });
+          setQuickEditItem(null);
+        }}
       />
     </div>
   );

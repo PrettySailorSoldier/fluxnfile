@@ -13,6 +13,7 @@ interface SwipeableItemProps {
   isSelected: boolean;
   onSelect: (id: string) => void;
   onClick: () => void;
+  onTap?: () => void;
   onMarkListed: () => void;
   onMarkSold: () => void;
   onDelete: () => void;
@@ -24,6 +25,7 @@ export function SwipeableItem({
   isSelected,
   onSelect,
   onClick,
+  onTap,
   onMarkListed,
   onMarkSold,
   onDelete,
@@ -96,12 +98,13 @@ export function SwipeableItem({
   };
 
   const handleClick = () => {
-    if (Math.abs(swipeOffset) < 10) {
-      if (isSelecting) {
-        onSelect(item.id);
-      } else {
-        onClick();
-      }
+    if (Math.abs(swipeOffset) > 5) return;
+    if (isSelecting) {
+      onSelect(item.id);
+    } else if (onTap) {
+      onTap();
+    } else {
+      onClick();
     }
   };
 
