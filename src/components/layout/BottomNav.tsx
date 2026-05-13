@@ -1,12 +1,12 @@
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Package, Plus, StickyNote, Settings } from 'lucide-react';
+import { LayoutDashboard, Package, Plus, BarChart2, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const navItems = [
   { path: '/', icon: LayoutDashboard, label: 'Home' },
   { path: '/inventory', icon: Package, label: 'Items' },
   { path: '/add', icon: Plus, label: 'Add', isCenter: true },
-  { path: '/rough-notes', icon: StickyNote, label: 'Notes' },
+  { path: '/sales-check', icon: BarChart2, label: 'Sales' },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ];
 
