@@ -111,6 +111,8 @@ export type Database = {
           fb_listed_date: string | null
           fb_listing_url: string | null
           fb_views: number | null
+          flag_note: string | null
+          flagged_for: string | null
           id: string
           original_cost: number
           photos: string[] | null
@@ -146,6 +148,8 @@ export type Database = {
           fb_listed_date?: string | null
           fb_listing_url?: string | null
           fb_views?: number | null
+          flag_note?: string | null
+          flagged_for?: string | null
           id?: string
           original_cost: number
           photos?: string[] | null
@@ -181,6 +185,8 @@ export type Database = {
           fb_listed_date?: string | null
           fb_listing_url?: string | null
           fb_views?: number | null
+          flag_note?: string | null
+          flagged_for?: string | null
           id?: string
           original_cost?: number
           photos?: string[] | null

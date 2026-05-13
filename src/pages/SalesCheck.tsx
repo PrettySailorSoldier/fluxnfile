@@ -1,14 +1,17 @@
 import { useState, useEffect, useMemo, type ReactNode } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useItems, calculateProfit, Item } from '@/hooks/useInventory';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useItems, calculateProfit, Item, statusConfig } from '@/hooks/useInventory';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
-import { Tag, Clock, TrendingUp, AlertCircle, ChevronDown, Loader2 } from 'lucide-react';
+import { Tag, Clock, TrendingUp, AlertCircle, ChevronDown, Loader2, Flag } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+
+type FlaggedItem = Item & { flagged_for?: string | null; flag_note?: string | null };
 
 const MS_PER_DAY = 86_400_000;
 
@@ -135,10 +138,29 @@ function RepriceControl({ item, repricing, setRepricing, onSave, isPending }: Re
 
 export default function SalesCheck() {
   const queryClient = useQueryClient();
+  const { user, team } = useAuth();
   const { data: items = [], isLoading } = useItems();
 
   const [optimisticRemoved, setOptimisticRemoved] = useState<Set<string>>(new Set());
+  const [optimisticResolved, setOptimisticResolved] = useState<Set<string>>(new Set());
   const [repricing, setRepricing] = useState<Record<string, string>>({});
+
+  // Partner profile (the other team member)
+  const { data: partner } = useQuery({
+    queryKey: ['partner-profile', team?.id, user?.id],
+    queryFn: async () => {
+      if (!team?.id || !user?.id) return null;
+      const { data } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .eq('team_id', team.id)
+        .neq('id', user.id)
+        .limit(1)
+        .maybeSingle();
+      return data as { id: string; full_name: string | null } | null;
+    },
+    enabled: !!team?.id && !!user?.id,
+  });
 
   const [s1Open, setS1Open] = useState(true);
   const [s2Open, setS2Open] = useState(true);
@@ -147,6 +169,14 @@ export default function SalesCheck() {
   const [initialized, setInitialized] = useState(false);
 
   // ── Derived lists ──────────────────────────────────────────────────────────
+
+  const flaggedItems = useMemo(
+    () =>
+      (items as FlaggedItem[])
+        .filter(i => i.flagged_for != null && i.flagged_for === user?.id && !optimisticResolved.has(i.id))
+        .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()),
+    [items, user?.id, optimisticResolved]
+  );
 
   const needsListing = useMemo(
     () =>
@@ -265,6 +295,31 @@ export default function SalesCheck() {
     },
   });
 
+  const resolveFlagMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from('items')
+        .update({ flagged_for: null, flag_note: null })
+        .eq('id', id);
+      if (error) throw error;
+    },
+    onMutate: (id) => {
+      setOptimisticResolved(prev => new Set([...prev, id]));
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['items'] });
+      toast.success('Flag resolved');
+    },
+    onError: (_, id) => {
+      setOptimisticResolved(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      toast.error('Failed to resolve flag');
+    },
+  });
+
   function saveReprice(id: string) {
     const price = parseFloat(repricing[id]);
     if (isNaN(price) || price < 0) {
@@ -298,6 +353,58 @@ export default function SalesCheck() {
         <h1 className="text-2xl font-bold text-foreground">Sales Check</h1>
         <p className="text-sm text-muted-foreground">{todayLabel}</p>
       </div>
+
+      {/* ── Section 0: Flagged for You (omit when empty) ────────────────── */}
+      {flaggedItems.length > 0 && (
+        <div className="rounded-lg border border-amber-500/30 overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-3 bg-amber-500/10">
+            <Flag className="w-4 h-4 text-amber-500" />
+            <span className="font-semibold text-sm flex-1">Flagged for You</span>
+            <Badge
+              variant="outline"
+              className="text-xs tabular-nums bg-amber-500/20 text-amber-600 border-amber-500/40"
+            >
+              {flaggedItems.length}
+            </Badge>
+          </div>
+          <div className="divide-y">
+            {flaggedItems.map(item => (
+              <div key={item.id} className="px-4 py-3 space-y-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{getTitle(item)}</p>
+                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                      <Badge
+                        variant="secondary"
+                        className={cn('text-xs', statusConfig[item.status].className)}
+                      >
+                        {statusConfig[item.status].label}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        from {partner?.full_name || 'your partner'}
+                      </span>
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-shrink-0"
+                    onClick={() => resolveFlagMutation.mutate(item.id)}
+                    disabled={resolveFlagMutation.isPending}
+                  >
+                    Resolve
+                  </Button>
+                </div>
+                {item.flag_note && (
+                  <div className="rounded border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                    <p className="text-xs text-foreground">{item.flag_note}</p>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Section 1: Needs Listing ─────────────────────────────────────── */}
       <div className="rounded-lg border overflow-hidden">

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -24,28 +24,29 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
-import { 
-  Package, 
-  Loader2, 
-  Upload, 
-  AlertCircle, 
-  Info, 
-  CheckCircle, 
+import {
+  Package,
+  Loader2,
+  AlertCircle,
+  CheckCircle,
   AlertTriangle,
-  Copy,
   ArrowRight,
   ArrowLeft,
   Sparkles,
   ShieldAlert,
   Edit2,
   Grape,
-  DollarSign
+  DollarSign,
+  FileSpreadsheet,
+  FileUp,
 } from 'lucide-react';
-import { 
-  parseAmazonHTML, 
-  ParsedAmazonItem, 
-  PLACEHOLDER_IMAGE 
+import {
+  parseAmazonHTML,
+  parseAmazonCSV,
+  ParsedAmazonItem,
+  PLACEHOLDER_IMAGE
 } from '@/utils/amazon-parser';
+import { ImportMethodTabs, type ImportMethod } from '@/components/amazon/ImportMethodTabs';
 
 // ============================================================================
 // TYPES
@@ -296,9 +297,17 @@ function ItemPreviewCard({
 export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogProps) {
   const { team, user } = useAuth();
   const queryClient = useQueryClient();
-  
+
+  // File input refs
+  const csvInputRef  = useRef<HTMLInputElement>(null);
+  const htmlInputRef = useRef<HTMLInputElement>(null);
+
   // Wizard state
   const [step, setStep] = useState<WizardStep>('paste');
+  const [importMethod, setImportMethod] = useState<ImportMethod>('csv');
+  const [csvFileError, setCsvFileError] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [showCsvHelp, setShowCsvHelp] = useState(false);
   const [htmlInput, setHtmlInput] = useState('');
   const [parsedItems, setParsedItems] = useState<ParsedAmazonItem[]>([]);
   const [parseWarnings, setParseWarnings] = useState<string[]>([]);
@@ -357,6 +366,10 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
   useEffect(() => {
     if (!open) {
       setStep('paste');
+      setImportMethod('csv');
+      setCsvFileError(null);
+      setIsDragOver(false);
+      setShowCsvHelp(false);
       setHtmlInput('');
       setParsedItems([]);
       setParseWarnings([]);
@@ -366,7 +379,87 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     }
   }, [open]);
 
-  // Parse HTML
+  // ── File handling helpers ──────────────────────────────────────────────────
+
+  function processCsvText(text: string) {
+    setCsvFileError(null);
+    const result = parseAmazonCSV(text);
+    if (result.items.length === 0) {
+      setCsvFileError(result.parseWarnings[0] || 'No items found in the CSV file.');
+      setParseWarnings(result.parseWarnings);
+      return;
+    }
+    setParsedItems(result.items);
+    setParseWarnings(result.parseWarnings);
+    setIsVineMode(false);
+    setStep('preview');
+    toast.success(`Found ${result.items.length} item${result.items.length !== 1 ? 's' : ''}!`);
+  }
+
+  function processHtmlText(text: string) {
+    setIsParsing(true);
+    setTimeout(() => {
+      try {
+        const result = parseAmazonHTML(text);
+        if (result.items.length === 0) {
+          toast.error('No items found. Make sure this is an Amazon orders page.');
+          setParseWarnings(result.parseWarnings);
+        } else {
+          setParsedItems(result.items);
+          setParseWarnings(result.parseWarnings);
+          setIsVineMode(result.isVineMode);
+          setStep('preview');
+          toast.success(
+            result.isVineMode
+              ? `Found ${result.items.length} Vine items!`
+              : `Found ${result.items.length} items!`
+          );
+        }
+      } catch {
+        toast.error('Failed to parse HTML. Please try again.');
+      } finally {
+        setIsParsing(false);
+      }
+    }, 100);
+  }
+
+  function handleFileSelect(file: File, type: 'csv' | 'html') {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      if (type === 'csv') {
+        processCsvText(text);
+      } else {
+        processHtmlText(text);
+      }
+    };
+    reader.onerror = () => toast.error('Failed to read file');
+    reader.readAsText(file);
+  }
+
+  function handleInputChange(e: React.ChangeEvent<HTMLInputElement>, type: 'csv' | 'html') {
+    const file = e.target.files?.[0];
+    if (file) handleFileSelect(file, type);
+    e.target.value = ''; // reset so same file can be re-selected
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    const isCsv = file.name.endsWith('.csv') || file.type === 'text/csv';
+    const isHtml = file.name.endsWith('.html') || file.name.endsWith('.htm') || file.type === 'text/html';
+    if (importMethod === 'csv' && isCsv) {
+      handleFileSelect(file, 'csv');
+    } else if (importMethod === 'file' && isHtml) {
+      handleFileSelect(file, 'html');
+    } else {
+      toast.error(importMethod === 'csv' ? 'Please drop a .csv file' : 'Please drop an .html file');
+    }
+  }
+
+  // Parse HTML (paste method)
   const handleParse = () => {
     setIsParsing(true);
     
@@ -572,9 +665,11 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
             Import from Amazon Orders
           </DialogTitle>
           <DialogDescription>
-            {step === 'paste' && 'Paste your Amazon orders page HTML to get started'}
+            {step === 'paste' && importMethod === 'csv'  && 'Upload your Amazon order history CSV to get started'}
+            {step === 'paste' && importMethod === 'file' && 'Upload a saved Amazon orders HTML file'}
+            {step === 'paste' && importMethod === 'paste' && 'Paste your Amazon orders page HTML to get started'}
             {step === 'preview' && 'Review and adjust items before importing'}
-            {step === 'confirm' && 'Confirm your import'}
+            {step === 'confirm'  && 'Confirm your import'}
           </DialogDescription>
         </DialogHeader>
 
@@ -583,7 +678,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
           <Progress value={stepProgress} className="h-2" />
           <div className="flex justify-between text-xs text-muted-foreground">
             <span className={step === 'paste' ? 'text-primary font-medium' : ''}>
-              1. Paste Source
+              1. Add Source
             </span>
             <span className={step === 'preview' ? 'text-primary font-medium' : ''}>
               2. Preview & Edit
@@ -598,70 +693,189 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
         <div className="flex-1 overflow-y-auto">
           {step === 'paste' && (
             <div className="space-y-4">
-              {/* Instructions */}
-              <Card className="bg-muted/50 border-dashed">
-                <CardContent className="p-4">
-                  <div className="flex items-start gap-2 mb-3">
-                    <Info className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
-                    <span className="font-medium text-sm">How to get Amazon orders HTML:</span>
-                  </div>
-                  <ol className="text-sm text-muted-foreground space-y-1 ml-6 list-decimal">
-                    <li>Go to <span className="font-mono text-xs bg-muted px-1 rounded">amazon.com/gp/your-account/order-history</span></li>
-                    <li>Right-click anywhere on the page</li>
-                    <li>Select "View Page Source" <span className="text-muted-foreground">(or press Ctrl+U / Cmd+Option+U)</span></li>
-                    <li>Press Ctrl+A (Cmd+A on Mac) to select all</li>
-                    <li>Copy and paste below</li>
+              {/* Hidden file inputs */}
+              <input
+                ref={csvInputRef}
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden"
+                onChange={(e) => handleInputChange(e, 'csv')}
+              />
+              <input
+                ref={htmlInputRef}
+                type="file"
+                accept=".html,.htm,text/html"
+                className="hidden"
+                onChange={(e) => handleInputChange(e, 'html')}
+              />
+
+              {/* CSV Help Dialog */}
+              <Dialog open={showCsvHelp} onOpenChange={setShowCsvHelp}>
+                <DialogContent className="max-w-md">
+                  <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2">
+                      <FileSpreadsheet className="w-4 h-4 text-primary" />
+                      How to get your Amazon order history CSV
+                    </DialogTitle>
+                  </DialogHeader>
+                  <ol className="text-sm text-muted-foreground space-y-3 list-decimal ml-4">
+                    <li>Go to <strong className="text-foreground">amazon.com</strong> → Account &amp; Lists → Account</li>
+                    <li>Under <em>"Ordering and shopping preferences"</em>, click <strong className="text-foreground">Order History Reports</strong></li>
+                    <li>Select report type <strong className="text-foreground">"Items"</strong>, choose your date range, click <strong className="text-foreground">Request Report</strong></li>
+                    <li>Wait 1–2 minutes for Amazon to generate the file</li>
+                    <li>Click <strong className="text-foreground">Download</strong> next to your report</li>
+                    <li>Upload the downloaded <code className="bg-muted px-1 rounded text-xs">.csv</code> file here</li>
                   </ol>
-                </CardContent>
-              </Card>
+                  <Button className="w-full mt-2" onClick={() => setShowCsvHelp(false)}>
+                    Got it
+                  </Button>
+                </DialogContent>
+              </Dialog>
 
-              {/* Textarea */}
-              <div className="space-y-2">
-                <Label htmlFor="html-input">Amazon Orders HTML</Label>
-                <Textarea
-                  id="html-input"
-                  placeholder="Paste the full HTML source code here..."
-                  value={htmlInput}
-                  onChange={(e) => setHtmlInput(e.target.value)}
-                  rows={12}
-                  className="font-mono text-xs"
-                />
-              </div>
+              {/* Method tabs */}
+              <ImportMethodTabs method={importMethod} onChange={(m) => { setImportMethod(m); setCsvFileError(null); }} />
 
-              {/* Warnings */}
-              {parseWarnings.length > 0 && (
-                <div className="bg-warning/10 border border-warning/30 rounded-lg p-3">
-                  <div className="flex items-center gap-2 text-warning mb-2">
-                    <AlertTriangle className="w-4 h-4" />
-                    <span className="font-medium text-sm">Parse Warnings</span>
+              {/* ── CSV Upload ── */}
+              {importMethod === 'csv' && (
+                <div className="space-y-3">
+                  {/* Drop zone */}
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
+                      isDragOver
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border hover:border-primary/50 hover:bg-muted/30'
+                    }`}
+                    onClick={() => csvInputRef.current?.click()}
+                    onKeyDown={(e) => e.key === 'Enter' && csvInputRef.current?.click()}
+                    onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+                    onDragLeave={() => setIsDragOver(false)}
+                    onDrop={handleDrop}
+                  >
+                    <FileSpreadsheet className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
+                    <p className="font-medium text-sm">Drop your Amazon order CSV here</p>
+                    <p className="text-xs text-muted-foreground mt-1">or click to browse</p>
+                    <p className="text-xs text-muted-foreground mt-3 max-w-xs mx-auto leading-relaxed">
+                      Get your CSV from Amazon: Account → Order History Reports → Select date range → Request Report → Download when ready
+                    </p>
+                    <button
+                      type="button"
+                      className="text-xs text-primary underline-offset-2 hover:underline mt-2 block mx-auto"
+                      onClick={(e) => { e.stopPropagation(); setShowCsvHelp(true); }}
+                    >
+                      How to get your order history CSV →
+                    </button>
                   </div>
-                  <ul className="text-xs text-muted-foreground space-y-1">
-                    {parseWarnings.map((warning, i) => (
-                      <li key={i}>• {warning}</li>
-                    ))}
-                  </ul>
+
+                  {/* CSV file error */}
+                  {csvFileError && (
+                    <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
+                      <AlertCircle className="w-4 h-4 text-destructive mt-0.5 flex-shrink-0" />
+                      <p className="text-xs text-destructive">{csvFileError}</p>
+                    </div>
+                  )}
+
+                  <p className="text-xs text-muted-foreground text-center">
+                    Using the Amazon Order History Reporter browser extension?{' '}
+                    Export as CSV and upload here.
+                  </p>
                 </div>
               )}
 
-              {/* Parse button */}
-              <Button
-                onClick={handleParse}
-                disabled={!htmlInput.trim() || isParsing}
-                className="w-full"
-                size="lg"
-              >
-                {isParsing ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Parsing...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4 mr-2" />
-                    Parse Items
-                  </>
-                )}
-              </Button>
+              {/* ── HTML File Upload ── */}
+              {importMethod === 'file' && (
+                <div className="space-y-3">
+                  <Card className="bg-muted/50 border-dashed">
+                    <CardContent className="p-4 text-sm text-muted-foreground space-y-1">
+                      <p className="font-medium text-foreground">Save your Amazon orders page as an HTML file and upload it here.</p>
+                      <p>On your orders page: <strong>File → Save Page As → Webpage, HTML Only → Save</strong></p>
+                    </CardContent>
+                  </Card>
+
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
+                      isDragOver
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border hover:border-primary/50 hover:bg-muted/30'
+                    }`}
+                    onClick={() => htmlInputRef.current?.click()}
+                    onKeyDown={(e) => e.key === 'Enter' && htmlInputRef.current?.click()}
+                    onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+                    onDragLeave={() => setIsDragOver(false)}
+                    onDrop={handleDrop}
+                  >
+                    {isParsing ? (
+                      <Loader2 className="w-10 h-10 mx-auto mb-3 text-primary animate-spin" />
+                    ) : (
+                      <FileUp className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
+                    )}
+                    <p className="font-medium text-sm">
+                      {isParsing ? 'Parsing…' : 'Drop your HTML file here'}
+                    </p>
+                    {!isParsing && <p className="text-xs text-muted-foreground mt-1">or click to browse</p>}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Paste HTML ── */}
+              {importMethod === 'paste' && (
+                <div className="space-y-4">
+                  <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 p-3">
+                    <AlertTriangle className="w-4 h-4 text-warning mt-0.5 flex-shrink-0" />
+                    <p className="text-xs text-muted-foreground">
+                      This method may break if Amazon updates their page layout. CSV upload is more reliable.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="html-input">Amazon Orders HTML</Label>
+                    <Textarea
+                      id="html-input"
+                      placeholder="Paste the full HTML source code here..."
+                      value={htmlInput}
+                      onChange={(e) => setHtmlInput(e.target.value)}
+                      rows={10}
+                      className="font-mono text-xs"
+                    />
+                  </div>
+
+                  {parseWarnings.length > 0 && (
+                    <div className="bg-warning/10 border border-warning/30 rounded-lg p-3">
+                      <div className="flex items-center gap-2 text-warning mb-2">
+                        <AlertTriangle className="w-4 h-4" />
+                        <span className="font-medium text-sm">Parse Warnings</span>
+                      </div>
+                      <ul className="text-xs text-muted-foreground space-y-1">
+                        {parseWarnings.map((w, i) => (
+                          <li key={i}>• {w}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <Button
+                    onClick={handleParse}
+                    disabled={!htmlInput.trim() || isParsing}
+                    className="w-full"
+                    size="lg"
+                  >
+                    {isParsing ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Parsing...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4 mr-2" />
+                        Parse Items
+                      </>
+                    )}
+                  </Button>
+                </div>
+              )}
             </div>
           )}
 

@@ -920,3 +920,275 @@ export function parseAmazonHTML(html: string): ParseResult {
 // ============================================================================
 
 export { PLACEHOLDER_IMAGE };
+
+// ============================================================================
+// CSV PARSER
+// ============================================================================
+
+/**
+ * Split a single CSV line into fields, handling quoted fields and escaped quotes.
+ * Returns null if the line has an unmatched quote (malformed).
+ */
+function splitCSVLine(line: string): string[] | null {
+  const fields: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  let i = 0;
+
+  while (i < line.length) {
+    const char = line[i];
+
+    if (inQuotes) {
+      if (char === '"') {
+        if (line[i + 1] === '"') {
+          current += '"';
+          i += 2;
+        } else {
+          inQuotes = false;
+          i++;
+        }
+      } else {
+        current += char;
+        i++;
+      }
+    } else {
+      if (char === '"') {
+        inQuotes = true;
+        i++;
+      } else if (char === ',') {
+        fields.push(current.trim());
+        current = '';
+        i++;
+      } else {
+        current += char;
+        i++;
+      }
+    }
+  }
+
+  if (inQuotes) return null; // unmatched quote
+
+  fields.push(current.trim());
+  return fields;
+}
+
+/**
+ * Parse a price string from Amazon CSV: "$29.99", "$1,234.56", "29.99", ""
+ */
+function parsePriceCSV(priceStr: string): number {
+  if (!priceStr.trim()) return 0;
+  const cleaned = priceStr.replace(/[$,\s]/g, '');
+  const price = parseFloat(cleaned);
+  return isNaN(price) ? 0 : Math.round(price * 100) / 100;
+}
+
+/**
+ * Parse a date string from Amazon CSV, trying multiple regional formats.
+ */
+function parseDateCSV(dateStr: string): { date: string; guessed: boolean } {
+  if (!dateStr.trim()) return { date: new Date().toISOString(), guessed: true };
+
+  const now = new Date();
+  const tenYearsAgo = new Date(now.getFullYear() - 10, 0, 1);
+
+  function isValid(d: Date): boolean {
+    return !isNaN(d.getTime()) && d <= now && d >= tenYearsAgo;
+  }
+
+  function fromYMD(y: number, m: number, d: number): Date {
+    return new Date(y, m - 1, d);
+  }
+
+  // ISO: YYYY-MM-DD
+  const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    const d = fromYMD(+isoMatch[1], +isoMatch[2], +isoMatch[3]);
+    if (isValid(d)) return { date: d.toISOString(), guessed: false };
+  }
+
+  // Slash: M/D/YY, M/D/YYYY (US primary) or D/M/YY (EU fallback)
+  const slashMatch = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (slashMatch) {
+    let year = parseInt(slashMatch[3]);
+    if (slashMatch[3].length === 2) year = year < 50 ? 2000 + year : 1900 + year;
+
+    const a = parseInt(slashMatch[1]);
+    const b = parseInt(slashMatch[2]);
+
+    // US: MM/DD
+    if (a >= 1 && a <= 12) {
+      const d = fromYMD(year, a, b);
+      if (isValid(d)) return { date: d.toISOString(), guessed: false };
+    }
+
+    // EU: DD/MM (month in position 2)
+    if (b >= 1 && b <= 12) {
+      const d = fromYMD(year, b, a);
+      if (isValid(d)) return { date: d.toISOString(), guessed: true };
+    }
+  }
+
+  // JS Date fallback
+  const fallback = new Date(dateStr);
+  if (isValid(fallback)) return { date: fallback.toISOString(), guessed: true };
+
+  return { date: new Date().toISOString(), guessed: true };
+}
+
+/**
+ * Parse an Amazon Order History CSV export into the same ParseResult shape
+ * as parseAmazonHTML, so the existing preview/import flow works unchanged.
+ */
+export function parseAmazonCSV(csvText: string): ParseResult {
+  const warnings: string[] = [];
+  const items: ParsedAmazonItem[] = [];
+  const seenKeys = new Set<string>();
+
+  // Strip BOM (common in Excel-exported CSVs)
+  const text = csvText.replace(/^﻿/, '');
+
+  const rawLines = text.split(/\r?\n/);
+
+  if (rawLines.length === 0) {
+    return { items: [], totalFound: 0, parseWarnings: ['Empty file'], isVineMode: false };
+  }
+
+  // Parse header row dynamically
+  const headerFields = splitCSVLine(rawLines[0]);
+  if (!headerFields) {
+    return {
+      items: [],
+      totalFound: 0,
+      parseWarnings: [
+        "This doesn't look like an Amazon order history CSV. " +
+          "Make sure you're using the export from Account → Order History Reports.",
+      ],
+      isVineMode: false,
+    };
+  }
+
+  // Build case-insensitive header → index map
+  const headerMap: Record<string, number> = {};
+  for (let i = 0; i < headerFields.length; i++) {
+    headerMap[headerFields[i].toLowerCase().trim()] = i;
+  }
+
+  // Validate required headers exist
+  const required = ['order id', 'order date', 'title'];
+  const missing = required.filter(h => !(h in headerMap));
+  if (missing.length > 0) {
+    return {
+      items: [],
+      totalFound: 0,
+      parseWarnings: [
+        "This doesn't look like an Amazon order history CSV. " +
+          "Make sure you're using the export from Account → Order History Reports.",
+      ],
+      isVineMode: false,
+    };
+  }
+
+  function colIdx(name: string): number {
+    return headerMap[name.toLowerCase().trim()] ?? -1;
+  }
+
+  const COL_ORDER_ID   = colIdx('order id');
+  const COL_ORDER_DATE = colIdx('order date');
+  const COL_TITLE      = colIdx('title');
+  const COL_ASIN       = colIdx('asin/isbn');
+  const COL_QUANTITY   = colIdx('quantity');
+  const COL_ITEM_TOTAL = colIdx('item total');
+  const COL_UNIT_PRICE = colIdx('purchase price per unit');
+
+  for (let lineIdx = 1; lineIdx < rawLines.length; lineIdx++) {
+    const rawLine = rawLines[lineIdx];
+    if (!rawLine.trim()) continue;
+
+    const fields = splitCSVLine(rawLine);
+    if (!fields) {
+      warnings.push(`Row ${lineIdx + 1}: Skipped (malformed CSV — unmatched quote)`);
+      continue;
+    }
+
+    function field(idx: number): string {
+      return idx >= 0 && idx < fields!.length ? fields![idx].trim() : '';
+    }
+
+    const title = field(COL_TITLE);
+    if (!title || title.length < 3) continue;
+
+    const orderId     = field(COL_ORDER_ID);
+    const asinRaw     = field(COL_ASIN);
+    const asin        = asinRaw && /^[A-Z0-9]{10}$/i.test(asinRaw) ? asinRaw.toUpperCase() : null;
+    const quantityRaw = field(COL_QUANTITY);
+    const quantity    = Math.max(0, parseInt(quantityRaw) || 1);
+
+    // Price: unit price first, then Item Total fallback
+    let price = parsePriceCSV(field(COL_UNIT_PRICE));
+    if (price === 0 && COL_ITEM_TOTAL >= 0) {
+      const itemTotal = parsePriceCSV(field(COL_ITEM_TOTAL));
+      if (itemTotal > 0) {
+        price = quantity > 0 ? Math.round((itemTotal / quantity) * 100) / 100 : itemTotal;
+      }
+    }
+
+    // Skip refunds / fully cancelled rows
+    if (price === 0 && quantity === 0) {
+      warnings.push(`Row ${lineIdx + 1}: Skipped "${title.slice(0, 40)}" (cancelled/refund)`);
+      continue;
+    }
+
+    const { date: orderDate, guessed: dateGuessed } = parseDateCSV(field(COL_ORDER_DATE));
+
+    // Dedup by Order ID + ASIN (or title as fallback)
+    const dedupKey = `${orderId}::${asin ?? title.toLowerCase()}`;
+    if (seenKeys.has(dedupKey)) continue;
+    seenKeys.add(dedupKey);
+
+    const priceFound = price > 0;
+    const confidenceDetails = {
+      titleFound: true,
+      priceFound,
+      priceGuessed: false,
+      dateFound: !dateGuessed,
+      dateGuessed,
+      asinFound: !!asin,
+    };
+
+    const confidence: 'high' | 'medium' | 'low' =
+      priceFound && !dateGuessed ? 'high'
+      : dateGuessed              ? 'medium'
+      : 'low';
+
+    const cleanTitle = sanitizeTitle(title);
+
+    // Expand by quantity — one item per unit, up to 20 (guard against bad data)
+    const unitCount = Math.min(Math.max(1, quantity), 20);
+    for (let u = 0; u < unitCount; u++) {
+      items.push({
+        id: generateId(),
+        title,
+        cleanTitle,
+        orderDate,
+        price,
+        asin,
+        imageUrl: null,
+        selected: true,
+        confidence,
+        confidenceDetails,
+        vineReviewStatus: null,
+      });
+    }
+  }
+
+  if (items.length === 0 && warnings.length === 0) {
+    warnings.push('No items found in the CSV file.');
+  }
+
+  return {
+    items,
+    totalFound: items.length,
+    parseWarnings: warnings,
+    isVineMode: false,
+  };
+}

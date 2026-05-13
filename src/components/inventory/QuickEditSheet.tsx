@@ -1,16 +1,22 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { Flag } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 import { Item, ItemStatus, statusConfig, useStorageLocations, calculateProfit } from '@/hooks/useInventory';
+
+// Extends Item with the new flag columns (not yet in generated types)
+type FlaggedItem = Item & { flagged_for?: string | null; flag_note?: string | null };
 
 interface QuickEditSheetProps {
   item: Item | null;
@@ -21,6 +27,8 @@ interface QuickEditSheetProps {
 
 export function QuickEditSheet({ item, open, onClose, onSaved }: QuickEditSheetProps) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { user, team } = useAuth();
   const { data: storageLocations = [] } = useStorageLocations();
 
   const [status, setStatus] = useState<ItemStatus>('acquired');
@@ -29,15 +37,35 @@ export function QuickEditSheet({ item, open, onClose, onSaved }: QuickEditSheetP
   const [storageLocationId, setStorageLocationId] = useState('');
   const [quickNote, setQuickNote] = useState('');
   const [saleDate, setSaleDate] = useState(new Date().toISOString().split('T')[0]);
+  const [flagNote, setFlagNote] = useState('');
+
+  // Fetch partner profile (the other team member)
+  const { data: partner } = useQuery({
+    queryKey: ['partner-profile', team?.id, user?.id],
+    queryFn: async () => {
+      if (!team?.id || !user?.id) return null;
+      const { data } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .eq('team_id', team.id)
+        .neq('id', user.id)
+        .limit(1)
+        .maybeSingle();
+      return data as { id: string; full_name: string | null } | null;
+    },
+    enabled: !!team?.id && !!user?.id,
+  });
 
   useEffect(() => {
     if (!item) return;
+    const fi = item as FlaggedItem;
     setStatus(item.status);
     setTargetPrice(item.target_price != null ? String(item.target_price) : '');
     setActualPrice(item.actual_price != null ? String(item.actual_price) : '');
     setStorageLocationId(item.storage_location_id ?? '');
     setQuickNote(item.refurbish_notes ?? '');
     setSaleDate(item.sale_date ?? new Date().toISOString().split('T')[0]);
+    setFlagNote(fi.flag_note ?? '');
   }, [item]);
 
   const showSaleFields = status === 'sold' || status === 'shipped';
@@ -81,6 +109,29 @@ export function QuickEditSheet({ item, open, onClose, onSaved }: QuickEditSheetP
       toast.error('Failed to save changes');
     },
   });
+
+  const flagMutation = useMutation({
+    mutationFn: async () => {
+      if (!item || !partner?.id) return;
+      const { error } = await supabase
+        .from('items')
+        .update({ flagged_for: partner.id, flag_note: flagNote || null })
+        .eq('id', item.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['items'] });
+      toast.success(`Flagged for ${partner?.full_name || 'partner'}`);
+    },
+    onError: () => {
+      toast.error('Failed to flag item');
+    },
+  });
+
+  const fi = item as FlaggedItem | null;
+  const flaggedForMe = fi?.flagged_for != null && fi.flagged_for === user?.id;
+  const flaggedForPartner = fi?.flagged_for != null && fi.flagged_for === partner?.id;
+  const partnerName = partner?.full_name || 'Partner';
 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
@@ -225,6 +276,47 @@ export function QuickEditSheet({ item, open, onClose, onSaved }: QuickEditSheetP
           >
             View Full Details →
           </button>
+
+          {/* ── Flag for Partner ───────────────────────────────────────────── */}
+          <div className="rounded-lg border border-border bg-muted/20 px-3 py-3 space-y-2">
+            {flaggedForMe ? (
+              <Badge
+                variant="outline"
+                className="bg-amber-500/15 text-amber-600 border-amber-500/40 text-xs"
+              >
+                <Flag className="w-3 h-3 mr-1" />
+                Flagged for you by {partnerName}
+              </Badge>
+            ) : (
+              <>
+                {flaggedForPartner && (
+                  <p className="text-xs text-muted-foreground">
+                    Already flagged for {partnerName} — you can update the note and re-flag.
+                  </p>
+                )}
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">What needs attention? (optional)</Label>
+                  <Textarea
+                    placeholder="Add context for your partner..."
+                    value={flagNote}
+                    onChange={(e) => setFlagNote(e.target.value.slice(0, 300))}
+                    rows={2}
+                    className="resize-none text-sm"
+                  />
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full border-amber-500/40 text-amber-600 hover:bg-amber-500/10"
+                  onClick={() => flagMutation.mutate()}
+                  disabled={flagMutation.isPending || !partner}
+                >
+                  <Flag className="w-3.5 h-3.5 mr-1.5" />
+                  {flagMutation.isPending ? 'Flagging…' : `Flag for ${partnerName}`}
+                </Button>
+              </>
+            )}
+          </div>
 
           <Button
             className="w-full"
