@@ -105,56 +105,97 @@ export function VineReportImportDialog({
 
       const asins = selected.map(i => i.asin).filter(Boolean);
 
-      // Check existing by ASIN and order number to avoid duplicates.
-      // amazon_order_number is cast since it's added by migration and not yet
-      // reflected in the generated types.
-      const { data: existing } = await supabase
+      // Fetch existing items by ASIN — cast since generated types lag migration
+      const { data: existingRows } = await supabase
         .from('items')
-        .select('amazon_asin, amazon_order_number')
+        .select('id, amazon_asin, amazon_order_number, original_cost')
         .eq('team_id', team.id)
-        .in('amazon_asin', asins) as { data: Array<{ amazon_asin: string | null; amazon_order_number: string | null }> | null };
+        .in('amazon_asin', asins) as {
+          data: Array<{
+            id: string;
+            amazon_asin: string | null;
+            amazon_order_number: string | null;
+            original_cost: number | null;
+          }> | null;
+        };
 
-      const existingAsins = new Set(existing?.map(e => e.amazon_asin).filter(Boolean) || []);
-      const existingOrders = new Set(existing?.map(e => e.amazon_order_number).filter(Boolean) || []);
-
-      const toInsert = selected.filter(
-        item => !existingAsins.has(item.asin) && !existingOrders.has(item.orderNumber)
+      const existingMap = new Map(
+        existingRows?.map(e => [e.amazon_asin, e]) ?? []
       );
 
-      const skippedDupes = selected.length - toInsert.length;
+      const toInsert = selected.filter(item => !existingMap.has(item.asin));
+      const toMerge = selected.filter(item => existingMap.has(item.asin));
 
-      if (toInsert.length === 0) {
-        throw new Error('All selected items already exist in inventory');
+      // INSERT new items
+      if (toInsert.length > 0) {
+        const itemsToInsert = toInsert.map(item => ({
+          team_id: team.id,
+          created_by: user.id,
+          title: item.productName.slice(0, 255),
+          original_cost: item.estimatedTaxValue,
+          target_price:
+            item.estimatedTaxValue > 0
+              ? Math.round(item.estimatedTaxValue * 1.3 * 100) / 100
+              : null,
+          amazon_asin: item.asin,
+          ...({ amazon_order_number: item.orderNumber } as unknown as object),
+          acquisition_date: item.shippedDate,
+          acquisition_source: 'Vine',
+          condition: 'new' as const,
+          status: 'acquired' as const,
+          amazon_review_status: 'pending',
+          reviewed_by: [] as string[],
+          photos: [] as string[],
+        }));
+
+        const { error } = await supabase.from('items').insert(itemsToInsert);
+        if (error) throw error;
       }
 
-      const itemsToInsert = toInsert.map(item => ({
-        team_id: team.id,
-        created_by: user.id,
-        title: item.productName.slice(0, 255),
-        original_cost: item.estimatedTaxValue,
-        target_price: Math.round(item.estimatedTaxValue * 1.3 * 100) / 100,
-        amazon_asin: item.asin,
-        // Cast via unknown — column exists in DB but not yet in generated types
-        ...({ amazon_order_number: item.orderNumber } as unknown as object),
-        acquisition_date: item.shippedDate,
-        acquisition_source: 'Vine',
-        condition: 'new' as const,
-        status: 'acquired' as const,
-        amazon_review_status: 'pending',
-        reviewed_by: [] as string[],
-        photos: [] as string[],
-      }));
+      // MERGE missing fields into existing items — never overwrites good data
+      let mergedCount = 0;
+      if (toMerge.length > 0) {
+        const mergeOps = toMerge
+          .map(item => {
+            const existing = existingMap.get(item.asin);
+            if (!existing) return null;
 
-      const { error } = await supabase.from('items').insert(itemsToInsert);
-      if (error) throw error;
+            const updates: Record<string, unknown> = {};
 
-      return { imported: toInsert.length, skippedDupes };
+            if (!existing.amazon_order_number && item.orderNumber) {
+              updates.amazon_order_number = item.orderNumber;
+            }
+
+            if (
+              (!existing.original_cost || existing.original_cost === 0) &&
+              item.estimatedTaxValue > 0
+            ) {
+              updates.original_cost = item.estimatedTaxValue;
+              updates.target_price =
+                Math.round(item.estimatedTaxValue * 1.3 * 100) / 100;
+            }
+
+            if (Object.keys(updates).length === 0) return null;
+
+            return supabase.from('items').update(updates).eq('id', existing.id);
+          })
+          .filter((op): op is NonNullable<typeof op> => op !== null);
+
+        if (mergeOps.length > 0) {
+          await Promise.all(mergeOps);
+          mergedCount = mergeOps.length;
+        }
+      }
+
+      return { inserted: toInsert.length, merged: mergedCount, skipped: toMerge.length };
     },
-    onSuccess: ({ imported, skippedDupes }) => {
+    onSuccess: ({ inserted, merged, skipped }) => {
       queryClient.invalidateQueries({ queryKey: ['items'] });
-      let message = `Successfully imported ${imported} Vine items!`;
-      if (skippedDupes > 0) message += ` (${skippedDupes} already in inventory)`;
-      toast.success(message);
+      const parts: string[] = [];
+      if (inserted > 0) parts.push(`${inserted} new items imported`);
+      if (merged > 0) parts.push(`${merged} items updated with order numbers/values`);
+      if (skipped > 0 && merged === 0) parts.push(`${skipped} already up to date`);
+      toast.success(parts.join(' · ') || 'Import complete!');
       setStep('done');
     },
     onError: (error: Error) => {
