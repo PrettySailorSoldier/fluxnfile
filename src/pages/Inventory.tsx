@@ -561,20 +561,20 @@ export default function Inventory() {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="text-xs text-muted-foreground mb-1 block">From</label>
-                  <input
+                  <Input
                     type="date"
                     value={dateFrom}
                     onChange={(e) => setDateFrom(e.target.value)}
-                    className="w-full h-8 px-2 text-sm rounded-md border border-input bg-background text-foreground"
+                    className="h-8 text-sm"
                   />
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground mb-1 block">To</label>
-                  <input
+                  <Input
                     type="date"
                     value={dateTo}
                     onChange={(e) => setDateTo(e.target.value)}
-                    className="w-full h-8 px-2 text-sm rounded-md border border-input bg-background text-foreground"
+                    className="h-8 text-sm"
                   />
                 </div>
               </div>
