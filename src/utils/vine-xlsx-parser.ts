@@ -27,20 +27,15 @@ export function isVineReport(workbook: XLSX.WorkBook): boolean {
     defval: '',
   });
 
-  if (rows.length === 0) return false;
+  const required = ['Order Number', 'ASIN', 'Product Name', 'Order Type', 'Estimated Tax Value'];
 
-  const headers = rows[0] as string[];
-  const required = [
-    'Order Number',
-    'ASIN',
-    'Product Name',
-    'Order Type',
-    'Estimated Tax Value',
-  ];
-
-  return required.every(h =>
-    headers.some(header => header?.toString().trim() === h)
-  );
+  for (let i = 0; i < Math.min(5, rows.length); i++) {
+    const row = rows[i] as string[];
+    if (required.every(h => row.some(cell => cell?.toString().trim() === h))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function parseVineReport(workbook: XLSX.WorkBook): VineReportParseResult {
@@ -50,8 +45,20 @@ export function parseVineReport(workbook: XLSX.WorkBook): VineReportParseResult 
   let skippedFreeItems = 0;
 
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
+
+  const rawRows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: '' });
+  let headerRowIndex = 0;
+  for (let i = 0; i < Math.min(5, rawRows.length); i++) {
+    const row = rawRows[i] as string[];
+    if (row.some(cell => cell?.toString().trim() === 'Order Number')) {
+      headerRowIndex = i;
+      break;
+    }
+  }
+
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
     defval: '',
+    range: headerRowIndex,
   });
 
   for (const row of rows) {
