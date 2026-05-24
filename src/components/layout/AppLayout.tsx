@@ -19,7 +19,10 @@ export function AppLayout({ children }: AppLayoutProps) {
       )}
       
       {/* Header with notification bell */}
-      <header className="sticky top-0 z-40 bg-background/95 backdrop-blur-sm border-b border-border">
+      <header
+        className="sticky top-0 z-40 bg-background/95 backdrop-blur-sm border-b border-border"
+        style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
+      >
         <div className="max-w-lg mx-auto px-4 h-12 flex items-center justify-between">
           <Link to="/" className="font-semibold text-foreground hover:text-primary transition-colors">
             Flux&File

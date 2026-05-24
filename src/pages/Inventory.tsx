@@ -8,13 +8,14 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Package, Search, Filter, Loader2, CheckSquare, X, Tag, Trash2, ShoppingCart } from 'lucide-react';
+import { Package, Search, Filter, Loader2, CheckSquare, X, Tag, Trash2, ShoppingCart, ScanLine } from 'lucide-react';
 import { toast } from 'sonner';
 import { SwipeableItem } from '@/components/inventory/SwipeableItem';
 import { QuickEditSheet } from '@/components/inventory/QuickEditSheet';
 import { MarketplaceExport } from '@/components/fb/MarketplaceExport';
 import { AmazonImportDialog } from '@/components/amazon/AmazonImportDialog';
 import { ReviewStatusBadge } from '@/components/amazon/ReviewStatusBadge';
+import { BarcodeScannerModal } from '@/components/inventory/BarcodeScannerModal';
 export default function Inventory() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -32,6 +33,8 @@ export default function Inventory() {
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
   const [showAmazonImport, setShowAmazonImport] = useState(false);
   const [quickEditItem, setQuickEditItem] = useState<Item | null>(null);
+  const [showScanner, setShowScanner] = useState(false);
+  const [scanHighlightId, setScanHighlightId] = useState<string | null>(null);
 
   const filteredItems = items.filter((item) => {
     const matchesSearch = !search ||
@@ -139,6 +142,16 @@ export default function Inventory() {
     }
   };
 
+  const handleScanMatch = (item: Item) => {
+    setScanHighlightId(item.id);
+    setQuickEditItem(item);
+    setTimeout(() => setScanHighlightId(null), 4000);
+  };
+
+  const handleScanNoMatch = (asin: string) => {
+    navigate(`/add?asin=${asin}&acquisition_source=Vine`);
+  };
+
   if (isLoading) {
     return (
       <div className="p-4 flex items-center justify-center min-h-[60vh]">
@@ -153,6 +166,14 @@ export default function Inventory() {
       <div className="flex items-center justify-between pt-2">
         <h1 className="text-2xl font-bold text-foreground">Inventory</h1>
         <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowScanner(true)}
+          >
+            <ScanLine className="w-4 h-4 mr-1" />
+            Scan
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -308,6 +329,7 @@ export default function Inventory() {
               item={item}
               isSelecting={isSelecting}
               isSelected={selectedItems.has(item.id)}
+              isHighlighted={item.id === scanHighlightId}
               onSelect={toggleSelect}
               onClick={() => navigate(`/item/${item.id}`)}
               onTap={() => setQuickEditItem(item)}
@@ -361,6 +383,14 @@ export default function Inventory() {
           queryClient.invalidateQueries({ queryKey: ['items'] });
           setQuickEditItem(null);
         }}
+      />
+
+      <BarcodeScannerModal
+        open={showScanner}
+        items={items}
+        onMatchFound={handleScanMatch}
+        onNoMatch={handleScanNoMatch}
+        onClose={() => setShowScanner(false)}
       />
     </div>
   );

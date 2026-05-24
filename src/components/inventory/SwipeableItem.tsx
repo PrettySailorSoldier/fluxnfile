@@ -11,6 +11,7 @@ interface SwipeableItemProps {
   item: Item;
   isSelecting: boolean;
   isSelected: boolean;
+  isHighlighted?: boolean;
   onSelect: (id: string) => void;
   onClick: () => void;
   onTap?: () => void;
@@ -23,6 +24,7 @@ export function SwipeableItem({
   item,
   isSelecting,
   isSelected,
+  isHighlighted,
   onSelect,
   onClick,
   onTap,
@@ -175,7 +177,8 @@ export function SwipeableItem({
       <Card
         className={cn(
           'transition-transform cursor-pointer relative',
-          isSelected && 'ring-2 ring-primary'
+          isSelected && 'ring-2 ring-primary',
+          isHighlighted && 'ring-2 ring-green-500 bg-green-500/5'
         )}
         style={{ transform: `translateX(${swipeOffset}px)` }}
         onTouchStart={handleTouchStart}

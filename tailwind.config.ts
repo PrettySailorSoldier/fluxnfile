@@ -119,6 +119,11 @@ export default {
           from: { transform: "scale(0.95)", opacity: "0" },
           to: { transform: "scale(1)", opacity: "1" },
         },
+        "scan-line": {
+          "0%": { transform: "translateY(0px)", opacity: "1" },
+          "50%": { transform: "translateY(155px)", opacity: "0.8" },
+          "100%": { transform: "translateY(0px)", opacity: "1" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
@@ -126,6 +131,7 @@ export default {
         "slide-up": "slide-up 0.3s ease-out",
         "fade-in": "fade-in 0.2s ease-out",
         "scale-in": "scale-in 0.2s ease-out",
+        "scan-line": "scan-line 2s ease-in-out infinite",
       },
     },
   },

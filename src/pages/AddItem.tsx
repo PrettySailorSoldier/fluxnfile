@@ -42,6 +42,8 @@ export default function AddItem() {
   const prefillNotes = searchParams.get('notes');
   const prefillEstimatedValue = searchParams.get('estimated_value');
   const prefillBoxLabel = searchParams.get('box_label');
+  const prefillAsin = searchParams.get('asin');
+  const prefillSource = searchParams.get('acquisition_source');
   const isConvertingRoughItem = !!fromRoughId;
 
   const [photos, setPhotos] = useState<string[]>([]);
@@ -62,8 +64,10 @@ export default function AddItem() {
       if (prefillNotes) setRefurbishNotes(prefillNotes);
       if (prefillEstimatedValue) setTargetPrice(prefillEstimatedValue);
       if (prefillBoxLabel) setAcquisitionSource(`Box: ${prefillBoxLabel}`);
+    } else if (prefillSource) {
+      setAcquisitionSource(prefillSource);
     }
-  }, [isConvertingRoughItem, prefillTitle, prefillNotes, prefillEstimatedValue, prefillBoxLabel]);
+  }, [isConvertingRoughItem, prefillTitle, prefillNotes, prefillEstimatedValue, prefillBoxLabel, prefillSource]);
 
   const createItem = useMutation({
     mutationFn: async (data: {
