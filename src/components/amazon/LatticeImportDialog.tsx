@@ -22,6 +22,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { Upload, CheckCircle2, Clock } from 'lucide-react';
+import { useWorkflowSettings } from '@/hooks/useUserPreferences';
 
 interface LatticeImportDialogProps {
   open: boolean;
@@ -37,6 +38,16 @@ export function LatticeImportDialog({
   const { team, user } = useAuth();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const workflowSettings = useWorkflowSettings();
+
+  const calcTargetPrice = (cost: number): number | null => {
+    if (cost <= 0) return null;
+    let price = Math.round(cost * (workflowSettings.defaultMarkupPercent / 100) * 100) / 100;
+    if (workflowSettings.roundPricesToNinetyNine && price > 1) {
+      price = Math.floor(price) - 0.01;
+    }
+    return price;
+  };
 
   const [step, setStep] = useState<'upload' | 'preview' | 'done'>('upload');
   const [allItems, setAllItems] = useState<LatticeItem[]>([]);
@@ -141,10 +152,7 @@ export function LatticeImportDialog({
           created_by: user.id,
           title: item.description.slice(0, 255),
           original_cost: item.valueToUse,
-          target_price:
-            item.valueToUse > 0
-              ? Math.round(item.valueToUse * 1.3 * 100) / 100
-              : null,
+          target_price: calcTargetPrice(item.valueToUse),
           amazon_asin: item.asin,
           acquisition_date: getAcquisitionDate(item),
           acquisition_source: 'Vine',

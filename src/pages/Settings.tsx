@@ -10,6 +10,7 @@ import { CategoryManager } from '@/components/settings/CategoryManager';
 import { StorageLocationManager } from '@/components/settings/StorageLocationManager';
 import { MeetupLocationManager } from '@/components/settings/MeetupLocationManager';
 import { ThemeCustomizer } from '@/components/settings/ThemeCustomizer';
+import { WorkflowSettingsCard } from '@/components/settings/WorkflowSettingsCard';
 import { ProfileEditor } from '@/components/settings/ProfileEditor';
 import {
   AlertDialog,
@@ -138,6 +139,9 @@ export default function Settings() {
           </Button>
         </CardContent>
       </Card>
+
+      {/* Workflow Preferences */}
+      <WorkflowSettingsCard />
 
       {/* Theme */}
       <ThemeCustomizer />

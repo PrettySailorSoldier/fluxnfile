@@ -25,6 +25,7 @@ import {
   Upload,
   CheckCircle2,
 } from 'lucide-react';
+import { useWorkflowSettings } from '@/hooks/useUserPreferences';
 
 interface VineReportImportDialogProps {
   open: boolean;
@@ -38,6 +39,16 @@ export function VineReportImportDialog({
   const { team, user } = useAuth();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const workflowSettings = useWorkflowSettings();
+
+  const calcTargetPrice = (cost: number): number | null => {
+    if (cost <= 0) return null;
+    let price = Math.round(cost * (workflowSettings.defaultMarkupPercent / 100) * 100) / 100;
+    if (workflowSettings.roundPricesToNinetyNine && price > 1) {
+      price = Math.floor(price) - 0.01;
+    }
+    return price;
+  };
 
   const [step, setStep] = useState<'upload' | 'preview' | 'done'>('upload');
   const [parsedItems, setParsedItems] = useState<VineReportItem[]>([]);
@@ -133,10 +144,7 @@ export function VineReportImportDialog({
           created_by: user.id,
           title: item.productName.slice(0, 255),
           original_cost: item.estimatedTaxValue,
-          target_price:
-            item.estimatedTaxValue > 0
-              ? Math.round(item.estimatedTaxValue * 1.3 * 100) / 100
-              : null,
+          target_price: calcTargetPrice(item.estimatedTaxValue),
           amazon_asin: item.asin,
           ...({ amazon_order_number: item.orderNumber } as unknown as object),
           acquisition_date: item.shippedDate,
@@ -171,8 +179,7 @@ export function VineReportImportDialog({
               item.estimatedTaxValue > 0
             ) {
               updates.original_cost = item.estimatedTaxValue;
-              updates.target_price =
-                Math.round(item.estimatedTaxValue * 1.3 * 100) / 100;
+              updates.target_price = calcTargetPrice(item.estimatedTaxValue);
             }
 
             if (Object.keys(updates).length === 0) return null;

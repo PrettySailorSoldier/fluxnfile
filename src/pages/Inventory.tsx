@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useItems, useCategories, statusConfig, ItemStatus, Item } from '@/hooks/useInventory';
+import { useWorkflowSettings } from '@/hooks/useUserPreferences';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -57,13 +58,14 @@ export default function Inventory() {
   const [searchParams] = useSearchParams();
   const { data: items = [], isLoading } = useItems();
   const { data: categories = [] } = useCategories();
+  const workflowSettings = useWorkflowSettings();
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>(searchParams.get('status') || 'all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [reviewFilter, setReviewFilter] = useState<string>('all');
   const [deliveryFilter, setDeliveryFilter] = useState<DeliveryFilter>('all');
-  const [sortBy, setSortBy] = useState<SortOption>('newest');
+  const [sortBy, setSortBy] = useState<SortOption>(workflowSettings.defaultSortOrder);
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [showFilters, setShowFilters] = useState(false);
@@ -584,7 +586,7 @@ export default function Inventory() {
       </div>
 
       {/* Swipe hint */}
-      {!isSelecting && filteredItems.length > 0 && (
+      {workflowSettings.showSwipeHint && !isSelecting && filteredItems.length > 0 && (
         <p className="text-xs text-muted-foreground text-center">
           Swipe items left or right for quick actions
         </p>

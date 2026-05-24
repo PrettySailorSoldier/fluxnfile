@@ -8,6 +8,67 @@ export interface CustomNotificationTone {
   url: string;
 }
 
+export interface WorkflowSettings {
+  // ── IMPORT DEFAULTS ─────────────────────────────────
+  defaultMarkupPercent: number;
+  skipZeroEtvItems: boolean;
+  skipCancellations: boolean;
+  autoSelectAll: boolean;
+  defaultAcquisitionSource: string;
+
+  // ── PRICING ─────────────────────────────────────────
+  minimumMarginPercent: number;
+  defaultPlatformFeePercent: number;
+  roundPricesToNinetyNine: boolean;
+
+  // ── INVENTORY BEHAVIOR ───────────────────────────────
+  defaultSortOrder:
+    | 'newest'
+    | 'oldest'
+    | 'value_high'
+    | 'value_low'
+    | 'review_urgent'
+    | 'title_az';
+  showSwipeHint: boolean;
+  staleDaysThreshold: number;
+  repriceDaysThreshold: number;
+
+  // ── REVIEW WORKFLOW ──────────────────────────────────
+  reviewReminderDays: number;
+  primaryReviewer: string;
+  showReviewUrgency: boolean;
+
+  // ── SCANNING ─────────────────────────────────────────
+  scanAutoOpenEdit: boolean;
+  scanHapticFeedback: boolean;
+
+  // ── NOTIFICATIONS ────────────────────────────────────
+  notifyStaleListings: boolean;
+  notifyPendingReviews: boolean;
+}
+
+export const DEFAULT_WORKFLOW_SETTINGS: WorkflowSettings = {
+  defaultMarkupPercent: 130,
+  skipZeroEtvItems: true,
+  skipCancellations: true,
+  autoSelectAll: true,
+  defaultAcquisitionSource: 'Vine',
+  minimumMarginPercent: 20,
+  defaultPlatformFeePercent: 13,
+  roundPricesToNinetyNine: true,
+  defaultSortOrder: 'newest',
+  showSwipeHint: true,
+  staleDaysThreshold: 30,
+  repriceDaysThreshold: 14,
+  reviewReminderDays: 3,
+  primaryReviewer: 'grant',
+  showReviewUrgency: true,
+  scanAutoOpenEdit: true,
+  scanHapticFeedback: true,
+  notifyStaleListings: true,
+  notifyPendingReviews: true,
+};
+
 export interface UserPreferences {
   id: string;
   user_id: string;
@@ -18,6 +79,7 @@ export interface UserPreferences {
   notification_tone: string | null;
   notification_volume: number | null;
   custom_notification_tones: CustomNotificationTone[] | null;
+  workflow_settings: WorkflowSettings | null;
   created_at: string;
   updated_at: string;
 }
@@ -51,7 +113,6 @@ export function useUpdateUserPreferences() {
     mutationFn: async (preferences: Partial<Omit<UserPreferences, 'id' | 'user_id' | 'created_at' | 'updated_at'>>) => {
       if (!user?.id) throw new Error('Not authenticated');
 
-      // Try to update first
       const { data: existing } = await supabase
         .from('user_preferences')
         .select('id')
@@ -61,7 +122,7 @@ export function useUpdateUserPreferences() {
       if (existing) {
         const { data, error } = await supabase
           .from('user_preferences')
-          .update(preferences)
+          .update(preferences as any)
           .eq('user_id', user.id)
           .select()
           .single();
@@ -71,7 +132,7 @@ export function useUpdateUserPreferences() {
       } else {
         const { data, error } = await supabase
           .from('user_preferences')
-          .insert({ user_id: user.id, ...preferences })
+          .insert({ user_id: user.id, ...(preferences as any) })
           .select()
           .single();
 
@@ -81,6 +142,33 @@ export function useUpdateUserPreferences() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user-preferences'] });
+    },
+  });
+}
+
+export function useWorkflowSettings(): WorkflowSettings {
+  const { data: prefs } = useUserPreferences();
+
+  if (!prefs?.workflow_settings) {
+    return DEFAULT_WORKFLOW_SETTINGS;
+  }
+
+  return {
+    ...DEFAULT_WORKFLOW_SETTINGS,
+    ...prefs.workflow_settings,
+  };
+}
+
+export function useUpdateWorkflowSettings() {
+  const updatePrefs = useUpdateUserPreferences();
+  const current = useWorkflowSettings();
+
+  return useMutation({
+    mutationFn: async (updates: Partial<WorkflowSettings>) => {
+      const merged = { ...current, ...updates };
+      return updatePrefs.mutateAsync({
+        workflow_settings: merged as any,
+      });
     },
   });
 }
