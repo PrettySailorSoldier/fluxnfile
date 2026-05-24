@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Package, Search, Filter, Loader2, CheckSquare, X, Tag, Trash2, ShoppingCart, ScanLine, FileSpreadsheet } from 'lucide-react';
+import { Package, Search, Filter, Loader2, CheckSquare, X, Tag, Trash2, ShoppingCart, ScanLine, FileSpreadsheet, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { SwipeableItem } from '@/components/inventory/SwipeableItem';
 import { QuickEditSheet } from '@/components/inventory/QuickEditSheet';
@@ -17,6 +17,7 @@ import { AmazonImportDialog } from '@/components/amazon/AmazonImportDialog';
 import { ReviewStatusBadge } from '@/components/amazon/ReviewStatusBadge';
 import { BarcodeScannerModal } from '@/components/inventory/BarcodeScannerModal';
 import { VineReportImportDialog } from '@/components/amazon/VineReportImportDialog';
+import { LatticeImportDialog } from '@/components/amazon/LatticeImportDialog';
 export default function Inventory() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -34,6 +35,7 @@ export default function Inventory() {
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
   const [showAmazonImport, setShowAmazonImport] = useState(false);
   const [showVineReport, setShowVineReport] = useState(false);
+  const [showLattice, setShowLattice] = useState(false);
   const [quickEditItem, setQuickEditItem] = useState<Item | null>(null);
   const [showScanner, setShowScanner] = useState(false);
   const [scanHighlightId, setScanHighlightId] = useState<string | null>(null);
@@ -191,6 +193,14 @@ export default function Inventory() {
           >
             <FileSpreadsheet className="w-4 h-4 mr-1" />
             Vine Report
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowLattice(true)}
+          >
+            <Upload className="w-4 h-4 mr-1" />
+            Lattice CSV
           </Button>
           {items.length > 0 && <MarketplaceExport items={items} />}
           <Button
@@ -398,6 +408,11 @@ export default function Inventory() {
       <VineReportImportDialog
         open={showVineReport}
         onOpenChange={setShowVineReport}
+      />
+
+      <LatticeImportDialog
+        open={showLattice}
+        onOpenChange={setShowLattice}
       />
 
       <BarcodeScannerModal
