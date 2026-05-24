@@ -5,7 +5,7 @@ import { X, ScanLine, Loader2 } from 'lucide-react';
 import { Item } from '@/hooks/useInventory';
 import { toast } from 'sonner';
 
-const VIEWFINDER_ID = 'quagga-viewfinder';
+const VIEWFINDER_ID = 'zxing-viewfinder';
 
 interface BarcodeScannerModalProps {
   open: boolean;
@@ -98,9 +98,15 @@ export function BarcodeScannerModal({
         </button>
       </div>
 
-      {/* Camera viewfinder — Quagga mounts here */}
+      {/* Camera viewfinder — zxing renders directly into the video element */}
       <div className="relative flex-1 overflow-hidden bg-black">
-        <div id={VIEWFINDER_ID} className="w-full h-full" />
+        <video
+          id={VIEWFINDER_ID}
+          className="w-full h-full object-cover"
+          playsInline
+          muted
+          autoPlay
+        />
 
         {/* Targeting overlay */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
