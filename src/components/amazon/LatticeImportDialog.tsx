@@ -152,6 +152,8 @@ export function LatticeImportDialog({
           status: 'acquired' as const,
           amazon_review_status:
             item.reviewStatus === 'Approved' ? 'reviewed_grant' : 'pending',
+          // Cast via unknown — column added by 20260523000002 migration
+          ...({ delivery_status: item.deliveryStatus || null } as unknown as object),
           reviewed_by: [] as string[],
           photos: [] as string[],
         }));

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -8,7 +8,29 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Package, Search, Filter, Loader2, CheckSquare, X, Tag, Trash2, ShoppingCart, ScanLine, FileSpreadsheet, Upload } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+} from '@/components/ui/dropdown-menu';
+import {
+  Package,
+  Search,
+  Filter,
+  Loader2,
+  CheckSquare,
+  X,
+  Tag,
+  Trash2,
+  ShoppingCart,
+  ScanLine,
+  FileSpreadsheet,
+  Upload,
+  ChevronDown,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { SwipeableItem } from '@/components/inventory/SwipeableItem';
 import { QuickEditSheet } from '@/components/inventory/QuickEditSheet';
@@ -18,6 +40,17 @@ import { ReviewStatusBadge } from '@/components/amazon/ReviewStatusBadge';
 import { BarcodeScannerModal } from '@/components/inventory/BarcodeScannerModal';
 import { VineReportImportDialog } from '@/components/amazon/VineReportImportDialog';
 import { LatticeImportDialog } from '@/components/amazon/LatticeImportDialog';
+
+type SortOption =
+  | 'newest'
+  | 'oldest'
+  | 'value_high'
+  | 'value_low'
+  | 'review_urgent'
+  | 'title_az';
+
+type DeliveryFilter = 'all' | 'delivered' | 'arriving' | 'not_shipped';
+
 export default function Inventory() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -29,6 +62,11 @@ export default function Inventory() {
   const [statusFilter, setStatusFilter] = useState<string>(searchParams.get('status') || 'all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [reviewFilter, setReviewFilter] = useState<string>('all');
+  const [deliveryFilter, setDeliveryFilter] = useState<DeliveryFilter>('all');
+  const [sortBy, setSortBy] = useState<SortOption>('newest');
+  const [dateFrom, setDateFrom] = useState<string>('');
+  const [dateTo, setDateTo] = useState<string>('');
+  const [showFilters, setShowFilters] = useState(false);
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -40,31 +78,99 @@ export default function Inventory() {
   const [showScanner, setShowScanner] = useState(false);
   const [scanHighlightId, setScanHighlightId] = useState<string | null>(null);
 
-  const filteredItems = items.filter((item) => {
-    const matchesSearch = !search ||
-      item.title?.toLowerCase().includes(search.toLowerCase()) ||
-      item.category?.name?.toLowerCase().includes(search.toLowerCase()) ||
-      item.acquisition_source?.toLowerCase().includes(search.toLowerCase());
+  const filteredItems = useMemo(() => {
+    let result = items.filter((item) => {
+      const matchesSearch =
+        !search ||
+        item.title?.toLowerCase().includes(search.toLowerCase()) ||
+        item.category?.name?.toLowerCase().includes(search.toLowerCase()) ||
+        item.acquisition_source?.toLowerCase().includes(search.toLowerCase());
 
-    const matchesStatus = statusFilter === 'all' || item.status === statusFilter;
-    const matchesCategory = categoryFilter === 'all' || item.category_id === categoryFilter;
-    
-    // Review filter - only applies to Amazon items
-    let matchesReview = true;
-    if (reviewFilter !== 'all') {
-      const amazonStatus = (item as any).amazon_review_status;
-      if (reviewFilter === 'pending') {
-        matchesReview = item.acquisition_source === 'Amazon' && amazonStatus === 'pending';
-      } else if (reviewFilter === 'reviewed') {
-        matchesReview = item.acquisition_source === 'Amazon' && 
-          (amazonStatus === 'reviewed_grant' || amazonStatus === 'reviewed_crybaby');
-      } else if (reviewFilter === 'reviewed_both') {
-        matchesReview = item.acquisition_source === 'Amazon' && amazonStatus === 'reviewed_both';
+      const matchesStatus = statusFilter === 'all' || item.status === statusFilter;
+      const matchesCategory = categoryFilter === 'all' || item.category_id === categoryFilter;
+
+      let matchesReview = true;
+      if (reviewFilter !== 'all') {
+        const amazonStatus = (item as any).amazon_review_status;
+        if (reviewFilter === 'pending') {
+          matchesReview = amazonStatus === 'pending';
+        } else if (reviewFilter === 'reviewed') {
+          matchesReview =
+            amazonStatus === 'reviewed_grant' || amazonStatus === 'reviewed_crybaby';
+        } else if (reviewFilter === 'reviewed_both') {
+          matchesReview = amazonStatus === 'reviewed_both';
+        }
       }
-    }
 
-    return matchesSearch && matchesStatus && matchesCategory && matchesReview;
-  });
+      let matchesDate = true;
+      if (dateFrom || dateTo) {
+        const itemDate = item.acquisition_date
+          ? new Date(item.acquisition_date).getTime()
+          : null;
+        if (itemDate === null) {
+          matchesDate = false;
+        } else {
+          if (dateFrom) {
+            matchesDate = matchesDate && itemDate >= new Date(dateFrom).getTime();
+          }
+          if (dateTo) {
+            const toEnd = new Date(dateTo);
+            toEnd.setHours(23, 59, 59, 999);
+            matchesDate = matchesDate && itemDate <= toEnd.getTime();
+          }
+        }
+      }
+
+      let matchesDelivery = true;
+      if (deliveryFilter !== 'all') {
+        const ds = ((item as any).delivery_status || '').toLowerCase();
+        if (deliveryFilter === 'delivered') {
+          matchesDelivery = ds.includes('delivered');
+        } else if (deliveryFilter === 'arriving') {
+          matchesDelivery = ds.includes('arriving');
+        } else if (deliveryFilter === 'not_shipped') {
+          matchesDelivery = !ds || ds.trim() === '';
+        }
+      }
+
+      return matchesSearch && matchesStatus && matchesCategory && matchesReview && matchesDate && matchesDelivery;
+    });
+
+    result = [...result].sort((a, b) => {
+      switch (sortBy) {
+        case 'oldest':
+          return (
+            new Date(a.acquisition_date || a.created_at).getTime() -
+            new Date(b.acquisition_date || b.created_at).getTime()
+          );
+        case 'value_high':
+          return (b.original_cost || 0) - (a.original_cost || 0);
+        case 'value_low':
+          return (a.original_cost || 0) - (b.original_cost || 0);
+        case 'review_urgent': {
+          const aStatus = (a as any).amazon_review_status;
+          const bStatus = (b as any).amazon_review_status;
+          const aPending = aStatus === 'pending' ? 0 : 1;
+          const bPending = bStatus === 'pending' ? 0 : 1;
+          if (aPending !== bPending) return aPending - bPending;
+          return (
+            new Date(a.acquisition_date || a.created_at).getTime() -
+            new Date(b.acquisition_date || b.created_at).getTime()
+          );
+        }
+        case 'title_az':
+          return (a.title || '').localeCompare(b.title || '');
+        case 'newest':
+        default:
+          return (
+            new Date(b.acquisition_date || b.created_at).getTime() -
+            new Date(a.acquisition_date || a.created_at).getTime()
+          );
+      }
+    });
+
+    return result;
+  }, [items, search, statusFilter, categoryFilter, reviewFilter, dateFrom, dateTo, deliveryFilter, sortBy]);
 
   // Status counts for filter badges
   const statusCounts = items.reduce((acc, item) => {
@@ -72,13 +178,33 @@ export default function Inventory() {
     return acc;
   }, {} as Record<string, number>);
 
+  const activeFilterCount = [
+    statusFilter !== 'all',
+    categoryFilter !== 'all',
+    reviewFilter !== 'all',
+    deliveryFilter !== 'all',
+    !!dateFrom,
+    !!dateTo,
+    sortBy !== 'newest',
+  ].filter(Boolean).length;
+
+  const clearAllFilters = () => {
+    setStatusFilter('all');
+    setCategoryFilter('all');
+    setReviewFilter('all');
+    setDeliveryFilter('all');
+    setDateFrom('');
+    setDateTo('');
+    setSortBy('newest');
+  };
+
   // Mutations
   const updateItemStatus = useMutation({
     mutationFn: async ({ ids, status }: { ids: string[]; status: ItemStatus }) => {
       const updates = ids.map(id =>
         supabase.from('items').update({
           status,
-          sale_date: status === 'sold' || status === 'shipped' ? new Date().toISOString().split('T')[0] : null
+          sale_date: status === 'sold' || status === 'shipped' ? new Date().toISOString().split('T')[0] : null,
         }).eq('id', id)
       );
       await Promise.all(updates);
@@ -166,7 +292,7 @@ export default function Inventory() {
 
   return (
     <div className="p-4 space-y-4 pb-24">
-      {/* Header with bulk select toggle */}
+      {/* Header */}
       <div className="flex items-center justify-between pt-2">
         <h1 className="text-2xl font-bold text-foreground">Inventory</h1>
         <div className="flex gap-2">
@@ -178,31 +304,40 @@ export default function Inventory() {
             <ScanLine className="w-4 h-4 mr-1" />
             Scan
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowAmazonImport(true)}
-          >
-            <ShoppingCart className="w-4 h-4 mr-1" />
-            Amazon Import
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowVineReport(true)}
-          >
-            <FileSpreadsheet className="w-4 h-4 mr-1" />
-            Vine Report
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowLattice(true)}
-          >
-            <Upload className="w-4 h-4 mr-1" />
-            Lattice CSV
-          </Button>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm">
+                <Upload className="w-4 h-4 mr-1" />
+                Import
+                <ChevronDown className="w-3 h-3 ml-1" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuLabel className="text-xs text-muted-foreground">
+                Import Source
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setShowLattice(true)}>
+                <Upload className="w-4 h-4 mr-2" />
+                Lattice CSV
+                <span className="ml-auto text-xs text-primary font-medium">
+                  Best
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShowVineReport(true)}>
+                <FileSpreadsheet className="w-4 h-4 mr-2" />
+                Vine Report XLSX
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShowAmazonImport(true)}>
+                <ShoppingCart className="w-4 h-4 mr-2" />
+                Amazon HTML
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
           {items.length > 0 && <MarketplaceExport items={items} />}
+
           <Button
             variant={isSelecting ? 'default' : 'outline'}
             size="sm"
@@ -226,24 +361,24 @@ export default function Inventory() {
         </div>
       </div>
 
-      {/* Selection Controls - Always visible when in select mode */}
+      {/* Selection Controls */}
       {isSelecting && (
         <div className="flex flex-wrap items-center gap-2 p-3 bg-muted rounded-lg">
           <span className="text-sm font-medium">
             {selectedItems.size} of {filteredItems.length} selected
           </span>
           <div className="flex-1" />
-          <Button 
-            size="sm" 
-            variant="outline" 
+          <Button
+            size="sm"
+            variant="outline"
             onClick={() => setSelectedItems(new Set(filteredItems.map(i => i.id)))}
             disabled={selectedItems.size === filteredItems.length}
           >
             Select All
           </Button>
-          <Button 
-            size="sm" 
-            variant="outline" 
+          <Button
+            size="sm"
+            variant="outline"
             onClick={() => setSelectedItems(new Set())}
             disabled={selectedItems.size === 0}
           >
@@ -252,7 +387,7 @@ export default function Inventory() {
         </div>
       )}
 
-      {/* Bulk Actions Bar - Shows when items are selected */}
+      {/* Bulk Actions */}
       {isSelecting && selectedItems.size > 0 && (
         <div className="flex items-center gap-2 p-3 bg-primary/10 rounded-lg border border-primary/20">
           <Button size="sm" onClick={handleBulkMarkListed}>
@@ -268,6 +403,7 @@ export default function Inventory() {
 
       {/* Search and Filters */}
       <div className="space-y-2">
+        {/* Search */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
@@ -277,46 +413,174 @@ export default function Inventory() {
             className="pl-9"
           />
         </div>
+
+        {/* Filter toggle row */}
         <div className="flex gap-2">
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="flex-1">
-              <Filter className="w-4 h-4 mr-2" />
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Status ({items.length})</SelectItem>
-              {(Object.keys(statusConfig) as ItemStatus[]).map((status) => (
-                <SelectItem key={status} value={status}>
-                  {statusConfig[status].label} ({statusCounts[status] || 0})
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-            <SelectTrigger className="flex-1">
-              <SelectValue placeholder="Category" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Categories</SelectItem>
-              {categories.map((cat) => (
-                <SelectItem key={cat.id} value={cat.id}>
-                  {cat.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={reviewFilter} onValueChange={setReviewFilter}>
-            <SelectTrigger className="flex-1">
-              <SelectValue placeholder="Review Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Reviews</SelectItem>
-              <SelectItem value="pending">Needs Review</SelectItem>
-              <SelectItem value="reviewed">Partially Reviewed</SelectItem>
-              <SelectItem value="reviewed_both">Both Reviewed</SelectItem>
-            </SelectContent>
-          </Select>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowFilters(!showFilters)}
+            className="flex-1 justify-between"
+          >
+            <div className="flex items-center gap-2">
+              <Filter className="w-4 h-4" />
+              <span>Filters & Sort</span>
+              {activeFilterCount > 0 && (
+                <span className="bg-primary text-primary-foreground text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium">
+                  {activeFilterCount}
+                </span>
+              )}
+            </div>
+            <ChevronDown
+              className={`w-4 h-4 transition-transform ${showFilters ? 'rotate-180' : ''}`}
+            />
+          </Button>
+
+          {activeFilterCount > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={clearAllFilters}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          )}
         </div>
+
+        {/* Collapsible filter panel */}
+        {showFilters && (
+          <div className="space-y-3 p-3 bg-muted/30 rounded-xl border border-border">
+            {/* Sort */}
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Sort
+              </p>
+              <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortOption)}>
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="newest">Newest first</SelectItem>
+                  <SelectItem value="oldest">Oldest first</SelectItem>
+                  <SelectItem value="value_high">Highest value first</SelectItem>
+                  <SelectItem value="value_low">Lowest value first</SelectItem>
+                  <SelectItem value="review_urgent">🔴 Review urgency</SelectItem>
+                  <SelectItem value="title_az">A → Z</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Status + Category */}
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Status
+                </p>
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger className="h-8 text-sm">
+                    <SelectValue placeholder="All" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All ({items.length})</SelectItem>
+                    {(Object.keys(statusConfig) as ItemStatus[]).map((status) => (
+                      <SelectItem key={status} value={status}>
+                        {statusConfig[status].label}
+                        {statusCounts[status] ? ` (${statusCounts[status]})` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Category
+                </p>
+                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                  <SelectTrigger className="h-8 text-sm">
+                    <SelectValue placeholder="All" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    {categories.map((cat) => (
+                      <SelectItem key={cat.id} value={cat.id}>
+                        {cat.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Review + Delivery */}
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Review
+                </p>
+                <Select value={reviewFilter} onValueChange={setReviewFilter}>
+                  <SelectTrigger className="h-8 text-sm">
+                    <SelectValue placeholder="All" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="pending">Needs review</SelectItem>
+                    <SelectItem value="reviewed">Reviewed (partial)</SelectItem>
+                    <SelectItem value="reviewed_both">Both reviewed</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Delivery
+                </p>
+                <Select
+                  value={deliveryFilter}
+                  onValueChange={(v) => setDeliveryFilter(v as DeliveryFilter)}
+                >
+                  <SelectTrigger className="h-8 text-sm">
+                    <SelectValue placeholder="All" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="delivered">✅ Delivered</SelectItem>
+                    <SelectItem value="arriving">🚚 Arriving soon</SelectItem>
+                    <SelectItem value="not_shipped">📦 Not shipped yet</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Date range */}
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Date Range (Acquired)
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">From</label>
+                  <input
+                    type="date"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    className="w-full h-8 px-2 text-sm rounded-md border border-input bg-background text-foreground"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">To</label>
+                  <input
+                    type="date"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    className="w-full h-8 px-2 text-sm rounded-md border border-input bg-background text-foreground"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Swipe hint */}
@@ -364,7 +628,7 @@ export default function Inventory() {
         </div>
       )}
 
-      {/* Delete Confirmation Dialog */}
+      {/* Delete Confirmation */}
       <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
         <DialogContent>
           <DialogHeader>
@@ -376,24 +640,27 @@ export default function Inventory() {
               : `Are you sure you want to delete ${selectedItems.size} items? This action cannot be undone.`}
           </p>
           <DialogFooter>
-            <Button variant="outline" onClick={() => {
-              setShowDeleteConfirm(false);
-              setItemToDelete(null);
-            }}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowDeleteConfirm(false);
+                setItemToDelete(null);
+              }}
+            >
               Cancel
             </Button>
-            <Button variant="destructive" onClick={confirmDelete} disabled={deleteItems.isPending}>
+            <Button
+              variant="destructive"
+              onClick={confirmDelete}
+              disabled={deleteItems.isPending}
+            >
               {deleteItems.isPending ? 'Deleting...' : 'Delete'}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Amazon Import Dialog */}
-      <AmazonImportDialog
-        open={showAmazonImport}
-        onOpenChange={setShowAmazonImport}
-      />
+      <AmazonImportDialog open={showAmazonImport} onOpenChange={setShowAmazonImport} />
 
       <QuickEditSheet
         item={quickEditItem}
@@ -405,15 +672,9 @@ export default function Inventory() {
         }}
       />
 
-      <VineReportImportDialog
-        open={showVineReport}
-        onOpenChange={setShowVineReport}
-      />
+      <VineReportImportDialog open={showVineReport} onOpenChange={setShowVineReport} />
 
-      <LatticeImportDialog
-        open={showLattice}
-        onOpenChange={setShowLattice}
-      />
+      <LatticeImportDialog open={showLattice} onOpenChange={setShowLattice} />
 
       <BarcodeScannerModal
         open={showScanner}

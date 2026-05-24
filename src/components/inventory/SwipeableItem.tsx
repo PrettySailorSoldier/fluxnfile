@@ -248,13 +248,30 @@ export function SwipeableItem({
                   {statusConfig[item.status].label}
                 </Badge>
                 
-                {/* Amazon review badge */}
-                {item.acquisition_source === 'Amazon' && (item as any).amazon_review_status && (
-                  <ReviewStatusBadge 
-                    status={(item as any).amazon_review_status} 
-                    size="sm" 
-                  />
+                {/* Amazon/Vine review badge */}
+                {(item.acquisition_source === 'Amazon' || item.acquisition_source === 'Vine') &&
+                  (item as any).amazon_review_status && (
+                    <ReviewStatusBadge
+                      status={(item as any).amazon_review_status}
+                      size="sm"
+                    />
+                  )}
+
+                {/* Delivery status */}
+                {(item as any).delivery_status && (
+                  <span className="text-xs text-muted-foreground">
+                    {(item as any).delivery_status.toLowerCase().includes('delivered')
+                      ? '✅'
+                      : '🚚'}{' '}
+                    {(item as any).delivery_status}
+                  </span>
                 )}
+
+                {/* Review urgency — Vine items pending review */}
+                {item.acquisition_source === 'Vine' &&
+                  (item as any).amazon_review_status === 'pending' && (
+                    <span className="text-xs text-amber-500 font-medium">⏱ Needs review</span>
+                  )}
 
                 <div className="flex-1 text-right">
                   <span className="text-sm text-muted-foreground">
