@@ -40,13 +40,24 @@ import {
   DollarSign,
   FileSpreadsheet,
   FileUp,
+  GitMerge,
 } from 'lucide-react';
 import {
   parseAmazonHTML,
   ParsedAmazonItem,
   PLACEHOLDER_IMAGE,
   sanitizeTitle,
+  detectAndParseCSV,
+  type DetectedCSVFormat,
 } from '@/utils/amazon-parser';
+import {
+  findDuplicate,
+  computeMergeData,
+  type ExistingItemIndex,
+} from '@/utils/import-dedup-engine';
+import { getAcquisitionDate } from '@/utils/lattice-csv-parser';
+import type { OrderHistoryItem } from '@/utils/order-history-extension-parser';
+import type { LatticeItem } from '@/utils/lattice-csv-parser';
 import { ImportMethodTabs, type ImportMethod } from '@/components/amazon/ImportMethodTabs';
 
 // ============================================================================
@@ -60,14 +71,23 @@ interface AmazonImportDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
+// Extends ParsedAmazonItem with import-pipeline metadata
+interface PipelineItem extends ParsedAmazonItem {
+  _orderHistoryData?: OrderHistoryItem;
+  _latticeData?: LatticeItem;
+  _isDuplicate?: boolean;
+  _duplicateItemId?: string;
+  _isVine?: boolean;
+}
+
 // ============================================================================
 // CONFIDENCE BADGE COMPONENT
 // ============================================================================
 
-function ConfidenceBadge({ 
-  confidence, 
-  details 
-}: { 
+function ConfidenceBadge({
+  confidence,
+  details,
+}: {
   confidence: 'high' | 'medium' | 'low';
   details: ParsedAmazonItem['confidenceDetails'];
 }) {
@@ -154,7 +174,7 @@ function DuplicateBadge({ type }: { type: 'asin' | 'title' }) {
 // ============================================================================
 
 interface ItemPreviewProps {
-  item: ParsedAmazonItem;
+  item: PipelineItem;
   index: number;
   isDuplicateAsin: boolean;
   isDuplicateTitle: boolean;
@@ -177,11 +197,12 @@ function ItemPreviewCard({
   const [imageError, setImageError] = useState(false);
 
   const targetPrice = item.price * (1 + defaultMarkup / 100);
-  const isDuplicate = isDuplicateAsin || isDuplicateTitle;
+  const isDuplicateLegacy = isDuplicateAsin || isDuplicateTitle;
+  const willMerge = item._isDuplicate;
 
   const handlePriceSubmit = () => {
     const newPrice = parseFloat(editPrice);
-    if (!isNaN(newPrice) && newPrice > 0) {
+    if (!isNaN(newPrice) && newPrice >= 0) {
       onUpdatePrice(index, newPrice);
     }
     setIsEditing(false);
@@ -190,8 +211,10 @@ function ItemPreviewCard({
   return (
     <div
       className={`flex items-start gap-3 p-3 rounded-lg transition-all ${
-        isDuplicate 
-          ? 'bg-warning/10 border border-warning/30' 
+        willMerge
+          ? 'bg-amber-500/10 border border-amber-500/30'
+          : isDuplicateLegacy
+          ? 'bg-warning/10 border border-warning/30'
           : 'bg-muted/50'
       } ${!item.selected ? 'opacity-60' : ''}`}
     >
@@ -200,7 +223,7 @@ function ItemPreviewCard({
         onCheckedChange={() => onToggleSelect(index)}
         className="mt-1"
       />
-      
+
       {/* Image */}
       <div className="w-16 h-16 rounded overflow-hidden bg-muted flex-shrink-0">
         {item.imageUrl && !imageError ? (
@@ -216,16 +239,41 @@ function ItemPreviewCard({
           </div>
         )}
       </div>
-      
+
       <div className="flex-1 min-w-0 space-y-1">
         {/* Title */}
         <h4 className="font-medium text-sm line-clamp-2">{item.cleanTitle}</h4>
-        
+
         {/* Badges row */}
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {/* Source type badge */}
+          {item._isVine ? (
+            <Badge variant="outline" className="text-xs bg-purple-500/20 text-purple-600 border-purple-500/30">
+              <Grape className="w-3 h-3 mr-1" />
+              Vine
+            </Badge>
+          ) : item._orderHistoryData || item._latticeData || item.price === 0 ? null : (
+            <Badge variant="outline" className="text-xs bg-muted text-muted-foreground">
+              Amazon
+            </Badge>
+          )}
+
+          {/* Dedup badge */}
+          {willMerge ? (
+            <Badge variant="outline" className="text-xs bg-amber-500/20 text-amber-600 border-amber-500/30">
+              <GitMerge className="w-3 h-3 mr-1" />
+              Will merge
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="text-xs bg-blue-500/20 text-blue-600 border-blue-500/30">
+              New
+            </Badge>
+          )}
+
           <ConfidenceBadge confidence={item.confidence} details={item.confidenceDetails} />
           {isDuplicateAsin && <DuplicateBadge type="asin" />}
           {isDuplicateTitle && !isDuplicateAsin && <DuplicateBadge type="title" />}
+
           {/* Vine Review Status Badge */}
           {item.vineReviewStatus === 'reviewed' && (
             <Badge variant="outline" className="text-xs bg-success/20 text-success border-success/30">
@@ -243,11 +291,11 @@ function ItemPreviewCard({
             </Badge>
           )}
         </div>
-        
+
         {/* Price row */}
         <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
           <span className="flex items-center gap-1">
-            Cost: 
+            Cost:
             {isEditing ? (
               <div className="flex items-center gap-1">
                 <span>$</span>
@@ -272,18 +320,25 @@ function ItemPreviewCard({
               </button>
             )}
           </span>
-          <span>→</span>
-          <span>Target: ${targetPrice.toFixed(2)}</span>
-          <span className="text-success">
-            (+{defaultMarkup}%)
-          </span>
+          {item.price > 0 && (
+            <>
+              <span>→</span>
+              <span>Target: ${targetPrice.toFixed(2)}</span>
+              <span className="text-success">(+{defaultMarkup}%)</span>
+            </>
+          )}
         </div>
-        
+
         {/* Date */}
         <p className="text-xs text-muted-foreground">
           Ordered: {new Date(item.orderDate).toLocaleDateString()}
           {item.confidenceDetails.dateGuessed && (
             <span className="text-warning ml-1">(estimated)</span>
+          )}
+          {item._orderHistoryData?.shipmentStatus && (
+            <span className="ml-1 text-muted-foreground/70">
+              · {item._orderHistoryData.shipmentStatus.slice(0, 40)}
+            </span>
           )}
         </p>
       </div>
@@ -292,7 +347,7 @@ function ItemPreviewCard({
 }
 
 // ============================================================================
-// FILE PARSER (XLSX + CSV)
+// FILE PARSER (XLSX)
 // ============================================================================
 
 const parseFile = (file: File): Promise<Record<string, string>[]> => {
@@ -326,57 +381,44 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
   const { team, user } = useAuth();
   const queryClient = useQueryClient();
 
-  // File input refs
   const csvInputRef  = useRef<HTMLInputElement>(null);
   const htmlInputRef = useRef<HTMLInputElement>(null);
 
-  // Wizard state
   const [step, setStep] = useState<WizardStep>('paste');
   const [importMethod, setImportMethod] = useState<ImportMethod>('csv');
   const [csvFileError, setCsvFileError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [showCsvHelp, setShowCsvHelp] = useState(false);
   const [htmlInput, setHtmlInput] = useState('');
-  const [parsedItems, setParsedItems] = useState<ParsedAmazonItem[]>([]);
+  const [parsedItems, setParsedItems] = useState<PipelineItem[]>([]);
   const [parseWarnings, setParseWarnings] = useState<string[]>([]);
   const [isParsing, setIsParsing] = useState(false);
   const [defaultMarkup, setDefaultMarkup] = useState(50);
   const [isVineMode, setIsVineMode] = useState(false);
   const [vineETV, setVineETV] = useState<string>('');
   const [isFetchingPrices, setIsFetchingPrices] = useState(false);
+  const [detectedFormat, setDetectedFormat] = useState<DetectedCSVFormat>('unknown');
 
-  // Fetch existing items for duplicate detection
-  // Note: amazon_asin column may not exist until migration runs
+  // Fetch existing items for duplicate detection (includes new dedup fields)
   const { data: existingItems = [] } = useQuery({
     queryKey: ['existing-amazon-items', team?.id],
     queryFn: async () => {
       if (!team?.id) return [];
       const { data, error } = await supabase
         .from('items')
-        .select('id, title, acquisition_date')
-        .eq('team_id', team.id)
-        .eq('acquisition_source', 'Amazon');
-      
+        .select('id, title, amazon_asin, amazon_order_id, data_sources, vine_review_status, vine_review_quality, amazon_shipment_status, lattice_review_status')
+        .eq('team_id', team.id);
       if (error) throw error;
-      
-      // Cast to include optional amazon_asin
-      return (data || []) as Array<{
-        id: string;
-        title: string | null;
-        amazon_asin?: string | null;
-        acquisition_date: string;
-      }>;
+      return (data || []) as ExistingItemIndex[];
     },
     enabled: !!team?.id && open,
   });
 
-  // Calculate duplicates
+  // Legacy duplicate detection (ASIN / title sets for the existing preview UI)
   const { duplicateAsins, duplicateTitles } = useMemo(() => {
     const asins = new Set(
       existingItems
-        .filter((e): e is typeof e & { amazon_asin: string } => 
-          !!e.amazon_asin
-        )
+        .filter((e): e is typeof e & { amazon_asin: string } => !!e.amazon_asin)
         .map(e => e.amazon_asin.toUpperCase())
     );
     const titles = new Set(
@@ -384,10 +426,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
         .filter((e): e is typeof e & { title: string } => !!e.title)
         .map(e => e.title.toLowerCase())
     );
-    return {
-      duplicateAsins: asins,
-      duplicateTitles: titles,
-    };
+    return { duplicateAsins: asins, duplicateTitles: titles };
   }, [existingItems]);
 
   // Reset state when dialog closes
@@ -404,10 +443,138 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
       setIsVineMode(false);
       setVineETV('');
       setIsFetchingPrices(false);
+      setDetectedFormat('unknown');
     }
   }, [open]);
 
-  // ── File handling helpers ──────────────────────────────────────────────────
+  // ── Dedup helper ─────────────────────────────────────────────────────────
+
+  function applyDedupFlags(items: PipelineItem[]): PipelineItem[] {
+    return items.map(item => {
+      const match = findDuplicate(
+        {
+          asin: item.asin,
+          orderId: item._orderHistoryData?.orderId ?? null,
+          title: item.cleanTitle,
+        },
+        existingItems
+      );
+      return {
+        ...item,
+        _isDuplicate: !!match,
+        _duplicateItemId: match?.id,
+      };
+    });
+  }
+
+  // ── Text-based CSV router ─────────────────────────────────────────────────
+
+  function processCsvText(text: string) {
+    setCsvFileError(null);
+    const detected = detectAndParseCSV(text);
+
+    if (detected.format === 'lattice' && detected.latticeResult) {
+      const r = detected.latticeResult;
+      if (r.items.length === 0) {
+        setCsvFileError('No items found in Lattice CSV.');
+        return;
+      }
+      const converted: PipelineItem[] = r.items.map(lat => ({
+        id: `item-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        title: lat.description,
+        cleanTitle: sanitizeTitle(lat.description),
+        orderDate: getAcquisitionDate(lat) || new Date().toISOString(),
+        price: lat.valueToUse,
+        asin: lat.asin || null,
+        imageUrl: null,
+        selected: true,
+        confidence: lat.asin ? 'high' : 'medium',
+        confidenceDetails: {
+          titleFound: true,
+          priceFound: lat.valueToUse > 0,
+          priceGuessed: false,
+          dateFound: !!lat.deliveredDate || !!lat.shippedDate || !!lat.orderedDate,
+          dateGuessed: !lat.deliveredDate && !lat.shippedDate && !lat.orderedDate,
+          asinFound: !!lat.asin,
+        },
+        vineReviewStatus:
+          lat.reviewStatus === 'Approved'
+            ? 'reviewed'
+            : lat.reviewStatus === 'Not yet reviewed'
+            ? 'not_reviewed'
+            : null,
+        vineQualityScore: mapLatticeQuality(lat.reviewQuality),
+        _latticeData: lat,
+        _isVine: true,
+      }));
+      const withDedup = applyDedupFlags(converted);
+      setParsedItems(withDedup);
+      setParseWarnings(r.parseWarnings);
+      setIsVineMode(true);
+      setDetectedFormat('lattice');
+      setStep('preview');
+      toast.success(
+        `Lattice CSV: ${r.items.length} items — ${r.alreadyReviewed} reviewed, ${r.pendingReview} pending`
+      );
+
+    } else if (detected.format === 'order_history_extension' && detected.orderHistoryResult) {
+      const r = detected.orderHistoryResult;
+      if (r.items.length === 0) {
+        setCsvFileError('No items found in Order History CSV.');
+        return;
+      }
+      const converted: PipelineItem[] = r.items.map(ohItem => ({
+        id: `item-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        title: ohItem.title,
+        cleanTitle: sanitizeTitle(ohItem.title),
+        orderDate: ohItem.orderPlaced,
+        price: ohItem.isVineOrder ? 0 : ohItem.total,
+        asin: null,
+        imageUrl: null,
+        selected: true,
+        confidence: 'high' as const,
+        confidenceDetails: {
+          titleFound: true,
+          priceFound: true,
+          priceGuessed: false,
+          dateFound: true,
+          dateGuessed: false,
+          asinFound: false,
+        },
+        vineReviewStatus: null,
+        vineQualityScore: null,
+        _orderHistoryData: ohItem,
+        _isVine: ohItem.isVineOrder,
+      }));
+      const withDedup = applyDedupFlags(converted);
+      setParsedItems(withDedup);
+      setParseWarnings(r.parseWarnings);
+      setIsVineMode(false);
+      setDetectedFormat('order_history_extension');
+      setStep('preview');
+      toast.success(
+        `Found ${r.items.length} orders — ${r.vineCount} Vine, ${r.regularCount} regular`
+      );
+
+    } else if (detected.amazonResult && detected.amazonResult.items.length > 0) {
+      const items: PipelineItem[] = detected.amazonResult.items;
+      const withDedup = applyDedupFlags(items);
+      setParsedItems(withDedup);
+      setParseWarnings(detected.amazonResult.parseWarnings);
+      setIsVineMode(detected.amazonResult.isVineMode);
+      setDetectedFormat('amazon_standard');
+      setStep('preview');
+      toast.success(`Found ${items.length} item${items.length !== 1 ? 's' : ''}!`);
+    } else {
+      setCsvFileError(
+        detected.warnings[0] ||
+          "This doesn't look like a supported CSV format. Expected Amazon Order History, Lattice, or Order History Extension CSV."
+      );
+      setParseWarnings(detected.warnings);
+    }
+  }
+
+  // ── XLSX row-based parser (for .xlsx files) ───────────────────────────────
 
   function processRowsAsCsv(rows: Record<string, string>[]) {
     setCsvFileError(null);
@@ -431,19 +598,19 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     if (!COL_TITLE) {
       setCsvFileError(
         "This doesn't look like an Amazon order history file. " +
-        "Make sure you're using the export from Account → Order History Reports."
+          "Make sure you're using the export from Account → Order History Reports."
       );
       return;
     }
 
-    function parsePrice(s: string): number {
+    function parsePriceRow(s: string): number {
       if (!s.trim()) return 0;
       const cleaned = s.replace(/[$,\s]/g, '');
       const n = parseFloat(cleaned);
       return isNaN(n) ? 0 : Math.round(n * 100) / 100;
     }
 
-    function parseDate(dateStr: string): { date: string; guessed: boolean } {
+    function parseDateRow(dateStr: string): { date: string; guessed: boolean } {
       if (!dateStr.trim()) return { date: new Date().toISOString(), guessed: true };
       if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) {
         const d = new Date(dateStr);
@@ -459,7 +626,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     }
 
     const warnings: string[] = [];
-    const items: ParsedAmazonItem[] = [];
+    const items: PipelineItem[] = [];
     const seenKeys = new Set<string>();
 
     for (const row of rows) {
@@ -472,9 +639,9 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
       const asin = asinRaw && /^[A-Z0-9]{10}$/i.test(asinRaw) ? asinRaw.toUpperCase() : null;
       const quantity = Math.max(0, parseInt(g(COL_QUANTITY)) || 1);
 
-      let price = parsePrice(g(COL_UNIT_PRICE));
+      let price = parsePriceRow(g(COL_UNIT_PRICE));
       if (price === 0 && COL_ITEM_TOTAL) {
-        const itemTotal = parsePrice(g(COL_ITEM_TOTAL));
+        const itemTotal = parsePriceRow(g(COL_ITEM_TOTAL));
         if (itemTotal > 0) {
           price = quantity > 0 ? Math.round((itemTotal / quantity) * 100) / 100 : itemTotal;
         }
@@ -482,7 +649,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
 
       if (price === 0 && quantity === 0) continue;
 
-      const { date: orderDate, guessed: dateGuessed } = parseDate(g(COL_ORDER_DATE));
+      const { date: orderDate, guessed: dateGuessed } = parseDateRow(g(COL_ORDER_DATE));
       const dedupKey = `${orderId}::${asin ?? title.toLowerCase()}`;
       if (seenKeys.has(dedupKey)) continue;
       seenKeys.add(dedupKey);
@@ -498,9 +665,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
       };
 
       const confidence: 'high' | 'medium' | 'low' =
-        priceFound && !dateGuessed ? 'high'
-        : dateGuessed ? 'medium'
-        : 'low';
+        priceFound && !dateGuessed ? 'high' : dateGuessed ? 'medium' : 'low';
 
       const cleanTitle = sanitizeTitle(title);
       const unitCount = Math.min(Math.max(1, quantity), 20);
@@ -527,12 +692,16 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
       return;
     }
 
-    setParsedItems(items);
+    const withDedup = applyDedupFlags(items);
+    setParsedItems(withDedup);
     setParseWarnings(warnings);
     setIsVineMode(false);
+    setDetectedFormat('amazon_standard');
     setStep('preview');
     toast.success(`Found ${items.length} item${items.length !== 1 ? 's' : ''}!`);
   }
+
+  // ── HTML processing ───────────────────────────────────────────────────────
 
   function processHtmlText(text: string) {
     setIsParsing(true);
@@ -543,9 +712,15 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
           toast.error('No items found. Make sure this is an Amazon orders page.');
           setParseWarnings(result.parseWarnings);
         } else {
-          setParsedItems(result.items);
+          const items: PipelineItem[] = result.items.map(i => ({
+            ...i,
+            _isVine: result.isVineMode,
+          }));
+          const withDedup = applyDedupFlags(items);
+          setParsedItems(withDedup);
           setParseWarnings(result.parseWarnings);
           setIsVineMode(result.isVineMode);
+          setDetectedFormat(result.isVineMode ? 'amazon_standard' : 'amazon_standard');
           setStep('preview');
           toast.success(
             result.isVineMode
@@ -561,15 +736,30 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     }, 100);
   }
 
+  // ── File handling ─────────────────────────────────────────────────────────
+
   async function handleFileSelect(file: File, type: 'csv' | 'html') {
     if (type === 'csv') {
-      try {
-        const rows = await parseFile(file);
-        processRowsAsCsv(rows);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Could not read file.';
-        setCsvFileError(msg);
-        toast.error(msg);
+      const isCsvExt = /\.csv$/i.test(file.name) || file.type === 'text/csv';
+      if (isCsvExt) {
+        // Text-based path — auto-detects format (Lattice, Order History Extension, Amazon)
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const text = e.target?.result as string;
+          processCsvText(text);
+        };
+        reader.onerror = () => toast.error('Failed to read file');
+        reader.readAsText(file);
+      } else {
+        // XLSX path
+        try {
+          const rows = await parseFile(file);
+          processRowsAsCsv(rows);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'Could not read file.';
+          setCsvFileError(msg);
+          toast.error(msg);
+        }
       }
     } else {
       const reader = new FileReader();
@@ -585,7 +775,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>, type: 'csv' | 'html') {
     const file = e.target.files?.[0];
     if (file) handleFileSelect(file, type);
-    e.target.value = ''; // reset so same file can be re-selected
+    e.target.value = '';
   }
 
   function handleDrop(e: React.DragEvent) {
@@ -604,24 +794,23 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     }
   }
 
-  // Parse HTML (paste method)
+  // ── HTML paste parse ──────────────────────────────────────────────────────
+
   const handleParse = () => {
     setIsParsing(true);
-    
-    // Use setTimeout to allow UI to update
     setTimeout(() => {
       try {
         const result = parseAmazonHTML(htmlInput);
-        
         if (result.items.length === 0) {
           toast.error('No items found. Make sure you copied the full Amazon orders page HTML.');
           setParseWarnings(result.parseWarnings);
         } else {
-          setParsedItems(result.items);
+          const items: PipelineItem[] = result.items.map(i => ({ ...i, _isVine: result.isVineMode }));
+          const withDedup = applyDedupFlags(items);
+          setParsedItems(withDedup);
           setParseWarnings(result.parseWarnings);
           setIsVineMode(result.isVineMode);
           setStep('preview');
-          
           if (result.isVineMode) {
             toast.success(`Found ${result.items.length} Vine items!`);
           } else {
@@ -637,156 +826,230 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     }, 100);
   };
 
-  // Toggle item selection
+  // ── Item selection helpers ────────────────────────────────────────────────
+
   const toggleItemSelection = (index: number) => {
     setParsedItems(items =>
-      items.map((item, i) =>
-        i === index ? { ...item, selected: !item.selected } : item
-      )
+      items.map((item, i) => (i === index ? { ...item, selected: !item.selected } : item))
     );
   };
 
-  // Update item price
   const updateItemPrice = (index: number, price: number) => {
     setParsedItems(items =>
-      items.map((item, i) =>
-        i === index ? { ...item, price } : item
-      )
+      items.map((item, i) => (i === index ? { ...item, price } : item))
     );
   };
 
-  // Toggle all
   const toggleAll = () => {
     const allSelected = parsedItems.every(item => item.selected);
-    setParsedItems(items =>
-      items.map(item => ({ ...item, selected: !allSelected }))
-    );
+    setParsedItems(items => items.map(item => ({ ...item, selected: !allSelected })));
   };
 
-  // Apply bulk ETV to all Vine items
   const applyBulkETV = () => {
     const etv = parseFloat(vineETV);
     if (!isNaN(etv) && etv >= 0) {
-      setParsedItems(items =>
-        items.map(item => ({ ...item, price: etv }))
-      );
+      setParsedItems(items => items.map(item => ({ ...item, price: etv })));
       toast.success(`Applied $${etv.toFixed(2)} ETV to all items`);
     }
   };
 
-  // Fetch retail prices from Amazon via Edge Function
   const fetchRetailPrices = async () => {
-    const asins = parsedItems
-      .filter(item => item.asin)
-      .map(item => item.asin as string);
-    
+    const asins = parsedItems.filter(item => item.asin).map(item => item.asin as string);
     if (asins.length === 0) {
       toast.error('No ASINs found to look up prices');
       return;
     }
-    
     setIsFetchingPrices(true);
-    console.log('[fetchRetailPrices] Fetching prices for', asins.length, 'ASINs');
-    
     try {
       const { data, error } = await supabase.functions.invoke('fetch-amazon-prices', {
         body: { asins },
       });
-      
       if (error) {
-        console.error('[fetchRetailPrices] Error:', error);
         toast.error(`Failed to fetch prices: ${error.message}`);
         return;
       }
-      
-      console.log('[fetchRetailPrices] Response:', data);
-      
       if (data?.results) {
-        // Create a map of ASIN to price
         const priceMap = new Map<string, number>();
         for (const result of data.results) {
           if (result.success && result.price !== null) {
             priceMap.set(result.asin, result.price);
           }
         }
-        
-        // Update parsed items with fetched prices
         setParsedItems(items =>
-          items.map(item => {
-            if (item.asin && priceMap.has(item.asin)) {
-              return { ...item, price: priceMap.get(item.asin)! };
-            }
-            return item;
-          })
+          items.map(item =>
+            item.asin && priceMap.has(item.asin) ? { ...item, price: priceMap.get(item.asin)! } : item
+          )
         );
-        
         const successCount = data.summary?.success || priceMap.size;
         const failedCount = data.summary?.failed || (asins.length - priceMap.size);
-        
         if (successCount > 0) {
-          toast.success(`Fetched ${successCount} price${successCount !== 1 ? 's' : ''}${failedCount > 0 ? ` (${failedCount} failed)` : ''}`);
+          toast.success(
+            `Fetched ${successCount} price${successCount !== 1 ? 's' : ''}${failedCount > 0 ? ` (${failedCount} failed)` : ''}`
+          );
         } else {
           toast.error('Could not fetch any prices. Amazon may be blocking requests.');
         }
       }
     } catch (err) {
-      console.error('[fetchRetailPrices] Exception:', err);
-      toast.error('Failed to fetch prices. Check console for details.');
+      console.error('[fetchRetailPrices]', err);
+      toast.error('Failed to fetch prices.');
     } finally {
       setIsFetchingPrices(false);
     }
   };
 
-  // Import items mutation
+  // ── Import mutation with dedup engine ─────────────────────────────────────
+
   const importItems = useMutation({
     mutationFn: async () => {
       if (!team?.id || !user?.id) throw new Error('Not authenticated');
-      
+
       const selectedItems = parsedItems.filter(item => item.selected);
-      if (selectedItems.length === 0) {
-        throw new Error('No items selected');
+      if (selectedItems.length === 0) throw new Error('No items selected');
+
+      // Fetch fresh existing items for authoritative dedup
+      const { data: freshExisting, error: fetchErr } = await supabase
+        .from('items')
+        .select(
+          'id, title, amazon_asin, amazon_order_id, data_sources, vine_review_status, vine_review_quality, amazon_shipment_status, lattice_review_status'
+        )
+        .eq('team_id', team.id);
+      if (fetchErr) throw fetchErr;
+
+      const existingIndex = (freshExisting || []) as ExistingItemIndex[];
+
+      const importSource =
+        detectedFormat === 'order_history_extension'
+          ? 'order_history_extension'
+          : detectedFormat === 'lattice'
+          ? 'lattice_csv'
+          : isVineMode
+          ? 'vine_html'
+          : 'amazon_csv';
+
+      const toInsert: Record<string, unknown>[] = [];
+      const toUpdate: { id: string; mergeData: Record<string, unknown> }[] = [];
+      let skipCount = 0;
+
+      for (const item of selectedItems) {
+        // Build the core item data based on source type
+        let itemData: Record<string, unknown>;
+
+        if (item._orderHistoryData) {
+          const oh = item._orderHistoryData;
+          itemData = {
+            title: item.cleanTitle.slice(0, 255),
+            acquisition_date: new Date(oh.orderPlaced).toISOString().split('T')[0],
+            original_cost: oh.isVineOrder ? 0 : oh.total,
+            acquisition_source: oh.isVineOrder ? 'Amazon Vine' : 'Amazon',
+            is_vine_order: oh.isVineOrder,
+            amazon_order_id: oh.orderId,
+            amazon_order_url: oh.orderDetailsUrl,
+            amazon_tracking_url: oh.trackingUrl,
+            amazon_invoice_url: oh.invoiceUrl,
+            amazon_shipment_status: oh.shipmentStatus || null,
+            amazon_return_status: oh.returnStatus,
+            amazon_refund_amount: oh.refundAmount,
+            amazon_refund_date: oh.refundDate,
+            amazon_tax_amount: oh.taxAmount > 0 ? oh.taxAmount : null,
+            status: 'acquired' as const,
+            condition: 'new' as const,
+            physical_status: 'unconfirmed',
+            data_sources: [importSource],
+          };
+        } else if (item._latticeData) {
+          const lat = item._latticeData;
+          itemData = {
+            title: item.cleanTitle.slice(0, 255),
+            amazon_asin: lat.asin || null,
+            original_cost: lat.valueToUse,
+            target_price: Math.round(lat.valueToUse * (1 + defaultMarkup / 100) * 100) / 100,
+            acquisition_date: getAcquisitionDate(lat),
+            acquisition_source: 'Amazon Vine',
+            is_vine_order: true,
+            vine_etv: lat.etv > 0 ? lat.etv : null,
+            vine_fmv: lat.fmv > 0 ? lat.fmv : null,
+            lattice_review_status: lat.reviewStatus || null,
+            lattice_review_score: lat.reviewRating,
+            lattice_review_quality: lat.reviewQuality || null,
+            lattice_reviewed_date: lat.reviewedDate || null,
+            status: 'acquired' as const,
+            condition: 'new' as const,
+            physical_status: 'unconfirmed',
+            data_sources: [importSource],
+          };
+        } else {
+          // Standard Amazon HTML / CSV
+          let amazonReviewStatus = 'pending';
+          if (item.vineReviewStatus === 'reviewed') amazonReviewStatus = 'reviewed_grant';
+          itemData = {
+            title: item.cleanTitle.slice(0, 255),
+            original_cost: item.price,
+            target_price: Math.round(item.price * (1 + defaultMarkup / 100) * 100) / 100,
+            acquisition_date: new Date(item.orderDate).toISOString().split('T')[0],
+            acquisition_source: isVineMode ? 'Vine' : 'Amazon',
+            amazon_asin: item.asin || null,
+            is_vine_order: isVineMode,
+            condition: 'new' as const,
+            status: 'acquired' as const,
+            physical_status: 'unconfirmed',
+            photos: item.imageUrl ? [item.imageUrl] : [],
+            amazon_review_status: amazonReviewStatus,
+            data_sources: [importSource],
+          };
+        }
+
+        // Run dedup
+        const duplicate = findDuplicate(
+          {
+            asin: item.asin,
+            orderId: item._orderHistoryData?.orderId ?? null,
+            title: item.cleanTitle,
+          },
+          existingIndex
+        );
+
+        if (!duplicate) {
+          toInsert.push({
+            ...itemData,
+            team_id: team.id,
+            created_by: user.id,
+            reviewed_by: [],
+          });
+        } else {
+          const existingExtended = duplicate as ExistingItemIndex & Record<string, unknown>;
+          const mergeData = computeMergeData(existingExtended, itemData, importSource);
+          if (mergeData) {
+            toUpdate.push({ id: duplicate.id, mergeData });
+          } else {
+            skipCount++;
+          }
+        }
       }
 
-      const itemsToInsert = selectedItems.map(item => {
-        // Map vineReviewStatus to amazon_review_status
-        let amazonReviewStatus = 'pending';
-        if (item.vineReviewStatus === 'reviewed') {
-          // If reviewed with quality score, mark as reviewed_grant
-          // (in-app review tracking still applies)
-          amazonReviewStatus = 'reviewed_grant';
-        } else if (item.vineReviewStatus === 'not_reviewed') {
-          amazonReviewStatus = 'pending';
-        }
-        
-        return {
-          team_id: team.id,
-          created_by: user.id,
-          title: item.cleanTitle.slice(0, 255),
-          original_cost: item.price,
-          target_price: Math.round(item.price * (1 + defaultMarkup / 100) * 100) / 100,
-          acquisition_date: new Date(item.orderDate).toISOString().split('T')[0],
-          acquisition_source: isVineMode ? 'Vine' : 'Amazon',
-          condition: 'new' as const,
-          status: 'acquired' as const,
-          physical_status: 'unconfirmed',
-          confirmed_at: null,
-          confirmed_by: null,
-          held_by: null,
-          photos: item.imageUrl ? [item.imageUrl] : [],
-          amazon_review_status: amazonReviewStatus,
-          reviewed_by: [] as string[],
-        };
-      });
+      // Batch insert new items
+      if (toInsert.length > 0) {
+        const { error: insertErr } = await supabase.from('items').insert(toInsert);
+        if (insertErr) throw insertErr;
+      }
 
-      const { error } = await supabase.from('items').insert(itemsToInsert);
-      if (error) throw error;
+      // Update merged items
+      for (const { id, mergeData } of toUpdate) {
+        const { error: updateErr } = await supabase.from('items').update(mergeData).eq('id', id);
+        if (updateErr) throw updateErr;
+      }
 
-      return selectedItems.length;
+      return { inserted: toInsert.length, merged: toUpdate.length, skipped: skipCount };
     },
-    onSuccess: (count) => {
+    onSuccess: ({ inserted, merged, skipped }) => {
       queryClient.invalidateQueries({ queryKey: ['items'] });
       queryClient.invalidateQueries({ queryKey: ['existing-amazon-items'] });
-      toast.success(`Added ${count} items to your Order Sheet`);
+      const parts = [
+        inserted > 0 && `${inserted} new`,
+        merged > 0 && `merged data into ${merged}`,
+        skipped > 0 && `skipped ${skipped} exact duplicates`,
+      ].filter(Boolean);
+      toast.success(`Imported: ${parts.join(', ')}`);
       onOpenChange(false);
     },
     onError: (error: Error) => {
@@ -794,16 +1057,21 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     },
   });
 
-  // Calculate stats
+  // ── Stats ─────────────────────────────────────────────────────────────────
+
   const selectedCount = parsedItems.filter(item => item.selected).length;
-  const duplicateCount = parsedItems.filter(item => 
+  const duplicateCount = parsedItems.filter(item =>
     (item.asin && duplicateAsins.has(item.asin)) ||
     duplicateTitles.has(item.cleanTitle.toLowerCase())
   ).length;
   const highConfidenceCount = parsedItems.filter(item => item.confidence === 'high').length;
+  const mergeCount = parsedItems.filter(item => item._isDuplicate).length;
+  const vineCount = parsedItems.filter(item => item._isVine).length;
+  const regularCount = parsedItems.filter(item => !item._isVine && !!item._orderHistoryData).length;
 
-  // Step progress
   const stepProgress = step === 'paste' ? 33 : step === 'preview' ? 66 : 100;
+
+  // ── Lattice quality helper ────────────────────────────────────────────────
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -814,11 +1082,11 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
             Import from Amazon Orders
           </DialogTitle>
           <DialogDescription>
-            {step === 'paste' && importMethod === 'csv'  && 'Upload your Amazon order history Excel file (.xlsx) or CSV to get started'}
+            {step === 'paste' && importMethod === 'csv' && 'Upload your Amazon order file (.xlsx, .csv) or Lattice/Order History Extension CSV'}
             {step === 'paste' && importMethod === 'file' && 'Upload a saved Amazon orders HTML file'}
             {step === 'paste' && importMethod === 'paste' && 'Paste your Amazon orders page HTML to get started'}
             {step === 'preview' && 'Review and adjust items before importing'}
-            {step === 'confirm'  && 'Confirm your import'}
+            {step === 'confirm' && 'Confirm your import'}
           </DialogDescription>
         </DialogHeader>
 
@@ -826,15 +1094,9 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
         <div className="space-y-2">
           <Progress value={stepProgress} className="h-2" />
           <div className="flex justify-between text-xs text-muted-foreground">
-            <span className={step === 'paste' ? 'text-primary font-medium' : ''}>
-              1. Add Source
-            </span>
-            <span className={step === 'preview' ? 'text-primary font-medium' : ''}>
-              2. Preview & Edit
-            </span>
-            <span className={step === 'confirm' ? 'text-primary font-medium' : ''}>
-              3. Import
-            </span>
+            <span className={step === 'paste' ? 'text-primary font-medium' : ''}>1. Add Source</span>
+            <span className={step === 'preview' ? 'text-primary font-medium' : ''}>2. Preview & Edit</span>
+            <span className={step === 'confirm' ? 'text-primary font-medium' : ''}>3. Import</span>
           </div>
         </div>
 
@@ -842,7 +1104,6 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
         <div className="flex-1 overflow-y-auto">
           {step === 'paste' && (
             <div className="space-y-4">
-              {/* Hidden file inputs */}
               <input
                 ref={csvInputRef}
                 type="file"
@@ -873,28 +1134,22 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                     <li>Select report type <strong className="text-foreground">"Items"</strong>, choose your date range, click <strong className="text-foreground">Request Report</strong></li>
                     <li>Wait 1–2 minutes for Amazon to generate the file</li>
                     <li>Click <strong className="text-foreground">Download</strong> next to your report</li>
-                    <li>Upload the downloaded <code className="bg-muted px-1 rounded text-xs">.xlsx</code> file here (Amazon exports as Excel)</li>
+                    <li>Upload the downloaded <code className="bg-muted px-1 rounded text-xs">.xlsx</code> file here</li>
                   </ol>
-                  <Button className="w-full mt-2" onClick={() => setShowCsvHelp(false)}>
-                    Got it
-                  </Button>
+                  <Button className="w-full mt-2" onClick={() => setShowCsvHelp(false)}>Got it</Button>
                 </DialogContent>
               </Dialog>
 
-              {/* Method tabs */}
               <ImportMethodTabs method={importMethod} onChange={(m) => { setImportMethod(m); setCsvFileError(null); }} />
 
               {/* ── CSV Upload ── */}
               {importMethod === 'csv' && (
                 <div className="space-y-3">
-                  {/* Drop zone */}
                   <div
                     role="button"
                     tabIndex={0}
                     className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-                      isDragOver
-                        ? 'border-primary bg-primary/5'
-                        : 'border-border hover:border-primary/50 hover:bg-muted/30'
+                      isDragOver ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50 hover:bg-muted/30'
                     }`}
                     onClick={() => csvInputRef.current?.click()}
                     onKeyDown={(e) => e.key === 'Enter' && csvInputRef.current?.click()}
@@ -903,10 +1158,9 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                     onDrop={handleDrop}
                   >
                     <FileSpreadsheet className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
-                    <p className="font-medium text-sm">Drop your Amazon order file here</p>
-                    <p className="text-xs text-muted-foreground mt-1">Accepts .xlsx or .csv — or click to browse</p>
-                    <p className="text-xs text-muted-foreground mt-3 max-w-xs mx-auto leading-relaxed">
-                      Get your file from Amazon: Account → Order History Reports → Select date range → Request Report → Download when ready. Amazon exports as .xlsx — upload it directly.
+                    <p className="font-medium text-sm">Drop your order file here</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Accepts .xlsx, .csv — auto-detects Amazon, Lattice, or Order History Extension format
                     </p>
                     <button
                       type="button"
@@ -917,7 +1171,6 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                     </button>
                   </div>
 
-                  {/* CSV file error */}
                   {csvFileError && (
                     <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
                       <AlertCircle className="w-4 h-4 text-destructive mt-0.5 flex-shrink-0" />
@@ -926,8 +1179,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                   )}
 
                   <p className="text-xs text-muted-foreground text-center">
-                    Using the Amazon Order History Reporter browser extension?{' '}
-                    Export as CSV or Excel and upload here.
+                    Supports: Amazon Order History (.xlsx), Lattice CSV, Order History Extension CSV
                   </p>
                 </div>
               )}
@@ -941,14 +1193,11 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                       <p>On your orders page: <strong>File → Save Page As → Webpage, HTML Only → Save</strong></p>
                     </CardContent>
                   </Card>
-
                   <div
                     role="button"
                     tabIndex={0}
                     className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-                      isDragOver
-                        ? 'border-primary bg-primary/5'
-                        : 'border-border hover:border-primary/50 hover:bg-muted/30'
+                      isDragOver ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50 hover:bg-muted/30'
                     }`}
                     onClick={() => htmlInputRef.current?.click()}
                     onKeyDown={(e) => e.key === 'Enter' && htmlInputRef.current?.click()}
@@ -978,7 +1227,6 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                       This method may break if Amazon updates their page layout. CSV upload is more reliable.
                     </p>
                   </div>
-
                   <div className="space-y-2">
                     <Label htmlFor="html-input">Amazon Orders HTML</Label>
                     <Textarea
@@ -990,7 +1238,6 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                       className="font-mono text-xs"
                     />
                   </div>
-
                   {parseWarnings.length > 0 && (
                     <div className="bg-warning/10 border border-warning/30 rounded-lg p-3">
                       <div className="flex items-center gap-2 text-warning mb-2">
@@ -998,29 +1245,15 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                         <span className="font-medium text-sm">Parse Warnings</span>
                       </div>
                       <ul className="text-xs text-muted-foreground space-y-1">
-                        {parseWarnings.map((w, i) => (
-                          <li key={i}>• {w}</li>
-                        ))}
+                        {parseWarnings.map((w, i) => <li key={i}>• {w}</li>)}
                       </ul>
                     </div>
                   )}
-
-                  <Button
-                    onClick={handleParse}
-                    disabled={!htmlInput.trim() || isParsing}
-                    className="w-full"
-                    size="lg"
-                  >
+                  <Button onClick={handleParse} disabled={!htmlInput.trim() || isParsing} className="w-full" size="lg">
                     {isParsing ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Parsing...
-                      </>
+                      <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Parsing...</>
                     ) : (
-                      <>
-                        <Sparkles className="w-4 h-4 mr-2" />
-                        Parse Items
-                      </>
+                      <><Sparkles className="w-4 h-4 mr-2" />Parse Items</>
                     )}
                   </Button>
                 </div>
@@ -1030,33 +1263,74 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
 
           {step === 'preview' && (
             <div className="space-y-4">
+              {/* Summary banner for order history */}
+              {detectedFormat === 'order_history_extension' && (vineCount > 0 || regularCount > 0) && (
+                <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg text-xs flex-wrap">
+                  {vineCount > 0 && (
+                    <span className="flex items-center gap-1 text-purple-600">
+                      <Grape className="w-3 h-3" />
+                      {vineCount} Vine
+                    </span>
+                  )}
+                  {regularCount > 0 && (
+                    <span className="text-muted-foreground">{regularCount} regular orders</span>
+                  )}
+                  {mergeCount > 0 && (
+                    <span className="flex items-center gap-1 text-amber-600">
+                      <GitMerge className="w-3 h-3" />
+                      {mergeCount} will merge with existing items
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Lattice summary banner */}
+              {detectedFormat === 'lattice' && (
+                <div className="flex items-center gap-3 p-3 bg-purple-500/10 border border-purple-500/30 rounded-lg text-xs flex-wrap">
+                  <span className="flex items-center gap-1 text-purple-600 font-medium">
+                    <Grape className="w-3 h-3" />
+                    Lattice CSV
+                  </span>
+                  <span className="text-muted-foreground">{parsedItems.length} Vine items</span>
+                  {mergeCount > 0 && (
+                    <span className="flex items-center gap-1 text-amber-600">
+                      <GitMerge className="w-3 h-3" />
+                      {mergeCount} will merge
+                    </span>
+                  )}
+                </div>
+              )}
+
               {/* Stats bar */}
               <div className="flex items-center justify-between flex-wrap gap-2 p-3 bg-muted/50 rounded-lg">
                 <div className="flex items-center gap-4">
                   <Button variant="outline" size="sm" onClick={toggleAll}>
                     {parsedItems.every(item => item.selected) ? 'Deselect All' : 'Select All'}
                   </Button>
-                  <Badge variant="secondary">
-                    {selectedCount} of {parsedItems.length} selected
-                  </Badge>
+                  <Badge variant="secondary">{selectedCount} of {parsedItems.length} selected</Badge>
                 </div>
-                
                 <div className="flex items-center gap-4 text-xs">
                   <span className="flex items-center gap-1">
                     <CheckCircle className="w-3 h-3 text-success" />
                     {highConfidenceCount} high confidence
                   </span>
-                    {duplicateCount > 0 && (
+                  {mergeCount > 0 && (
+                    <span className="flex items-center gap-1 text-amber-600">
+                      <GitMerge className="w-3 h-3" />
+                      {mergeCount} will merge
+                    </span>
+                  )}
+                  {duplicateCount > 0 && (
                     <span className="flex items-center gap-1 text-warning">
                       <ShieldAlert className="w-3 h-3" />
-                      {duplicateCount} potential duplicates
+                      {duplicateCount} similar
                     </span>
                   )}
                 </div>
               </div>
 
               {/* Vine Mode Banner */}
-              {isVineMode && (
+              {isVineMode && detectedFormat !== 'lattice' && (
                 <div className="space-y-3 p-3 bg-purple-500/10 border border-purple-500/30 rounded-lg">
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex items-center gap-2">
@@ -1067,10 +1341,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                       </div>
                     </div>
                   </div>
-                  
-                  {/* Price Actions Row */}
                   <div className="flex items-center gap-3 flex-wrap">
-                    {/* Fetch Retail Prices Button */}
                     <Button
                       size="sm"
                       variant="default"
@@ -1079,21 +1350,12 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                       className="bg-purple-600 hover:bg-purple-700"
                     >
                       {isFetchingPrices ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Fetching...
-                        </>
+                        <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Fetching...</>
                       ) : (
-                        <>
-                          <DollarSign className="w-4 h-4 mr-2" />
-                          Fetch Retail Prices
-                        </>
+                        <><DollarSign className="w-4 h-4 mr-2" />Fetch Retail Prices</>
                       )}
                     </Button>
-                    
                     <span className="text-xs text-muted-foreground">or</span>
-                    
-                    {/* Bulk ETV */}
                     <div className="flex items-center gap-2">
                       <Label htmlFor="vine-etv" className="text-xs whitespace-nowrap">Bulk ETV:</Label>
                       <div className="flex items-center gap-1">
@@ -1108,9 +1370,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                           className="w-20 text-sm h-8"
                         />
                       </div>
-                      <Button size="sm" variant="outline" onClick={applyBulkETV} disabled={!vineETV}>
-                        Apply All
-                      </Button>
+                      <Button size="sm" variant="outline" onClick={applyBulkETV} disabled={!vineETV}>Apply All</Button>
                     </div>
                   </div>
                 </div>
@@ -1149,11 +1409,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
 
               {/* Navigation */}
               <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => setStep('paste')}
-                  className="flex-1"
-                >
+                <Button variant="outline" onClick={() => setStep('paste')} className="flex-1">
                   <ArrowLeft className="w-4 h-4 mr-2" />
                   Back
                 </Button>
@@ -1163,15 +1419,9 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                   className="flex-1"
                 >
                   {importItems.isPending ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Importing...
-                    </>
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Importing...</>
                   ) : (
-                    <>
-                      Import {selectedCount} Item{selectedCount !== 1 ? 's' : ''}
-                      <ArrowRight className="w-4 h-4 ml-2" />
-                    </>
+                    <>Import {selectedCount} Item{selectedCount !== 1 ? 's' : ''}<ArrowRight className="w-4 h-4 ml-2" /></>
                   )}
                 </Button>
               </div>
@@ -1182,3 +1432,20 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     </Dialog>
   );
 }
+
+// ============================================================================
+// HELPERS (module-level)
+// ============================================================================
+
+function mapLatticeQuality(q: string): 'pending' | 'poor' | 'fair' | 'excellent' | null {
+  if (!q) return null;
+  const lower = q.toLowerCase();
+  if (lower.includes('excellent')) return 'excellent';
+  if (lower.includes('fair')) return 'fair';
+  if (lower.includes('poor')) return 'poor';
+  if (lower.includes('pending')) return 'pending';
+  return null;
+}
+
+// Suppress unused import warning for PLACEHOLDER_IMAGE
+void PLACEHOLDER_IMAGE;

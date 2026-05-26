@@ -34,6 +34,31 @@ export interface Item {
   confirmed_at: string | null;
   confirmed_by: string | null;
   held_by: string | null;
+  // Amazon / import fields
+  amazon_asin: string | null;
+  amazon_order_id: string | null;
+  amazon_order_url: string | null;
+  amazon_tracking_url: string | null;
+  amazon_invoice_url: string | null;
+  amazon_shipment_status: string | null;
+  amazon_return_status: string | null;
+  amazon_refund_amount: number | null;
+  amazon_refund_date: string | null;
+  amazon_tax_amount: number | null;
+  // Vine fields
+  is_vine_order: boolean | null;
+  vine_review_status: string | null;
+  vine_review_quality: string | null;
+  vine_review_date: string | null;
+  vine_etv: number | null;
+  vine_fmv: number | null;
+  // Lattice fields
+  lattice_review_status: string | null;
+  lattice_review_score: number | null;
+  lattice_review_quality: string | null;
+  lattice_reviewed_date: string | null;
+  // Multi-source tracking
+  data_sources: string[] | null;
   category?: Category | null;
   storage_location?: StorageLocation | null;
 }

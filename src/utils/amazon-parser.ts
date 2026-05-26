@@ -1,9 +1,15 @@
 /**
  * Amazon Smart Parser - Anti-Fragile HTML Parsing Engine
- * 
+ *
  * This parser uses multiple heuristic strategies to extract order data from
  * Amazon HTML, with fallback mechanisms to handle UI changes.
  */
+import {
+  isOrderHistoryExtensionCSV,
+  parseOrderHistoryExtensionCSV,
+  type OrderHistoryParseResult,
+} from './order-history-extension-parser';
+import { isLatticeCSV, parseLatticeCSV, type LatticeParseResult } from './lattice-csv-parser';
 
 // ============================================================================
 // TYPES
@@ -1190,5 +1196,46 @@ export function parseAmazonCSV(csvText: string): ParseResult {
     totalFound: items.length,
     parseWarnings: warnings,
     isVineMode: false,
+  };
+}
+
+// ============================================================================
+// UNIVERSAL CSV ROUTER
+// ============================================================================
+
+export type DetectedCSVFormat = 'lattice' | 'order_history_extension' | 'amazon_standard' | 'unknown';
+
+export interface UniversalCSVResult {
+  format: DetectedCSVFormat;
+  latticeResult?: LatticeParseResult;
+  orderHistoryResult?: OrderHistoryParseResult;
+  amazonResult?: ParseResult;
+  warnings: string[];
+}
+
+/**
+ * Auto-detect CSV format and route to the correct parser.
+ * Called from AmazonImportDialog when a CSV file is uploaded or dropped.
+ */
+export function detectAndParseCSV(text: string): UniversalCSVResult {
+  if (isLatticeCSV(text)) {
+    return {
+      format: 'lattice',
+      latticeResult: parseLatticeCSV(text),
+      warnings: [],
+    };
+  }
+  if (isOrderHistoryExtensionCSV(text)) {
+    return {
+      format: 'order_history_extension',
+      orderHistoryResult: parseOrderHistoryExtensionCSV(text),
+      warnings: [],
+    };
+  }
+  const result = parseAmazonCSV(text);
+  return {
+    format: result.items.length > 0 ? 'amazon_standard' : 'unknown',
+    amazonResult: result,
+    warnings: result.parseWarnings,
   };
 }
