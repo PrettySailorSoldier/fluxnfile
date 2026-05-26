@@ -33,25 +33,32 @@ export function BarcodeScannerModal({
       const result = await scan(VIEWFINDER_ID);
 
       switch (result.status) {
-        case 'found': {
-          const match = items.find(
-            (item) =>
-              item.asin?.toUpperCase() === result.asin.toUpperCase()
-          );
-          if (match) {
-            toast.success(`Found: ${match.title || 'Untitled item'}`);
-            onMatchFound(match);
+        case 'found':
+        case 'not_asin': {
+          const rawValue = result.rawValue.trim().toUpperCase();
+          const isAsinFormat =
+            rawValue.length === 10 &&
+            (rawValue.startsWith('B0') || /^\d{10}$/.test(rawValue));
+
+          if (!isAsinFormat) {
+            toast.warning(
+              'That looks like a tracking/shipment code. Scan the barcode on the product itself — it starts with B0 and is 10 characters.'
+            );
           } else {
-            toast.info(`ASIN ${result.asin} — not in inventory yet`);
-            onNoMatch(result.asin);
+            const match = items.find(
+              (item) => item.asin?.toUpperCase() === rawValue
+            );
+            if (match) {
+              toast.success(`Found: ${match.title || 'Untitled item'}`);
+              onMatchFound(match);
+            } else {
+              toast.warning(`Scanned: "${rawValue}" — no ASIN found`);
+              onNoMatch(rawValue);
+            }
           }
           onClose();
           break;
         }
-        case 'not_asin':
-          toast.warning(`Scanned: "${result.rawValue}" — no ASIN found`);
-          onClose();
-          break;
         case 'cancelled':
           onClose();
           break;
