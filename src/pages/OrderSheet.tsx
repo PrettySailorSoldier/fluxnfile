@@ -1,10 +1,24 @@
 import { useState, useMemo } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useOrderSheetItems, Item } from '@/hooks/useInventory';
+import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/integrations/supabase/client';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Package, Search, CheckCircle2, Loader2 } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Package, Search, CheckCircle2, Loader2, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { ConfirmItemSheet } from '@/components/inventory/ConfirmItemSheet';
 import { ReviewStatusBadge } from '@/components/amazon/ReviewStatusBadge';
 
@@ -18,15 +32,38 @@ function formatDate(dateStr: string | null | undefined) {
 }
 
 export default function OrderSheet() {
+  const { team } = useAuth();
+  const queryClient = useQueryClient();
   const { data: items = [], isLoading } = useOrderSheetItems();
   const [search, setSearch] = useState('');
   const [confirmItem, setConfirmItem] = useState<Item | null>(null);
+  const [showClearDialog, setShowClearDialog] = useState(false);
 
   const filtered = useMemo(() => {
     if (!search) return items;
     const q = search.toLowerCase();
     return items.filter((item) => item.title?.toLowerCase().includes(q));
   }, [items, search]);
+
+  const clearAllMutation = useMutation({
+    mutationFn: async () => {
+      if (!team?.id) return;
+      const { error } = await supabase
+        .from('items')
+        .delete()
+        .eq('team_id', team.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['items'] });
+      queryClient.invalidateQueries({ queryKey: ['unconfirmed-count'] });
+      toast.success('All items cleared.');
+      setShowClearDialog(false);
+    },
+    onError: () => {
+      toast.error('Failed to clear items');
+    },
+  });
 
   if (isLoading) {
     return (
@@ -43,6 +80,18 @@ export default function OrderSheet() {
           <h1 className="text-2xl font-bold text-foreground">Order Sheet</h1>
           {items.length > 0 && (
             <Badge variant="secondary">{items.length} items</Badge>
+          )}
+          <div className="flex-1" />
+          {items.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-destructive hover:text-destructive hover:bg-destructive/10 h-8 px-2"
+              onClick={() => setShowClearDialog(true)}
+            >
+              <Trash2 className="w-4 h-4 mr-1" />
+              Clear All
+            </Button>
           )}
         </div>
         <div className="relative">
@@ -87,6 +136,27 @@ export default function OrderSheet() {
         open={!!confirmItem}
         onClose={() => setConfirmItem(null)}
       />
+
+      <AlertDialog open={showClearDialog} onOpenChange={setShowClearDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear all items?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete all items for your team. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => clearAllMutation.mutate()}
+              disabled={clearAllMutation.isPending}
+            >
+              {clearAllMutation.isPending ? 'Clearing...' : 'Clear All'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
