@@ -623,6 +623,10 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
           acquisition_source: isVineMode ? 'Vine' : 'Amazon',
           condition: 'new' as const,
           status: 'acquired' as const,
+          physical_status: 'unconfirmed',
+          confirmed_at: null,
+          confirmed_by: null,
+          held_by: null,
           photos: item.imageUrl ? [item.imageUrl] : [],
           amazon_review_status: amazonReviewStatus,
           reviewed_by: [] as string[],
@@ -637,7 +641,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     onSuccess: (count) => {
       queryClient.invalidateQueries({ queryKey: ['items'] });
       queryClient.invalidateQueries({ queryKey: ['existing-amazon-items'] });
-      toast.success(`Successfully imported ${count} items!`);
+      toast.success(`Added ${count} items to your Order Sheet`);
       onOpenChange(false);
     },
     onError: (error: Error) => {
