@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import * as XLSX from 'xlsx';
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -42,9 +43,9 @@ import {
 } from 'lucide-react';
 import {
   parseAmazonHTML,
-  parseAmazonCSV,
   ParsedAmazonItem,
-  PLACEHOLDER_IMAGE
+  PLACEHOLDER_IMAGE,
+  sanitizeTitle,
 } from '@/utils/amazon-parser';
 import { ImportMethodTabs, type ImportMethod } from '@/components/amazon/ImportMethodTabs';
 
@@ -291,6 +292,33 @@ function ItemPreviewCard({
 }
 
 // ============================================================================
+// FILE PARSER (XLSX + CSV)
+// ============================================================================
+
+const parseFile = (file: File): Promise<Record<string, string>[]> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = e.target?.result;
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json<Record<string, string>>(
+          worksheet,
+          { defval: '' }
+        );
+        resolve(rows);
+      } catch {
+        reject(new Error('Could not read file. Please upload a valid Excel or CSV file.'));
+      }
+    };
+    reader.onerror = () => reject(new Error('File read failed.'));
+    reader.readAsArrayBuffer(file);
+  });
+};
+
+// ============================================================================
 // MAIN COMPONENT
 // ============================================================================
 
@@ -381,19 +409,129 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
 
   // ── File handling helpers ──────────────────────────────────────────────────
 
-  function processCsvText(text: string) {
+  function processRowsAsCsv(rows: Record<string, string>[]) {
     setCsvFileError(null);
-    const result = parseAmazonCSV(text);
-    if (result.items.length === 0) {
-      setCsvFileError(result.parseWarnings[0] || 'No items found in the CSV file.');
-      setParseWarnings(result.parseWarnings);
+    if (rows.length === 0) {
+      setCsvFileError('No items found in the file.');
       return;
     }
-    setParsedItems(result.items);
-    setParseWarnings(result.parseWarnings);
+
+    const keys = Object.keys(rows[0]);
+    const findCol = (name: string) =>
+      keys.find(k => k.toLowerCase().trim() === name.toLowerCase().trim()) ?? null;
+
+    const COL_TITLE      = findCol('title');
+    const COL_ORDER_ID   = findCol('order id');
+    const COL_ORDER_DATE = findCol('order date');
+    const COL_ASIN       = findCol('asin/isbn');
+    const COL_QUANTITY   = findCol('quantity');
+    const COL_ITEM_TOTAL = findCol('item total');
+    const COL_UNIT_PRICE = findCol('purchase price per unit');
+
+    if (!COL_TITLE) {
+      setCsvFileError(
+        "This doesn't look like an Amazon order history file. " +
+        "Make sure you're using the export from Account → Order History Reports."
+      );
+      return;
+    }
+
+    function parsePrice(s: string): number {
+      if (!s.trim()) return 0;
+      const cleaned = s.replace(/[$,\s]/g, '');
+      const n = parseFloat(cleaned);
+      return isNaN(n) ? 0 : Math.round(n * 100) / 100;
+    }
+
+    function parseDate(dateStr: string): { date: string; guessed: boolean } {
+      if (!dateStr.trim()) return { date: new Date().toISOString(), guessed: true };
+      if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) {
+        const d = new Date(dateStr);
+        if (!isNaN(d.getTime())) return { date: d.toISOString(), guessed: false };
+      }
+      if (/^\d{1,2}\/\d{1,2}\/\d{2,4}/.test(dateStr)) {
+        const d = new Date(dateStr);
+        if (!isNaN(d.getTime())) return { date: d.toISOString(), guessed: false };
+      }
+      const fallback = new Date(dateStr);
+      if (!isNaN(fallback.getTime())) return { date: fallback.toISOString(), guessed: true };
+      return { date: new Date().toISOString(), guessed: true };
+    }
+
+    const warnings: string[] = [];
+    const items: ParsedAmazonItem[] = [];
+    const seenKeys = new Set<string>();
+
+    for (const row of rows) {
+      const g = (col: string | null) => (col ? (row[col] ?? '').trim() : '');
+      const title = g(COL_TITLE);
+      if (!title || title.length < 3) continue;
+
+      const orderId = g(COL_ORDER_ID);
+      const asinRaw = g(COL_ASIN);
+      const asin = asinRaw && /^[A-Z0-9]{10}$/i.test(asinRaw) ? asinRaw.toUpperCase() : null;
+      const quantity = Math.max(0, parseInt(g(COL_QUANTITY)) || 1);
+
+      let price = parsePrice(g(COL_UNIT_PRICE));
+      if (price === 0 && COL_ITEM_TOTAL) {
+        const itemTotal = parsePrice(g(COL_ITEM_TOTAL));
+        if (itemTotal > 0) {
+          price = quantity > 0 ? Math.round((itemTotal / quantity) * 100) / 100 : itemTotal;
+        }
+      }
+
+      if (price === 0 && quantity === 0) continue;
+
+      const { date: orderDate, guessed: dateGuessed } = parseDate(g(COL_ORDER_DATE));
+      const dedupKey = `${orderId}::${asin ?? title.toLowerCase()}`;
+      if (seenKeys.has(dedupKey)) continue;
+      seenKeys.add(dedupKey);
+
+      const priceFound = price > 0;
+      const confidenceDetails = {
+        titleFound: true,
+        priceFound,
+        priceGuessed: false,
+        dateFound: !dateGuessed,
+        dateGuessed,
+        asinFound: !!asin,
+      };
+
+      const confidence: 'high' | 'medium' | 'low' =
+        priceFound && !dateGuessed ? 'high'
+        : dateGuessed ? 'medium'
+        : 'low';
+
+      const cleanTitle = sanitizeTitle(title);
+      const unitCount = Math.min(Math.max(1, quantity), 20);
+      for (let u = 0; u < unitCount; u++) {
+        items.push({
+          id: `item-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          title,
+          cleanTitle,
+          orderDate,
+          price,
+          asin,
+          imageUrl: null,
+          selected: true,
+          confidence,
+          confidenceDetails,
+          vineReviewStatus: null,
+        });
+      }
+    }
+
+    if (items.length === 0) {
+      setCsvFileError(warnings[0] || 'No items found in the file.');
+      setParseWarnings(warnings);
+      return;
+    }
+
+    setParsedItems(items);
+    setParseWarnings(warnings);
     setIsVineMode(false);
     setStep('preview');
-    toast.success(`Found ${result.items.length} item${result.items.length !== 1 ? 's' : ''}!`);
+    toast.success(`Found ${items.length} item${items.length !== 1 ? 's' : ''}!`);
   }
 
   function processHtmlText(text: string) {
@@ -423,18 +561,25 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     }, 100);
   }
 
-  function handleFileSelect(file: File, type: 'csv' | 'html') {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const text = e.target?.result as string;
-      if (type === 'csv') {
-        processCsvText(text);
-      } else {
-        processHtmlText(text);
+  async function handleFileSelect(file: File, type: 'csv' | 'html') {
+    if (type === 'csv') {
+      try {
+        const rows = await parseFile(file);
+        processRowsAsCsv(rows);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Could not read file.';
+        setCsvFileError(msg);
+        toast.error(msg);
       }
-    };
-    reader.onerror = () => toast.error('Failed to read file');
-    reader.readAsText(file);
+    } else {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = e.target?.result as string;
+        processHtmlText(text);
+      };
+      reader.onerror = () => toast.error('Failed to read file');
+      reader.readAsText(file);
+    }
   }
 
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>, type: 'csv' | 'html') {
