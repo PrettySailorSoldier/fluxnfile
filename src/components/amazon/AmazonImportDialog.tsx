@@ -593,14 +593,14 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     setIsDragOver(false);
     const file = e.dataTransfer.files?.[0];
     if (!file) return;
-    const isCsv = file.name.endsWith('.csv') || file.type === 'text/csv';
+    const isSpreadsheet = /\.(xlsx|xls|csv)$/i.test(file.name) || file.type === 'text/csv';
     const isHtml = file.name.endsWith('.html') || file.name.endsWith('.htm') || file.type === 'text/html';
-    if (importMethod === 'csv' && isCsv) {
+    if (importMethod === 'csv' && isSpreadsheet) {
       handleFileSelect(file, 'csv');
     } else if (importMethod === 'file' && isHtml) {
       handleFileSelect(file, 'html');
     } else {
-      toast.error(importMethod === 'csv' ? 'Please drop a .csv file' : 'Please drop an .html file');
+      toast.error(importMethod === 'csv' ? 'Please drop a .xlsx or .csv file' : 'Please drop an .html file');
     }
   }
 
@@ -814,7 +814,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
             Import from Amazon Orders
           </DialogTitle>
           <DialogDescription>
-            {step === 'paste' && importMethod === 'csv'  && 'Upload your Amazon order history CSV to get started'}
+            {step === 'paste' && importMethod === 'csv'  && 'Upload your Amazon order history Excel file (.xlsx) or CSV to get started'}
             {step === 'paste' && importMethod === 'file' && 'Upload a saved Amazon orders HTML file'}
             {step === 'paste' && importMethod === 'paste' && 'Paste your Amazon orders page HTML to get started'}
             {step === 'preview' && 'Review and adjust items before importing'}
@@ -846,7 +846,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
               <input
                 ref={csvInputRef}
                 type="file"
-                accept=".csv,text/csv"
+                accept=".xlsx,.xls,.csv"
                 className="hidden"
                 onChange={(e) => handleInputChange(e, 'csv')}
               />
@@ -864,7 +864,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                   <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
                       <FileSpreadsheet className="w-4 h-4 text-primary" />
-                      How to get your Amazon order history CSV
+                      How to get your Amazon order history file
                     </DialogTitle>
                   </DialogHeader>
                   <ol className="text-sm text-muted-foreground space-y-3 list-decimal ml-4">
@@ -873,7 +873,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                     <li>Select report type <strong className="text-foreground">"Items"</strong>, choose your date range, click <strong className="text-foreground">Request Report</strong></li>
                     <li>Wait 1–2 minutes for Amazon to generate the file</li>
                     <li>Click <strong className="text-foreground">Download</strong> next to your report</li>
-                    <li>Upload the downloaded <code className="bg-muted px-1 rounded text-xs">.csv</code> file here</li>
+                    <li>Upload the downloaded <code className="bg-muted px-1 rounded text-xs">.xlsx</code> file here (Amazon exports as Excel)</li>
                   </ol>
                   <Button className="w-full mt-2" onClick={() => setShowCsvHelp(false)}>
                     Got it
@@ -903,17 +903,17 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                     onDrop={handleDrop}
                   >
                     <FileSpreadsheet className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
-                    <p className="font-medium text-sm">Drop your Amazon order CSV here</p>
-                    <p className="text-xs text-muted-foreground mt-1">or click to browse</p>
+                    <p className="font-medium text-sm">Drop your Amazon order file here</p>
+                    <p className="text-xs text-muted-foreground mt-1">Accepts .xlsx or .csv — or click to browse</p>
                     <p className="text-xs text-muted-foreground mt-3 max-w-xs mx-auto leading-relaxed">
-                      Get your CSV from Amazon: Account → Order History Reports → Select date range → Request Report → Download when ready
+                      Get your file from Amazon: Account → Order History Reports → Select date range → Request Report → Download when ready. Amazon exports as .xlsx — upload it directly.
                     </p>
                     <button
                       type="button"
                       className="text-xs text-primary underline-offset-2 hover:underline mt-2 block mx-auto"
                       onClick={(e) => { e.stopPropagation(); setShowCsvHelp(true); }}
                     >
-                      How to get your order history CSV →
+                      How to get your order history file →
                     </button>
                   </div>
 
@@ -927,7 +927,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
 
                   <p className="text-xs text-muted-foreground text-center">
                     Using the Amazon Order History Reporter browser extension?{' '}
-                    Export as CSV and upload here.
+                    Export as CSV or Excel and upload here.
                   </p>
                 </div>
               )}

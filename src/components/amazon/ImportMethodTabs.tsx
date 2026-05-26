@@ -19,7 +19,7 @@ export function ImportMethodTabs({ method, onChange }: ImportMethodTabsProps) {
         >
           <div className="flex items-center gap-1.5">
             <FileSpreadsheet className="w-4 h-4" />
-            <span className="text-xs font-medium">CSV Upload</span>
+            <span className="text-xs font-medium">Excel Upload</span>
           </div>
           <Badge
             variant="secondary"
