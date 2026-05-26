@@ -17,11 +17,21 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Package, Search, CheckCircle2, Loader2, Trash2, ShoppingCart, Grape } from 'lucide-react';
+import { Package, Search, CheckCircle2, Loader2, Trash2, ShoppingCart, FileSpreadsheet, Upload, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+} from '@/components/ui/dropdown-menu';
 import { ConfirmItemSheet } from '@/components/inventory/ConfirmItemSheet';
 import { ReviewStatusBadge } from '@/components/amazon/ReviewStatusBadge';
 import { AmazonImportDialog } from '@/components/amazon/AmazonImportDialog';
+import { VineReportImportDialog } from '@/components/amazon/VineReportImportDialog';
+import { LatticeImportDialog } from '@/components/amazon/LatticeImportDialog';
 
 function formatDate(dateStr: string | null | undefined) {
   if (!dateStr) return '';
@@ -39,7 +49,9 @@ export default function OrderSheet() {
   const [search, setSearch] = useState('');
   const [confirmItem, setConfirmItem] = useState<Item | null>(null);
   const [showClearDialog, setShowClearDialog] = useState(false);
-  const [showImport, setShowImport] = useState(false);
+  const [showAmazonImport, setShowAmazonImport] = useState(false);
+  const [showVineReport, setShowVineReport] = useState(false);
+  const [showLattice, setShowLattice] = useState(false);
 
   const filtered = useMemo(() => {
     if (!search) return items;
@@ -108,33 +120,37 @@ export default function OrderSheet() {
       </div>
 
       <div className="p-4 space-y-3">
-        {/* Import section */}
-        <div className="space-y-2">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-            Import Orders
-          </p>
-          <div className="grid grid-cols-2 gap-3">
-            <Button
-              variant="outline"
-              className="w-full justify-start gap-2"
-              onClick={() => setShowImport(true)}
-            >
-              <ShoppingCart className="w-4 h-4 flex-shrink-0" />
-              <span className="text-sm truncate">Import Amazon Orders</span>
+        {/* Import */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm">
+              <Upload className="w-4 h-4 mr-1" />
+              Import
+              <ChevronDown className="w-3 h-3 ml-1" />
             </Button>
-            <Button
-              variant="outline"
-              className="w-full justify-start gap-2"
-              onClick={() => setShowImport(true)}
-            >
-              <Grape className="w-4 h-4 flex-shrink-0 text-violet-400" />
-              <span className="text-sm truncate">Import Vine Orders</span>
-              <Badge className="ml-auto bg-violet-500/15 text-violet-400 border-0 text-[10px] px-1.5 py-0 h-4 flex-shrink-0">
-                Vine
-              </Badge>
-            </Button>
-          </div>
-        </div>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuLabel className="text-xs text-muted-foreground">
+              Import Source
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => setShowLattice(true)}>
+              <Upload className="w-4 h-4 mr-2" />
+              Lattice CSV
+              <span className="ml-auto text-xs text-primary font-medium">
+                Best
+              </span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setShowVineReport(true)}>
+              <FileSpreadsheet className="w-4 h-4 mr-2" />
+              Vine Report XLSX
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setShowAmazonImport(true)}>
+              <ShoppingCart className="w-4 h-4 mr-2" />
+              Amazon HTML
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         {filtered.length === 0 ? (
           <Card className="bg-secondary/30 border-dashed mt-8">
@@ -167,7 +183,9 @@ export default function OrderSheet() {
         onClose={() => setConfirmItem(null)}
       />
 
-      <AmazonImportDialog open={showImport} onOpenChange={setShowImport} />
+      <AmazonImportDialog open={showAmazonImport} onOpenChange={setShowAmazonImport} />
+      <VineReportImportDialog open={showVineReport} onOpenChange={setShowVineReport} />
+      <LatticeImportDialog open={showLattice} onOpenChange={setShowLattice} />
 
       <AlertDialog open={showClearDialog} onOpenChange={setShowClearDialog}>
         <AlertDialogContent>
