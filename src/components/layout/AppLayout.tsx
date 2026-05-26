@@ -1,5 +1,6 @@
 import { ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { Settings } from 'lucide-react';
 import { BottomNav } from './BottomNav';
 import { useTheme } from '@/contexts/ThemeContext';
 import { NotificationBell } from '@/components/notifications/NotificationBell';
@@ -10,6 +11,7 @@ interface AppLayoutProps {
 
 export function AppLayout({ children }: AppLayoutProps) {
   const { backgroundImageUrl } = useTheme();
+  const navigate = useNavigate();
 
   return (
     <div className="min-h-screen pb-20 relative">
@@ -27,7 +29,16 @@ export function AppLayout({ children }: AppLayoutProps) {
           <Link to="/" className="font-semibold text-foreground hover:text-primary transition-colors">
             Flux&File
           </Link>
-          <NotificationBell />
+          <div className="flex items-center gap-1">
+            <NotificationBell />
+            <button
+              onClick={() => navigate('/settings')}
+              className="w-9 h-9 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+              aria-label="Settings"
+            >
+              <Settings className="w-5 h-5" />
+            </button>
+          </div>
         </div>
       </header>
       
