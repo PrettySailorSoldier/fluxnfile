@@ -30,6 +30,10 @@ export interface Item {
   platform_fees: number;
   created_at: string;
   updated_at: string;
+  physical_status: 'unconfirmed' | 'keep' | 'sell';
+  confirmed_at: string | null;
+  confirmed_by: string | null;
+  held_by: string | null;
   category?: Category | null;
   storage_location?: StorageLocation | null;
 }
@@ -76,8 +80,32 @@ export function useItems() {
           storage_location:storage_locations(*)
         `)
         .eq('team_id', team.id)
+        .neq('physical_status', 'unconfirmed')
         .order('created_at', { ascending: false });
 
+      if (error) throw error;
+      return data as Item[];
+    },
+    enabled: !!team?.id,
+  });
+}
+
+export function useOrderSheetItems() {
+  const { team } = useAuth();
+  return useQuery({
+    queryKey: ['items', 'order-sheet', team?.id],
+    queryFn: async () => {
+      if (!team?.id) return [];
+      const { data, error } = await supabase
+        .from('items')
+        .select(`
+          *,
+          category:categories(*),
+          storage_location:storage_locations(*)
+        `)
+        .eq('team_id', team.id)
+        .eq('physical_status', 'unconfirmed')
+        .order('acquisition_date', { ascending: false });
       if (error) throw error;
       return data as Item[];
     },

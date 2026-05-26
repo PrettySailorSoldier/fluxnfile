@@ -19,6 +19,7 @@ import Tasks from "./pages/Tasks";
 import FacebookTools from "./pages/FacebookTools";
 import RoughNotes from "./pages/RoughNotes";
 import SalesCheck from "./pages/SalesCheck";
+import OrderSheet from "./pages/OrderSheet";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -86,6 +87,11 @@ const App = () => (
             <Route path="/sales-check" element={
               <ProtectedRoute>
                 <AppLayout><SalesCheck /></AppLayout>
+              </ProtectedRoute>
+            } />
+            <Route path="/order-sheet" element={
+              <ProtectedRoute>
+                <AppLayout><OrderSheet /></AppLayout>
               </ProtectedRoute>
             } />
             <Route path="*" element={<NotFound />} />
