@@ -1200,6 +1200,59 @@ export function parseAmazonCSV(csvText: string): ParseResult {
 }
 
 // ============================================================================
+// CSV FORMAT DETECTION (lightweight header-only inspection)
+// ============================================================================
+
+export type CSVFormat =
+  | 'lattice'           // Lattice Chrome extension export
+  | 'order_history_ext' // Amazon Order History Browser Extension
+  | 'amazon_standard'   // Amazon's native Order History Reports CSV
+  | 'unknown';
+
+/**
+ * Inspect the first line of a CSV and return which known format it matches.
+ * Used to route the file to the correct parser without any user input.
+ *
+ * Detection rules (checked in order, most specific first):
+ * 1. LATTICE: header contains "etv" AND "fmv" AND "description"
+ * 2. ORDER_HISTORY_EXT: header contains "orderid" AND "orderplaced"
+ *    AND "itemtitles" AND "shipmentstatus"
+ * 3. AMAZON_STANDARD: header contains "asin" AND "title" AND "category"
+ * 4. UNKNOWN: none of the above matched
+ */
+export function detectCSVFormat(text: string): CSVFormat {
+  const firstLine = text.split('\n')[0] ?? '';
+  const normalized = firstLine.toLowerCase().replace(/["']/g, '').replace(/\s+/g, '');
+
+  if (
+    normalized.includes('etv') &&
+    normalized.includes('fmv') &&
+    normalized.includes('description')
+  ) {
+    return 'lattice';
+  }
+
+  if (
+    normalized.includes('orderid') &&
+    normalized.includes('orderplaced') &&
+    normalized.includes('itemtitles') &&
+    normalized.includes('shipmentstatus')
+  ) {
+    return 'order_history_ext';
+  }
+
+  if (
+    normalized.includes('asin') &&
+    normalized.includes('title') &&
+    normalized.includes('category')
+  ) {
+    return 'amazon_standard';
+  }
+
+  return 'unknown';
+}
+
+// ============================================================================
 // UNIVERSAL CSV ROUTER
 // ============================================================================
 

@@ -1158,9 +1158,11 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                     onDrop={handleDrop}
                   >
                     <FileSpreadsheet className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
-                    <p className="font-medium text-sm">Drop your order file here</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Accepts .xlsx, .csv — auto-detects Amazon, Lattice, or Order History Extension format
+                    <p className="font-medium text-sm">Drop any Amazon or Lattice CSV here</p>
+                    <p className="text-xs text-muted-foreground mt-1">or click to browse</p>
+                    <p className="text-xs text-muted-foreground mt-3 max-w-xs mx-auto leading-relaxed">
+                      Accepts: <strong>Lattice CSV</strong>, <strong>Order History Extension CSV</strong>,
+                      or <strong>Amazon Order History Reports CSV</strong> — format is detected automatically
                     </p>
                     <button
                       type="button"
