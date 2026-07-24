@@ -50,6 +50,7 @@ export interface Item {
   review_notes: string | null;
   // Amazon / import fields
   amazon_asin: string | null;
+  upc: string | null;
   amazon_order_id: string | null;
   amazon_order_number: string | null;
   amazon_order_url: string | null;

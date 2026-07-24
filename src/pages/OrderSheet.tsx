@@ -30,6 +30,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ConfirmItemSheet } from '@/components/inventory/ConfirmItemSheet';
 import { BarcodeScannerModal } from '@/components/inventory/BarcodeScannerModal';
+import { LinkUpcSheet } from '@/components/inventory/LinkUpcSheet';
+import { normalizeUpc } from '@/hooks/useBarcodeScanner';
 import { ReviewStatusBadge } from '@/components/amazon/ReviewStatusBadge';
 import { AmazonImportDialog } from '@/components/amazon/AmazonImportDialog';
 import { VineReportImportDialog } from '@/components/amazon/VineReportImportDialog';
@@ -56,6 +58,7 @@ export default function OrderSheet() {
   const [showVineReport, setShowVineReport] = useState(false);
   const [showLattice, setShowLattice] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
+  const [linkUpc, setLinkUpc] = useState<string | null>(null);
   // How the confirm sheet was opened — scan-initiated confirms reopen the scanner
   const [confirmSource, setConfirmSource] = useState<'scan' | 'list'>('list');
 
@@ -106,24 +109,39 @@ export default function OrderSheet() {
     setConfirmItem(item);
   };
 
-  const handleScanNoMatch = async (asin: string) => {
-    // Not on the order sheet — check whether it's already confirmed inventory
+  const handleScanNoMatch = async (code: string, codeType: 'asin' | 'upc') => {
     if (!team?.id) return;
-    const { data } = await supabase
+
+    // Not on the order sheet — check whether it's already confirmed inventory
+    const query = supabase
       .from('items')
-      .select('id, title, physical_status, storage_location:storage_locations(name)')
+      .select('id, title, upc, physical_status, storage_location:storage_locations(name)')
       .eq('team_id', team.id)
-      .ilike('amazon_asin', asin)
       .neq('physical_status', 'unconfirmed')
-      .limit(1)
-      .maybeSingle<{ id: string; title: string | null; storage_location: { name: string } | null }>();
+      .limit(1);
+    const { data } =
+      codeType === 'asin'
+        ? await query
+            .ilike('amazon_asin', code)
+            .maybeSingle<{ id: string; title: string | null; storage_location: { name: string } | null }>()
+        : await query
+            .in('upc', [code, normalizeUpc(code), `0${code}`])
+            .maybeSingle<{ id: string; title: string | null; storage_location: { name: string } | null }>();
+
     if (data) {
       const loc = data.storage_location?.name;
       toast.info(
         `Already confirmed: ${data.title || 'Untitled item'}${loc ? ` — stored in ${loc}` : ''}`
       );
+      return;
+    }
+
+    if (codeType === 'upc') {
+      // Unknown product barcode — let the user link it to an order once;
+      // every future scan of this UPC matches instantly
+      setLinkUpc(code);
     } else {
-      toast.warning(`No order found for ASIN ${asin}. Import your orders first, or add it manually.`);
+      toast.warning(`No order found for ASIN ${code}. Import your orders first, or add it manually.`);
     }
   };
 
@@ -264,6 +282,17 @@ export default function OrderSheet() {
         onMatchFound={handleScanMatch}
         onNoMatch={handleScanNoMatch}
         onClose={() => setShowScanner(false)}
+      />
+
+      <LinkUpcSheet
+        upc={linkUpc}
+        open={!!linkUpc}
+        items={items}
+        onClose={() => setLinkUpc(null)}
+        onLinked={(item) => {
+          queryClient.invalidateQueries({ queryKey: ['items'] });
+          handleScanMatch({ ...item, upc: linkUpc });
+        }}
       />
 
       <AmazonImportDialog open={showAmazonImport} onOpenChange={setShowAmazonImport} />

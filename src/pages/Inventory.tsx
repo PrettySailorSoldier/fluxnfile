@@ -40,6 +40,7 @@ import { MarketplaceExport } from '@/components/fb/MarketplaceExport';
 import { AmazonImportDialog } from '@/components/amazon/AmazonImportDialog';
 import { ReviewStatusBadge } from '@/components/amazon/ReviewStatusBadge';
 import { BarcodeScannerModal } from '@/components/inventory/BarcodeScannerModal';
+import { LinkUpcSheet } from '@/components/inventory/LinkUpcSheet';
 import { VineReportImportDialog } from '@/components/amazon/VineReportImportDialog';
 import { LatticeImportDialog } from '@/components/amazon/LatticeImportDialog';
 
@@ -81,6 +82,7 @@ export default function Inventory() {
   const [quickEditItem, setQuickEditItem] = useState<Item | null>(null);
   const [showScanner, setShowScanner] = useState(false);
   const [scanHighlightId, setScanHighlightId] = useState<string | null>(null);
+  const [linkUpc, setLinkUpc] = useState<string | null>(null);
 
   const filteredItems = useMemo(() => {
     let result = items.filter((item) => {
@@ -95,7 +97,7 @@ export default function Inventory() {
 
       let matchesReview = true;
       if (reviewFilter !== 'all') {
-        const amazonStatus = (item as any).amazon_review_status;
+        const amazonStatus = item.amazon_review_status;
         if (reviewFilter === 'pending') {
           matchesReview = amazonStatus === 'pending';
         } else if (reviewFilter === 'reviewed') {
@@ -127,7 +129,7 @@ export default function Inventory() {
 
       let matchesDelivery = true;
       if (deliveryFilter !== 'all') {
-        const ds = ((item as any).delivery_status || '').toLowerCase();
+        const ds = (item.delivery_status || '').toLowerCase();
         if (deliveryFilter === 'delivered') {
           matchesDelivery = ds.includes('delivered');
         } else if (deliveryFilter === 'arriving') {
@@ -152,8 +154,8 @@ export default function Inventory() {
         case 'value_low':
           return (a.original_cost || 0) - (b.original_cost || 0);
         case 'review_urgent': {
-          const aStatus = (a as any).amazon_review_status;
-          const bStatus = (b as any).amazon_review_status;
+          const aStatus = a.amazon_review_status;
+          const bStatus = b.amazon_review_status;
           const aPending = aStatus === 'pending' ? 0 : 1;
           const bPending = bStatus === 'pending' ? 0 : 1;
           if (aPending !== bPending) return aPending - bPending;
@@ -282,7 +284,7 @@ export default function Inventory() {
     setTimeout(() => setScanHighlightId(null), 4000);
   };
 
-  const handleScanNoMatch = async (asin: string) => {
+  const handleScanNoMatch = async (code: string, codeType: 'asin' | 'upc') => {
     // The scanned item may be an unconfirmed order — send it to the
     // Order Sheet confirm flow instead of creating a duplicate
     const unconfirmed = team?.id
@@ -291,7 +293,7 @@ export default function Inventory() {
             .from('items')
             .select('id, title')
             .eq('team_id', team.id)
-            .ilike('amazon_asin', asin)
+            .ilike(codeType === 'asin' ? 'amazon_asin' : 'upc', code)
             .eq('physical_status', 'unconfirmed')
             .limit(1)
             .maybeSingle()
@@ -301,9 +303,12 @@ export default function Inventory() {
     if (unconfirmed) {
       toast.info(`"${unconfirmed.title || 'Untitled item'}" is on the Order Sheet — confirm it there`);
       navigate(`/order-sheet?confirm=${unconfirmed.id}`);
+    } else if (codeType === 'upc') {
+      // Unknown product barcode — link it to an item once, match forever after
+      setLinkUpc(code);
     } else {
-      toast.warning(`No item found for ASIN ${asin} — add it as a new item`);
-      navigate(`/add?asin=${asin}&acquisition_source=${encodeURIComponent(workflowSettings.defaultAcquisitionSource)}`);
+      toast.warning(`No item found for ASIN ${code} — add it as a new item`);
+      navigate(`/add?asin=${code}&acquisition_source=${encodeURIComponent(workflowSettings.defaultAcquisitionSource)}`);
     }
   };
 
@@ -707,6 +712,17 @@ export default function Inventory() {
         onMatchFound={handleScanMatch}
         onNoMatch={handleScanNoMatch}
         onClose={() => setShowScanner(false)}
+      />
+
+      <LinkUpcSheet
+        upc={linkUpc}
+        open={!!linkUpc}
+        items={items}
+        onClose={() => setLinkUpc(null)}
+        onLinked={(item) => {
+          queryClient.invalidateQueries({ queryKey: ['items'] });
+          handleScanMatch({ ...item, upc: linkUpc });
+        }}
       />
     </div>
   );

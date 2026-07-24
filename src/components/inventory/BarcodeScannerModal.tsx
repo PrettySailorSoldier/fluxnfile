@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useBarcodeScanner } from '@/hooks/useBarcodeScanner';
+import { useBarcodeScanner, normalizeUpc } from '@/hooks/useBarcodeScanner';
 import { Button } from '@/components/ui/button';
 import { X, ScanLine, Loader2 } from 'lucide-react';
 import { Item } from '@/hooks/useInventory';
@@ -11,7 +11,7 @@ interface BarcodeScannerModalProps {
   open: boolean;
   items: Item[];
   onMatchFound: (item: Item) => void;
-  onNoMatch: (asin: string) => void;
+  onNoMatch: (code: string, codeType: 'asin' | 'upc') => void;
   onClose: () => void;
 }
 
@@ -33,36 +33,31 @@ export function BarcodeScannerModal({
       const result = await scan(VIEWFINDER_ID);
 
       switch (result.status) {
-        case 'found':
-        case 'not_asin': {
-          // Prefer the ASIN the scanner hook already extracted (handles
-          // /dp/ASIN URLs in QR codes); fall back to the raw value
-          const candidate =
-            result.status === 'found'
-              ? result.asin
-              : result.rawValue.trim().toUpperCase();
-          const isAsinFormat =
-            candidate.length === 10 &&
-            (candidate.startsWith('B') || /^\d{10}$/.test(candidate));
-
-          if (!isAsinFormat) {
-            toast.warning(
-              'That looks like a tracking/shipment code. Scan the barcode on the product itself — it starts with B0 and is 10 characters.'
-            );
+        case 'found': {
+          const match =
+            result.codeType === 'asin'
+              ? items.find(
+                  (item) => item.amazon_asin?.toUpperCase() === result.value
+                )
+              : items.find(
+                  (item) =>
+                    item.upc && normalizeUpc(item.upc) === normalizeUpc(result.value)
+                );
+          if (match) {
+            toast.success(`Found: ${match.title || 'Untitled item'}`);
+            onMatchFound(match);
           } else {
-            const match = items.find(
-              (item) => item.amazon_asin?.toUpperCase() === candidate
-            );
-            if (match) {
-              toast.success(`Found: ${match.title || 'Untitled item'}`);
-              onMatchFound(match);
-            } else {
-              onNoMatch(candidate);
-            }
+            onNoMatch(result.value, result.codeType);
           }
           onClose();
           break;
         }
+        case 'not_recognized':
+          toast.warning(
+            'That looks like a tracking/shipment code. Scan the Amazon label barcode or the product’s own UPC barcode.'
+          );
+          onClose();
+          break;
         case 'cancelled':
           onClose();
           break;

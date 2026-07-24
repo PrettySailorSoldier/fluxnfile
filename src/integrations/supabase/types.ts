@@ -151,6 +151,7 @@ export type Database = {
           time_invested_minutes: number | null
           title: string | null
           tracking_number: number | null
+          upc: string | null
           updated_at: string
           vine_etv: number | null
           vine_fmv: number | null
@@ -214,6 +215,7 @@ export type Database = {
           time_invested_minutes?: number | null
           title?: string | null
           tracking_number?: number | null
+          upc?: string | null
           updated_at?: string
           vine_etv?: number | null
           vine_fmv?: number | null
@@ -277,6 +279,7 @@ export type Database = {
           time_invested_minutes?: number | null
           title?: string | null
           tracking_number?: number | null
+          upc?: string | null
           updated_at?: string
           vine_etv?: number | null
           vine_fmv?: number | null

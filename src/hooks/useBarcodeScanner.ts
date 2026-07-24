@@ -5,26 +5,42 @@ import {
   Result,
 } from '@zxing/library';
 
+export type ScannedCode =
+  | { codeType: 'asin'; value: string }
+  | { codeType: 'upc'; value: string };
+
 export type ScanResult =
-  | { status: 'found'; asin: string; rawValue: string }
-  | { status: 'not_asin'; rawValue: string }
+  | ({ status: 'found'; rawValue: string } & ScannedCode)
+  | { status: 'not_recognized'; rawValue: string }
   | { status: 'cancelled' }
   | { status: 'error'; message: string };
 
-function extractASIN(raw: string): string | null {
+/** Strip non-digits and leading zeros so UPC-A and its EAN-13 form compare equal. */
+export function normalizeUpc(raw: string): string {
+  return raw.replace(/\D/g, '').replace(/^0+/, '');
+}
+
+function classifyCode(raw: string): ScannedCode | null {
   if (!raw) return null;
+  const trimmed = raw.trim();
 
   // Amazon URL pattern — most reliable
-  const urlMatch = raw.match(/\/dp\/([A-Z0-9]{10})/i);
-  if (urlMatch) return urlMatch[1].toUpperCase();
+  const urlMatch = trimmed.match(/\/dp\/([A-Z0-9]{10})/i);
+  if (urlMatch) return { codeType: 'asin', value: urlMatch[1].toUpperCase() };
 
   // Direct ASIN — exactly 10 chars, starts with B
-  const directMatch = raw.match(/\b(B[A-Z0-9]{9})\b/);
-  if (directMatch) return directMatch[1].toUpperCase();
+  const directMatch = trimmed.match(/\b(B[A-Z0-9]{9})\b/);
+  if (directMatch) return { codeType: 'asin', value: directMatch[1].toUpperCase() };
 
-  // Numeric ASIN (older products)
-  const numericMatch = raw.match(/\b([0-9]{10})\b/);
-  if (numericMatch) return numericMatch[1];
+  const digitsOnly = trimmed.replace(/\D/g, '');
+
+  // Numeric ASIN / ISBN-10 (older products) — exactly 10 digits
+  if (/^\d{10}$/.test(trimmed)) return { codeType: 'asin', value: trimmed };
+
+  // Product barcode: UPC-A (12), EAN-13 (13), ITF-14 (14), UPC-E padded (11)
+  if (digitsOnly === trimmed && /^\d{11,14}$/.test(digitsOnly)) {
+    return { codeType: 'upc', value: digitsOnly };
+  }
 
   return null;
 }
@@ -45,7 +61,8 @@ export function useBarcodeScanner() {
 
   const scan = useCallback(
     (videoElementId: string): Promise<ScanResult> => {
-      return new Promise(async (resolve) => {
+      return new Promise((resolve) => {
+        void (async () => {
         resolveRef.current = resolve;
         setError(null);
         setIsScanning(true);
@@ -82,7 +99,7 @@ export function useBarcodeScanner() {
             (result: Result | null, err?: Error) => {
               if (result) {
                 const rawValue = result.getText();
-                const asin = extractASIN(rawValue);
+                const code = classifyCode(rawValue);
 
                 stopScanner();
 
@@ -90,10 +107,10 @@ export function useBarcodeScanner() {
                   navigator.vibrate(100);
                 }
 
-                if (asin) {
-                  resolve({ status: 'found', asin, rawValue });
+                if (code) {
+                  resolve({ status: 'found', ...code, rawValue });
                 } else {
-                  resolve({ status: 'not_asin', rawValue });
+                  resolve({ status: 'not_recognized', rawValue });
                 }
               }
               // NotFoundException fires continuously when no barcode is in frame — not an error
@@ -108,6 +125,7 @@ export function useBarcodeScanner() {
           setError(message);
           resolve({ status: 'error', message });
         }
+        })();
       });
     },
     [stopScanner]
