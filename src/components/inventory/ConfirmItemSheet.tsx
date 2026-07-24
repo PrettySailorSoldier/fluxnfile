@@ -10,13 +10,17 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { Item, useStorageLocations } from '@/hooks/useInventory';
 
+const LAST_LOCATION_KEY = 'confirm-last-storage-location';
+
 interface ConfirmItemSheetProps {
   item: Item | null;
   open: boolean;
   onClose: () => void;
+  /** Called after a successful confirm (in addition to onClose). */
+  onConfirmed?: (item: Item) => void;
 }
 
-export function ConfirmItemSheet({ item, open, onClose }: ConfirmItemSheetProps) {
+export function ConfirmItemSheet({ item, open, onClose, onConfirmed }: ConfirmItemSheetProps) {
   const queryClient = useQueryClient();
   const { user, team } = useAuth();
   const { data: storageLocations = [] } = useStorageLocations();
@@ -43,8 +47,15 @@ export function ConfirmItemSheet({ item, open, onClose }: ConfirmItemSheetProps)
       setDecision(null);
       setStorageLocationId('');
       setHeldBy('');
+    } else {
+      // Prefill with the last-used location — receiving a batch of boxes
+      // to the same shelf becomes a single tap per item
+      const last = localStorage.getItem(LAST_LOCATION_KEY);
+      if (last && storageLocations.some((l) => l.id === last)) {
+        setStorageLocationId((prev) => prev || last);
+      }
     }
-  }, [open]);
+  }, [open, storageLocations]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -58,15 +69,21 @@ export function ConfirmItemSheet({ item, open, onClose }: ConfirmItemSheetProps)
           held_by: heldBy || null,
           storage_location_id: storageLocationId || null,
           status: 'acquired',
-        } as any)
+        })
         .eq('id', item.id);
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['items'] });
       queryClient.invalidateQueries({ queryKey: ['unconfirmed-count'] });
-      toast.success('Item confirmed!');
+      if (storageLocationId) {
+        localStorage.setItem(LAST_LOCATION_KEY, storageLocationId);
+      }
+      const locationName = storageLocations.find((l) => l.id === storageLocationId)?.name;
+      toast.success(locationName ? `Confirmed → ${locationName}` : 'Item confirmed!');
+      const confirmed = item;
       onClose();
+      if (confirmed) onConfirmed?.(confirmed);
     },
     onError: () => {
       toast.error('Failed to confirm item');

@@ -95,12 +95,18 @@ export default function AddItem() {
         storage_location_id: data.storage_location_id || null,
         refurbish_notes: data.refurbish_notes || null,
         photos: data.photos,
+        amazon_asin: prefillAsin || null,
+        // Manually added items are physically in hand — skip the order sheet
+        physical_status: 'sell',
+        confirmed_at: new Date().toISOString(),
+        confirmed_by: user.id,
       });
 
       if (error) throw error;
     },
     onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['items'] });
+      queryClient.invalidateQueries({ queryKey: ['unconfirmed-count'] });
       
       // If converting from a rough item, mark it as processed
       if (fromRoughId) {
@@ -222,6 +228,18 @@ export default function AddItem() {
             <ArrowRight className="h-4 w-4 text-primary" />
             <span className="text-muted-foreground text-sm">
               Will be marked as processed after adding
+            </span>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Scanned ASIN Banner */}
+      {prefillAsin && !isConvertingRoughItem && (
+        <Alert className="bg-primary/10 border-primary/30">
+          <AlertDescription>
+            Scanned ASIN <Badge variant="outline" className="font-mono ml-1">{prefillAsin}</Badge>
+            <span className="text-muted-foreground text-sm ml-2">
+              — it will be saved with this item so future scans match it
             </span>
           </AlertDescription>
         </Alert>

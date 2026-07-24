@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 import { useItems, useCategories, statusConfig, ItemStatus, Item } from '@/hooks/useInventory';
 import { useWorkflowSettings } from '@/hooks/useUserPreferences';
 import { Input } from '@/components/ui/input';
@@ -55,6 +56,7 @@ type DeliveryFilter = 'all' | 'delivered' | 'arriving' | 'not_shipped';
 export default function Inventory() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { team } = useAuth();
   const [searchParams] = useSearchParams();
   const { data: items = [], isLoading } = useItems();
   const { data: categories = [] } = useCategories();
@@ -280,8 +282,29 @@ export default function Inventory() {
     setTimeout(() => setScanHighlightId(null), 4000);
   };
 
-  const handleScanNoMatch = (asin: string) => {
-    navigate(`/add?asin=${asin}&acquisition_source=Vine`);
+  const handleScanNoMatch = async (asin: string) => {
+    // The scanned item may be an unconfirmed order — send it to the
+    // Order Sheet confirm flow instead of creating a duplicate
+    const unconfirmed = team?.id
+      ? (
+          await supabase
+            .from('items')
+            .select('id, title')
+            .eq('team_id', team.id)
+            .ilike('amazon_asin', asin)
+            .eq('physical_status', 'unconfirmed')
+            .limit(1)
+            .maybeSingle()
+        ).data
+      : null;
+
+    if (unconfirmed) {
+      toast.info(`"${unconfirmed.title || 'Untitled item'}" is on the Order Sheet — confirm it there`);
+      navigate(`/order-sheet?confirm=${unconfirmed.id}`);
+    } else {
+      toast.warning(`No item found for ASIN ${asin} — add it as a new item`);
+      navigate(`/add?asin=${asin}&acquisition_source=${encodeURIComponent(workflowSettings.defaultAcquisitionSource)}`);
+    }
   };
 
   if (isLoading) {

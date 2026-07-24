@@ -171,17 +171,22 @@ export function LatticeImportDialog({
       }
 
       if (toUpdate.length > 0) {
-        const reviewedItems = toUpdate.filter(
-          item => item.reviewStatus === 'Approved'
-        );
         await Promise.all(
-          reviewedItems.map(item =>
-            supabase
+          toUpdate.map(item => {
+            const update: Record<string, unknown> = {};
+            if (item.reviewStatus === 'Approved') {
+              update.amazon_review_status = 'reviewed_grant';
+            }
+            if (item.deliveryStatus) {
+              update.delivery_status = item.deliveryStatus;
+            }
+            if (Object.keys(update).length === 0) return Promise.resolve({ error: null });
+            return supabase
               .from('items')
-              .update({ amazon_review_status: 'reviewed_grant' })
+              .update(update)
               .eq('team_id', team.id)
-              .eq('amazon_asin', item.asin)
-          )
+              .eq('amazon_asin', item.asin);
+          })
         );
       }
 
@@ -191,7 +196,7 @@ export function LatticeImportDialog({
       queryClient.invalidateQueries({ queryKey: ['items'] });
       const parts: string[] = [];
       if (inserted > 0) parts.push(`${inserted} items imported`);
-      if (updated > 0) parts.push(`${updated} review statuses updated`);
+      if (updated > 0) parts.push(`${updated} existing items updated`);
       toast.success(parts.join(', ') + '.' || 'Import complete!');
       setStep('done');
     },

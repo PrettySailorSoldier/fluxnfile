@@ -35,10 +35,15 @@ export function BarcodeScannerModal({
       switch (result.status) {
         case 'found':
         case 'not_asin': {
-          const rawValue = result.rawValue.trim().toUpperCase();
+          // Prefer the ASIN the scanner hook already extracted (handles
+          // /dp/ASIN URLs in QR codes); fall back to the raw value
+          const candidate =
+            result.status === 'found'
+              ? result.asin
+              : result.rawValue.trim().toUpperCase();
           const isAsinFormat =
-            rawValue.length === 10 &&
-            (rawValue.startsWith('B0') || /^\d{10}$/.test(rawValue));
+            candidate.length === 10 &&
+            (candidate.startsWith('B') || /^\d{10}$/.test(candidate));
 
           if (!isAsinFormat) {
             toast.warning(
@@ -46,14 +51,13 @@ export function BarcodeScannerModal({
             );
           } else {
             const match = items.find(
-              (item) => item.amazon_asin?.toUpperCase() === rawValue
+              (item) => item.amazon_asin?.toUpperCase() === candidate
             );
             if (match) {
               toast.success(`Found: ${match.title || 'Untitled item'}`);
               onMatchFound(match);
             } else {
-              toast.warning(`Scanned: "${rawValue}" — no ASIN found`);
-              onNoMatch(rawValue);
+              onNoMatch(candidate);
             }
           }
           onClose();
@@ -72,6 +76,8 @@ export function BarcodeScannerModal({
     return () => {
       clearTimeout(timer);
       hasStarted.current = false;
+      // Release the camera if the modal unmounts mid-scan
+      cancelScan();
     };
   }, [open]);
 

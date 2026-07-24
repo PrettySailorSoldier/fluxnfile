@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useOrderSheetItems, Item } from '@/hooks/useInventory';
 import { useAuth } from '@/contexts/AuthContext';
@@ -17,7 +18,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Package, Search, CheckCircle2, Loader2, Trash2, ShoppingCart, FileSpreadsheet, Upload, ChevronDown } from 'lucide-react';
+import { Package, Search, CheckCircle2, Loader2, Trash2, ShoppingCart, FileSpreadsheet, Upload, ChevronDown, ScanLine } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   DropdownMenu,
@@ -28,6 +29,7 @@ import {
   DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu';
 import { ConfirmItemSheet } from '@/components/inventory/ConfirmItemSheet';
+import { BarcodeScannerModal } from '@/components/inventory/BarcodeScannerModal';
 import { ReviewStatusBadge } from '@/components/amazon/ReviewStatusBadge';
 import { AmazonImportDialog } from '@/components/amazon/AmazonImportDialog';
 import { VineReportImportDialog } from '@/components/amazon/VineReportImportDialog';
@@ -46,38 +48,91 @@ export default function OrderSheet() {
   const { team } = useAuth();
   const queryClient = useQueryClient();
   const { data: items = [], isLoading } = useOrderSheetItems();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [confirmItem, setConfirmItem] = useState<Item | null>(null);
   const [showClearDialog, setShowClearDialog] = useState(false);
   const [showAmazonImport, setShowAmazonImport] = useState(false);
   const [showVineReport, setShowVineReport] = useState(false);
   const [showLattice, setShowLattice] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+  // How the confirm sheet was opened — scan-initiated confirms reopen the scanner
+  const [confirmSource, setConfirmSource] = useState<'scan' | 'list'>('list');
+
+  // Auto-open the confirm sheet when arriving via /order-sheet?confirm=<id>
+  // (used by the Inventory scanner when it finds an unconfirmed item)
+  useEffect(() => {
+    const confirmId = searchParams.get('confirm');
+    if (!confirmId || items.length === 0) return;
+    const target = items.find((i) => i.id === confirmId);
+    if (target) setConfirmItem(target);
+    setSearchParams({}, { replace: true });
+  }, [searchParams, items, setSearchParams]);
 
   const filtered = useMemo(() => {
     if (!search) return items;
     const q = search.toLowerCase();
-    return items.filter((item) => item.title?.toLowerCase().includes(q));
+    return items.filter(
+      (item) =>
+        item.title?.toLowerCase().includes(q) ||
+        item.amazon_asin?.toLowerCase().includes(q)
+    );
   }, [items, search]);
 
   const clearAllMutation = useMutation({
     mutationFn: async () => {
       if (!team?.id) return;
+      // Only clear unconfirmed order-sheet items — never confirmed inventory
       const { error } = await supabase
         .from('items')
         .delete()
-        .eq('team_id', team.id);
+        .eq('team_id', team.id)
+        .eq('physical_status', 'unconfirmed');
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['items'] });
       queryClient.invalidateQueries({ queryKey: ['unconfirmed-count'] });
-      toast.success('All items cleared.');
+      toast.success('Order sheet cleared.');
       setShowClearDialog(false);
     },
     onError: () => {
       toast.error('Failed to clear items');
     },
   });
+
+  const handleScanMatch = (item: Item) => {
+    setConfirmSource('scan');
+    setConfirmItem(item);
+  };
+
+  const handleScanNoMatch = async (asin: string) => {
+    // Not on the order sheet — check whether it's already confirmed inventory
+    if (!team?.id) return;
+    const { data } = await supabase
+      .from('items')
+      .select('id, title, physical_status, storage_location:storage_locations(name)')
+      .eq('team_id', team.id)
+      .ilike('amazon_asin', asin)
+      .neq('physical_status', 'unconfirmed')
+      .limit(1)
+      .maybeSingle<{ id: string; title: string | null; storage_location: { name: string } | null }>();
+    if (data) {
+      const loc = data.storage_location?.name;
+      toast.info(
+        `Already confirmed: ${data.title || 'Untitled item'}${loc ? ` — stored in ${loc}` : ''}`
+      );
+    } else {
+      toast.warning(`No order found for ASIN ${asin}. Import your orders first, or add it manually.`);
+    }
+  };
+
+  const handleConfirmed = () => {
+    // Keep the receiving flow going: scan the next box
+    if (confirmSource === 'scan') {
+      setTimeout(() => setShowScanner(true), 350);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -120,6 +175,21 @@ export default function OrderSheet() {
       </div>
 
       <div className="p-4 space-y-3">
+        <div className="flex gap-2">
+        {/* Scan arriving packages */}
+        {items.length > 0 && (
+          <Button
+            size="sm"
+            onClick={() => {
+              setConfirmSource('scan');
+              setShowScanner(true);
+            }}
+          >
+            <ScanLine className="w-4 h-4 mr-1" />
+            Scan Package
+          </Button>
+        )}
+
         {/* Import */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -151,6 +221,7 @@ export default function OrderSheet() {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        </div>
 
         {filtered.length === 0 ? (
           <Card className="bg-secondary/30 border-dashed mt-8">
@@ -171,7 +242,10 @@ export default function OrderSheet() {
             <OrderItemCard
               key={item.id}
               item={item}
-              onConfirm={() => setConfirmItem(item)}
+              onConfirm={() => {
+                setConfirmSource('list');
+                setConfirmItem(item);
+              }}
             />
           ))
         )}
@@ -181,6 +255,15 @@ export default function OrderSheet() {
         item={confirmItem}
         open={!!confirmItem}
         onClose={() => setConfirmItem(null)}
+        onConfirmed={handleConfirmed}
+      />
+
+      <BarcodeScannerModal
+        open={showScanner}
+        items={items}
+        onMatchFound={handleScanMatch}
+        onNoMatch={handleScanNoMatch}
+        onClose={() => setShowScanner(false)}
       />
 
       <AmazonImportDialog open={showAmazonImport} onOpenChange={setShowAmazonImport} />
@@ -190,9 +273,10 @@ export default function OrderSheet() {
       <AlertDialog open={showClearDialog} onOpenChange={setShowClearDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Clear all items?</AlertDialogTitle>
+            <AlertDialogTitle>Clear the order sheet?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete all items for your team. This cannot be undone.
+              This will permanently delete the {items.length} unconfirmed item{items.length === 1 ? '' : 's'} on
+              the order sheet. Confirmed inventory is not affected. This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -215,7 +299,7 @@ function OrderItemCard({ item, onConfirm }: { item: Item; onConfirm: () => void 
   const photo = item.photos?.[0];
   const isVine =
     item.acquisition_source === 'Vine' || item.acquisition_source === 'Amazon';
-  const reviewStatus = (item as any).amazon_review_status ?? null;
+  const reviewStatus = item.amazon_review_status ?? null;
 
   return (
     <Card className="overflow-hidden">
