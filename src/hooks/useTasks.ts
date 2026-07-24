@@ -143,16 +143,19 @@ export function useUpdateTask() {
 
   return useMutation({
     mutationFn: async ({ id, ...updates }: Partial<Task> & { id: string }) => {
-      const updateData: Record<string, unknown> = { ...updates };
-      
-      if (updates.status === 'completed') {
-        updateData.completed_at = new Date().toISOString();
-        updateData.completed_by = user?.id;
-      }
+      const updateData = {
+        ...updates,
+        ...(updates.status === 'completed' ? {
+          completed_at: new Date().toISOString(),
+          completed_by: user?.id,
+        } : {}),
+      };
+      // Remove joined fields that aren't real columns
+      const { item, assignee, ...dbUpdates } = updateData;
 
       const { data, error } = await supabase
         .from('tasks')
-        .update(updateData)
+        .update(dbUpdates)
         .eq('id', id)
         .select()
         .single();

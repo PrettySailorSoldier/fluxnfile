@@ -95,12 +95,11 @@ export function useUpdateRoughItem() {
 
   return useMutation({
     mutationFn: async ({ id, ...updates }: UpdateRoughItemInput) => {
-      const updateData: Record<string, unknown> = { ...updates };
-
-      // If marking as processed, set the processed_at timestamp
-      if (updates.is_processed) {
-        updateData.processed_at = new Date().toISOString();
-      }
+      const updateData = {
+        ...updates,
+        // If marking as processed, set the processed_at timestamp
+        ...(updates.is_processed ? { processed_at: new Date().toISOString() } : {}),
+      };
 
       const { data, error } = await supabase
         .from('rough_items')

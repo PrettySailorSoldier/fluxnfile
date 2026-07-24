@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import * as XLSX from 'xlsx';
 import { supabase } from '@/integrations/supabase/client';
+import type { TablesUpdate } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   parseVineReport,
@@ -168,7 +169,7 @@ export function VineReportImportDialog({
             const existing = existingMap.get(item.asin);
             if (!existing) return null;
 
-            const updates: Record<string, unknown> = {};
+            const updates: TablesUpdate<'items'> = {};
 
             if (!existing.amazon_order_number && item.orderNumber) {
               updates.amazon_order_number = item.orderNumber;

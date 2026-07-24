@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import type { TablesInsert, TablesUpdate } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   Dialog,
@@ -927,13 +928,13 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
           ? 'vine_html'
           : 'amazon_csv';
 
-      const toInsert: Record<string, unknown>[] = [];
-      const toUpdate: { id: string; mergeData: Record<string, unknown> }[] = [];
+      const toInsert: TablesInsert<'items'>[] = [];
+      const toUpdate: { id: string; mergeData: TablesUpdate<'items'> }[] = [];
       let skipCount = 0;
 
       for (const item of selectedItems) {
         // Build the core item data based on source type
-        let itemData: Record<string, unknown>;
+        let itemData: TablesInsert<'items'> | Omit<TablesInsert<'items'>, 'team_id' | 'created_by'>;
 
         if (item._orderHistoryData) {
           const oh = item._orderHistoryData;
@@ -1018,9 +1019,9 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
           });
         } else {
           const existingExtended = duplicate as ExistingItemIndex & Record<string, unknown>;
-          const mergeData = computeMergeData(existingExtended, itemData, importSource);
+          const mergeData = computeMergeData(existingExtended, itemData as Record<string, unknown>, importSource);
           if (mergeData) {
-            toUpdate.push({ id: duplicate.id, mergeData });
+            toUpdate.push({ id: duplicate.id, mergeData: mergeData as TablesUpdate<'items'> });
           } else {
             skipCount++;
           }

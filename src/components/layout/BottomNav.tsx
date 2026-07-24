@@ -17,7 +17,7 @@ export function BottomNav() {
         .from('items')
         .select('id', { count: 'exact', head: true })
         .eq('team_id', team.id)
-        .eq('physical_status' as any, 'unconfirmed');
+        .eq('physical_status', 'unconfirmed');
       return count ?? 0;
     },
     enabled: !!team?.id,

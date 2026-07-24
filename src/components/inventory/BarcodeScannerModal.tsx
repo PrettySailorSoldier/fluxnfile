@@ -46,7 +46,7 @@ export function BarcodeScannerModal({
             );
           } else {
             const match = items.find(
-              (item) => item.asin?.toUpperCase() === rawValue
+              (item) => item.amazon_asin?.toUpperCase() === rawValue
             );
             if (match) {
               toast.success(`Found: ${match.title || 'Untitled item'}`);

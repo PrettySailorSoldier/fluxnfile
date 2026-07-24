@@ -13,30 +13,45 @@ export interface Item {
   title: string | null;
   description: string | null;
   category_id: string | null;
-  photos: string[];
+  photos: string[] | null;
   original_cost: number;
   acquisition_date: string;
   acquisition_source: string | null;
   condition: ItemCondition;
   refurbish_notes: string | null;
-  refurbish_cost: number;
-  time_invested_minutes: number;
+  refurbish_cost: number | null;
+  time_invested_minutes: number | null;
   storage_location_id: string | null;
   status: ItemStatus;
   target_price: number | null;
   actual_price: number | null;
   sale_date: string | null;
-  shipping_cost: number;
-  platform_fees: number;
+  shipping_cost: number | null;
+  platform_fees: number | null;
   created_at: string;
   updated_at: string;
-  physical_status: 'unconfirmed' | 'keep' | 'sell';
+  // Physical inventory
+  physical_status: string;
   confirmed_at: string | null;
   confirmed_by: string | null;
   held_by: string | null;
+  // Facebook integration
+  fb_listing_url: string | null;
+  fb_listed_date: string | null;
+  fb_views: number | null;
+  fb_conversation_notes: string | null;
+  default_pickup_location: string | null;
+  // Flagging
+  flagged_for: string | null;
+  flag_note: string | null;
+  // Amazon review
+  amazon_review_status: string | null;
+  reviewed_by: string[] | null;
+  review_notes: string | null;
   // Amazon / import fields
   amazon_asin: string | null;
   amazon_order_id: string | null;
+  amazon_order_number: string | null;
   amazon_order_url: string | null;
   amazon_tracking_url: string | null;
   amazon_invoice_url: string | null;
@@ -45,6 +60,7 @@ export interface Item {
   amazon_refund_amount: number | null;
   amazon_refund_date: string | null;
   amazon_tax_amount: number | null;
+  delivery_status: string | null;
   // Vine fields
   is_vine_order: boolean | null;
   vine_review_status: string | null;
@@ -59,6 +75,7 @@ export interface Item {
   lattice_reviewed_date: string | null;
   // Multi-source tracking
   data_sources: string[] | null;
+  // Joined relations
   category?: Category | null;
   storage_location?: StorageLocation | null;
 }

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import type { Tables } from '@/integrations/supabase/types';
 import { useCategories, useStorageLocations, usePlatforms, statusConfig, calculateProfit, getProfitLevel, ItemStatus, ItemCondition, conditionLabels } from '@/hooks/useInventory';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -108,7 +109,7 @@ export default function ItemDetail() {
   }, [item]);
 
   const updateItem = useMutation({
-    mutationFn: async (updates: Record<string, unknown>) => {
+    mutationFn: async (updates: Partial<Tables<'items'>>) => {
       const { error } = await supabase
         .from('items')
         .update(updates)
@@ -303,15 +304,15 @@ export default function ItemDetail() {
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-muted-foreground">Amazon Item:</span>
             <ReviewStatusBadge 
-              status={(item as any).amazon_review_status} 
-              reviewedBy={(item as any).reviewed_by || []}
+              status={item.amazon_review_status as any} 
+              reviewedBy={item.reviewed_by || []}
             />
           </div>
           <ReviewActions
             itemId={item.id}
-            currentStatus={(item as any).amazon_review_status}
-            reviewedBy={(item as any).reviewed_by || []}
-            reviewNotes={(item as any).review_notes}
+            currentStatus={item.amazon_review_status as any}
+            reviewedBy={item.reviewed_by || []}
+            reviewNotes={item.review_notes}
           />
         </div>
       )}

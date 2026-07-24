@@ -100,12 +100,26 @@ export type Database = {
           acquisition_source: string | null
           actual_price: number | null
           amazon_asin: string | null
+          amazon_order_id: string | null
+          amazon_order_number: string | null
+          amazon_order_url: string | null
+          amazon_tracking_url: string | null
+          amazon_invoice_url: string | null
+          amazon_shipment_status: string | null
+          amazon_return_status: string | null
+          amazon_refund_amount: number | null
+          amazon_refund_date: string | null
+          amazon_tax_amount: number | null
           amazon_review_status: string | null
           category_id: string | null
           condition: Database["public"]["Enums"]["item_condition"]
+          confirmed_at: string | null
+          confirmed_by: string | null
           created_at: string
           created_by: string | null
+          data_sources: string[] | null
           default_pickup_location: string | null
+          delivery_status: string | null
           description: string | null
           fb_conversation_notes: string | null
           fb_listed_date: string | null
@@ -113,9 +127,16 @@ export type Database = {
           fb_views: number | null
           flag_note: string | null
           flagged_for: string | null
+          held_by: string | null
           id: string
+          is_vine_order: boolean | null
+          lattice_review_status: string | null
+          lattice_review_score: number | null
+          lattice_review_quality: string | null
+          lattice_reviewed_date: string | null
           original_cost: number
           photos: string[] | null
+          physical_status: string
           platform_fees: number | null
           refurbish_cost: number | null
           refurbish_notes: string | null
@@ -131,18 +152,37 @@ export type Database = {
           title: string | null
           tracking_number: number | null
           updated_at: string
+          vine_etv: number | null
+          vine_fmv: number | null
+          vine_review_date: string | null
+          vine_review_quality: string | null
+          vine_review_status: string | null
         }
         Insert: {
           acquisition_date?: string
           acquisition_source?: string | null
           actual_price?: number | null
           amazon_asin?: string | null
+          amazon_order_id?: string | null
+          amazon_order_number?: string | null
+          amazon_order_url?: string | null
+          amazon_tracking_url?: string | null
+          amazon_invoice_url?: string | null
+          amazon_shipment_status?: string | null
+          amazon_return_status?: string | null
+          amazon_refund_amount?: number | null
+          amazon_refund_date?: string | null
+          amazon_tax_amount?: number | null
           amazon_review_status?: string | null
           category_id?: string | null
           condition?: Database["public"]["Enums"]["item_condition"]
+          confirmed_at?: string | null
+          confirmed_by?: string | null
           created_at?: string
           created_by?: string | null
+          data_sources?: string[] | null
           default_pickup_location?: string | null
+          delivery_status?: string | null
           description?: string | null
           fb_conversation_notes?: string | null
           fb_listed_date?: string | null
@@ -150,9 +190,16 @@ export type Database = {
           fb_views?: number | null
           flag_note?: string | null
           flagged_for?: string | null
+          held_by?: string | null
           id?: string
+          is_vine_order?: boolean | null
+          lattice_review_status?: string | null
+          lattice_review_score?: number | null
+          lattice_review_quality?: string | null
+          lattice_reviewed_date?: string | null
           original_cost: number
           photos?: string[] | null
+          physical_status?: string
           platform_fees?: number | null
           refurbish_cost?: number | null
           refurbish_notes?: string | null
@@ -168,18 +215,37 @@ export type Database = {
           title?: string | null
           tracking_number?: number | null
           updated_at?: string
+          vine_etv?: number | null
+          vine_fmv?: number | null
+          vine_review_date?: string | null
+          vine_review_quality?: string | null
+          vine_review_status?: string | null
         }
         Update: {
           acquisition_date?: string
           acquisition_source?: string | null
           actual_price?: number | null
           amazon_asin?: string | null
+          amazon_order_id?: string | null
+          amazon_order_number?: string | null
+          amazon_order_url?: string | null
+          amazon_tracking_url?: string | null
+          amazon_invoice_url?: string | null
+          amazon_shipment_status?: string | null
+          amazon_return_status?: string | null
+          amazon_refund_amount?: number | null
+          amazon_refund_date?: string | null
+          amazon_tax_amount?: number | null
           amazon_review_status?: string | null
           category_id?: string | null
           condition?: Database["public"]["Enums"]["item_condition"]
+          confirmed_at?: string | null
+          confirmed_by?: string | null
           created_at?: string
           created_by?: string | null
+          data_sources?: string[] | null
           default_pickup_location?: string | null
+          delivery_status?: string | null
           description?: string | null
           fb_conversation_notes?: string | null
           fb_listed_date?: string | null
@@ -187,9 +253,16 @@ export type Database = {
           fb_views?: number | null
           flag_note?: string | null
           flagged_for?: string | null
+          held_by?: string | null
           id?: string
+          is_vine_order?: boolean | null
+          lattice_review_status?: string | null
+          lattice_review_score?: number | null
+          lattice_review_quality?: string | null
+          lattice_reviewed_date?: string | null
           original_cost?: number
           photos?: string[] | null
+          physical_status?: string
           platform_fees?: number | null
           refurbish_cost?: number | null
           refurbish_notes?: string | null
@@ -205,6 +278,11 @@ export type Database = {
           title?: string | null
           tracking_number?: number | null
           updated_at?: string
+          vine_etv?: number | null
+          vine_fmv?: number | null
+          vine_review_date?: string | null
+          vine_review_quality?: string | null
+          vine_review_status?: string | null
         }
         Relationships: [
           {
@@ -243,11 +321,13 @@ export type Database = {
           created_at: string
           id: string
           is_default: boolean | null
+          is_suggested: boolean | null
           latitude: number | null
           location_type: string | null
           longitude: number | null
           name: string
           notes: string | null
+          safety_rating: number | null
           team_id: string
         }
         Insert: {
@@ -255,11 +335,13 @@ export type Database = {
           created_at?: string
           id?: string
           is_default?: boolean | null
+          is_suggested?: boolean | null
           latitude?: number | null
           location_type?: string | null
           longitude?: number | null
           name: string
           notes?: string | null
+          safety_rating?: number | null
           team_id: string
         }
         Update: {
@@ -267,11 +349,13 @@ export type Database = {
           created_at?: string
           id?: string
           is_default?: boolean | null
+          is_suggested?: boolean | null
           latitude?: number | null
           location_type?: string | null
           longitude?: number | null
           name?: string
           notes?: string | null
+          safety_rating?: number | null
           team_id?: string
         }
         Relationships: []
@@ -864,31 +948,43 @@ export type Database = {
           accent_color: string | null
           background_image_url: string | null
           created_at: string
+          custom_notification_tones: Json | null
           id: string
+          notification_tone: string | null
+          notification_volume: number | null
           primary_color: string | null
           text_color: string | null
           updated_at: string
           user_id: string
+          workflow_settings: Json | null
         }
         Insert: {
           accent_color?: string | null
           background_image_url?: string | null
           created_at?: string
+          custom_notification_tones?: Json | null
           id?: string
+          notification_tone?: string | null
+          notification_volume?: number | null
           primary_color?: string | null
           text_color?: string | null
           updated_at?: string
           user_id: string
+          workflow_settings?: Json | null
         }
         Update: {
           accent_color?: string | null
           background_image_url?: string | null
           created_at?: string
+          custom_notification_tones?: Json | null
           id?: string
+          notification_tone?: string | null
+          notification_volume?: number | null
           primary_color?: string | null
           text_color?: string | null
           updated_at?: string
           user_id?: string
+          workflow_settings?: Json | null
         }
         Relationships: []
       }

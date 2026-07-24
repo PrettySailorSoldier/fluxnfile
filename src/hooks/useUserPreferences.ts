@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import type { Json } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 
 export interface CustomNotificationTone {
@@ -99,7 +100,13 @@ export function useUserPreferences() {
         .maybeSingle();
 
       if (error) throw error;
-      return data as UserPreferences | null;
+      if (!data) return null;
+      // Cast Json columns to their typed interfaces
+      return {
+        ...data,
+        custom_notification_tones: data.custom_notification_tones as unknown as CustomNotificationTone[] | null,
+        workflow_settings: data.workflow_settings as unknown as WorkflowSettings | null,
+      } as UserPreferences;
     },
     enabled: !!user?.id,
   });
@@ -119,10 +126,24 @@ export function useUpdateUserPreferences() {
         .eq('user_id', user.id)
         .maybeSingle();
 
+      // Strip out the strongly typed fields so we can replace them with Json versions
+      const { custom_notification_tones, workflow_settings, ...restPreferences } = preferences;
+      
+      // Cast typed interfaces back to Json for Supabase
+      const dbPreferences = {
+        ...restPreferences,
+        ...(custom_notification_tones !== undefined
+          ? { custom_notification_tones: custom_notification_tones as unknown as Json }
+          : {}),
+        ...(workflow_settings !== undefined
+          ? { workflow_settings: workflow_settings as unknown as Json }
+          : {}),
+      };
+
       if (existing) {
         const { data, error } = await supabase
           .from('user_preferences')
-          .update(preferences as any)
+          .update(dbPreferences)
           .eq('user_id', user.id)
           .select()
           .single();
@@ -132,7 +153,7 @@ export function useUpdateUserPreferences() {
       } else {
         const { data, error } = await supabase
           .from('user_preferences')
-          .insert({ user_id: user.id, ...(preferences as any) })
+          .insert({ user_id: user.id, ...dbPreferences })
           .select()
           .single();
 
