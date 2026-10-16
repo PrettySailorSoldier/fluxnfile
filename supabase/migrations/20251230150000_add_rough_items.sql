@@ -83,7 +83,7 @@ DROP TRIGGER IF EXISTS update_rough_items_updated_at ON public.rough_items;
 CREATE TRIGGER update_rough_items_updated_at
   BEFORE UPDATE ON public.rough_items
   FOR EACH ROW
-  EXECUTE FUNCTION public.handle_updated_at();
+  EXECUTE FUNCTION public.update_updated_at_column();
 
 -- Add comment for documentation
 COMMENT ON TABLE public.rough_items IS 'Rough inventory notes for items in boxes that will later be converted to real inventory items';
