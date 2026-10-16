@@ -20,6 +20,7 @@ import FacebookTools from "./pages/FacebookTools";
 import RoughNotes from "./pages/RoughNotes";
 import SalesCheck from "./pages/SalesCheck";
 import OrderSheet from "./pages/OrderSheet";
+import ScanSession from "./pages/ScanSession";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -92,6 +93,12 @@ const App = () => (
             <Route path="/order-sheet" element={
               <ProtectedRoute>
                 <AppLayout><OrderSheet /></AppLayout>
+              </ProtectedRoute>
+            } />
+            {/* Full-screen scanner — no app chrome */}
+            <Route path="/scan" element={
+              <ProtectedRoute>
+                <ScanSession />
               </ProtectedRoute>
             } />
             <Route path="*" element={<NotFound />} />

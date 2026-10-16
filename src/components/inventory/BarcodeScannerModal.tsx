@@ -93,7 +93,7 @@ export function BarcodeScannerModal({
       >
         <div className="flex items-center gap-2 text-white">
           <ScanLine className="w-5 h-5 text-primary" />
-          <span className="font-medium text-sm">Scan Amazon Package</span>
+          <span className="font-medium text-sm">Scan barcode</span>
         </div>
         <button
           onClick={() => {

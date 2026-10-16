@@ -99,6 +99,8 @@ export type Database = {
           acquisition_date: string
           acquisition_source: string | null
           actual_price: number | null
+          brand: string | null
+          retail_price: number | null
           amazon_asin: string | null
           amazon_order_id: string | null
           amazon_order_number: string | null
@@ -163,6 +165,8 @@ export type Database = {
           acquisition_date?: string
           acquisition_source?: string | null
           actual_price?: number | null
+          brand?: string | null
+          retail_price?: number | null
           amazon_asin?: string | null
           amazon_order_id?: string | null
           amazon_order_number?: string | null
@@ -227,6 +231,8 @@ export type Database = {
           acquisition_date?: string
           acquisition_source?: string | null
           actual_price?: number | null
+          brand?: string | null
+          retail_price?: number | null
           amazon_asin?: string | null
           amazon_order_id?: string | null
           amazon_order_number?: string | null
@@ -653,6 +659,63 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      product_catalog: {
+        Row: {
+          brand: string | null
+          category: string | null
+          code: string
+          code_type: string
+          description: string | null
+          fetched_at: string
+          found: boolean
+          highest_price: number | null
+          image_url: string | null
+          images: string[] | null
+          lowest_price: number | null
+          model: string | null
+          raw: Json | null
+          retail_price: number | null
+          source: string | null
+          title: string | null
+        }
+        Insert: {
+          brand?: string | null
+          category?: string | null
+          code: string
+          code_type: string
+          description?: string | null
+          fetched_at?: string
+          found?: boolean
+          highest_price?: number | null
+          image_url?: string | null
+          images?: string[] | null
+          lowest_price?: number | null
+          model?: string | null
+          raw?: Json | null
+          retail_price?: number | null
+          source?: string | null
+          title?: string | null
+        }
+        Update: {
+          brand?: string | null
+          category?: string | null
+          code?: string
+          code_type?: string
+          description?: string | null
+          fetched_at?: string
+          found?: boolean
+          highest_price?: number | null
+          image_url?: string | null
+          images?: string[] | null
+          lowest_price?: number | null
+          model?: string | null
+          raw?: Json | null
+          retail_price?: number | null
+          source?: string | null
+          title?: string | null
+        }
+        Relationships: []
       }
       profiles: {
         Row: {

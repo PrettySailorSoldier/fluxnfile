@@ -14,7 +14,11 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { toast } from 'sonner';
-import { Camera, X, Loader2, Plus, ImagePlus, ArrowRight, StickyNote } from 'lucide-react';
+import { Camera, X, Loader2, Plus, ImagePlus, ArrowRight, StickyNote, ScanLine, Sparkles } from 'lucide-react';
+import { BarcodeScannerModal } from '@/components/inventory/BarcodeScannerModal';
+import { classifyCode } from '@/lib/barcode';
+import { lookupProduct, matchCategory, suggestPrice, type ProductLookup } from '@/lib/productLookup';
+import { useWorkflowSettings } from '@/hooks/useUserPreferences';
 import { z } from 'zod';
 import { sanitizeError } from '@/lib/errorHandler';
 
@@ -43,6 +47,7 @@ export default function AddItem() {
   const prefillEstimatedValue = searchParams.get('estimated_value');
   const prefillBoxLabel = searchParams.get('box_label');
   const prefillAsin = searchParams.get('asin');
+  const prefillUpc = searchParams.get('upc');
   const prefillSource = searchParams.get('acquisition_source');
   const isConvertingRoughItem = !!fromRoughId;
 
@@ -56,6 +61,41 @@ export default function AddItem() {
   const [acquisitionSource, setAcquisitionSource] = useState('');
   const [storageLocationId, setStorageLocationId] = useState('');
   const [refurbishNotes, setRefurbishNotes] = useState('');
+  const workflow = useWorkflowSettings();
+  const [barcode, setBarcode] = useState(prefillUpc || prefillAsin || '');
+  const [lookingUp, setLookingUp] = useState(false);
+  const [lookup, setLookup] = useState<ProductLookup | null>(null);
+  const [showScanner, setShowScanner] = useState(false);
+
+  /** Look the barcode up and fill any fields that are still empty. */
+  const runLookup = async (raw: string) => {
+    const parsed = classifyCode(raw);
+    if (!parsed) {
+      toast.error('That doesn’t look like a UPC, EAN, ISBN or ASIN');
+      return;
+    }
+    setBarcode(parsed.value);
+    setLookingUp(true);
+    const result = await lookupProduct(parsed.value, parsed.codeType);
+    setLookingUp(false);
+    setLookup(result);
+    if (!result.found) {
+      toast.info(result.error ?? 'Product not found — fill in the details yourself');
+      return;
+    }
+    setTitle((t) => t || result.title || '');
+    setCategoryId((c) => c || matchCategory(result.category, categories) || '');
+    setPhotos((p) => (p.length ? p : result.images.length ? result.images.slice(0, 3) : result.imageUrl ? [result.imageUrl] : []));
+    const suggested = suggestPrice(result.retailPrice, 60, workflow.roundPricesToNinetyNine);
+    setTargetPrice((t) => t || (suggested != null ? String(suggested) : ''));
+    toast.success('Autofilled from barcode');
+  };
+
+  // Arriving from a scan with ?upc= / ?asin= → look it up right away
+  useEffect(() => {
+    if (prefillUpc || prefillAsin) void runLookup(prefillUpc || prefillAsin || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Pre-fill form fields when converting from rough item
   useEffect(() => {
@@ -83,7 +123,15 @@ export default function AddItem() {
     }) => {
       if (!team?.id || !user?.id) throw new Error('Not authenticated');
 
+      const code = barcode.trim() ? classifyCode(barcode) : null;
+      const found = lookup?.found ? lookup : null;
       const { error } = await supabase.from('items').insert({
+        upc: code?.codeType === 'upc' ? code.value : null,
+        brand: found?.brand ?? null,
+        retail_price: found?.retailPrice ?? null,
+        description: found?.description ?? null,
+        amazon_review_status: null,
+        data_sources: code ? ['barcode_lookup'] : ['manual'],
         team_id: team.id,
         created_by: user.id,
         title: data.title || null,
@@ -95,7 +143,7 @@ export default function AddItem() {
         storage_location_id: data.storage_location_id || null,
         refurbish_notes: data.refurbish_notes || null,
         photos: data.photos,
-        amazon_asin: prefillAsin || null,
+        amazon_asin: code?.codeType === 'asin' ? code.value : prefillAsin || null,
         // Manually added items are physically in hand — skip the order sheet
         physical_status: 'sell',
         confirmed_at: new Date().toISOString(),
@@ -294,6 +342,42 @@ export default function AddItem() {
           </CardContent>
         </Card>
 
+        {/* Barcode autofill */}
+        <Card>
+          <CardContent className="p-4 space-y-2">
+            <Label htmlFor="barcode">Barcode (optional)</Label>
+            <div className="flex gap-2">
+              <Input
+                id="barcode"
+                placeholder="UPC, EAN, ISBN or ASIN"
+                value={barcode}
+                onChange={(e) => setBarcode(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (barcode.trim()) void runLookup(barcode);
+                  }
+                }}
+                className="font-mono"
+              />
+              <Button type="button" variant="outline" size="icon" onClick={() => setShowScanner(true)} aria-label="Scan barcode">
+                <ScanLine className="w-4 h-4" />
+              </Button>
+              <Button type="button" variant="secondary" disabled={!barcode.trim() || lookingUp} onClick={() => void runLookup(barcode)}>
+                {lookingUp ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Look up'}
+              </Button>
+            </div>
+            {lookup?.found && (
+              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-primary" />
+                {lookup.brand ? `${lookup.brand} · ` : ''}
+                {lookup.retailPrice != null ? `retail ~$${lookup.retailPrice.toFixed(2)} · ` : ''}
+                filled from {lookup.source}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Basic Info */}
         <Card>
           <CardContent className="p-4 space-y-4">
@@ -449,6 +533,13 @@ export default function AddItem() {
           )}
         </Button>
       </form>
+      <BarcodeScannerModal
+        open={showScanner}
+        items={[]}
+        onMatchFound={() => undefined}
+        onNoMatch={(code) => void runLookup(code)}
+        onClose={() => setShowScanner(false)}
+      />
     </div>
   );
 }

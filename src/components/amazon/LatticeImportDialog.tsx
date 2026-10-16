@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import type { TablesUpdate } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   parseLatticeCSV,
@@ -173,7 +174,7 @@ export function LatticeImportDialog({
       if (toUpdate.length > 0) {
         await Promise.all(
           toUpdate.map(item => {
-            const update: Record<string, unknown> = {};
+            const update: TablesUpdate<'items'> = {};
             if (item.reviewStatus === 'Approved') {
               update.amazon_review_status = 'reviewed_grant';
             }
