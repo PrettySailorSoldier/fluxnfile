@@ -78,7 +78,7 @@ export function CreateTaskDialog({ open, onOpenChange, itemId, onSuccess }: Crea
       // Create notification(s) for the task
       if (assignedTo && assignedTo !== 'unassigned') {
         // Task is assigned to a specific person - notify them
-        await (supabase as any).from('notifications').insert({
+        await supabase.from('notifications').insert({
           user_id: assignedTo,
           team_id: team.id,
           type: 'task_assigned',
@@ -100,7 +100,7 @@ export function CreateTaskDialog({ open, onOpenChange, itemId, onSuccess }: Crea
             message: `A new task is available: ${taskLabel}`,
             link: itemId ? `/item/${itemId}` : '/tasks',
           }));
-          await (supabase as any).from('notifications').insert(notifications);
+          await supabase.from('notifications').insert(notifications);
         }
       }
     },

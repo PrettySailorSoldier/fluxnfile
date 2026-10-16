@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,7 +33,13 @@ import { AddRoughItemDialog } from '@/components/rough-notes/AddRoughItemDialog'
 import { RoughItemCard } from '@/components/rough-notes/RoughItemCard';
 
 export default function RoughNotes() {
-  const [showAddDialog, setShowAddDialog] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [showAddDialog, setShowAddDialog] = useState(searchParams.get('new') === '1');
+
+  // Arriving from the + menu with ?new=1 → dialog is open; clean up the URL
+  useEffect(() => {
+    if (searchParams.get('new') === '1') setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams]);
   const [defaultBoxLabel, setDefaultBoxLabel] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'processed'>('all');

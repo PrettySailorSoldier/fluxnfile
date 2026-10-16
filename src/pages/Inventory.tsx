@@ -43,6 +43,7 @@ import {
   Upload,
   ChevronDown,
   ClipboardEdit,
+  ListChecks,
   Sparkles,
   Table2,
 } from 'lucide-react';
@@ -54,6 +55,7 @@ import { AmazonImportDialog } from '@/components/amazon/AmazonImportDialog';
 import { ReviewStatusBadge } from '@/components/amazon/ReviewStatusBadge';
 import { BulkEditDialog, type BulkEdit } from '@/components/inventory/BulkEditDialog';
 import { ListImportDialog } from '@/components/inventory/ListImportDialog';
+import { AssignTaskDialog } from '@/components/tasks/AssignTaskDialog';
 import { VineReportImportDialog } from '@/components/amazon/VineReportImportDialog';
 import { LatticeImportDialog } from '@/components/amazon/LatticeImportDialog';
 
@@ -89,7 +91,8 @@ export default function Inventory() {
   const [decisionFilter, setDecisionFilter] = useState<string>('all');
   const [needsDetailsOnly, setNeedsDetailsOnly] = useState(searchParams.get('view') === 'needs-details');
   const [showBulkEdit, setShowBulkEdit] = useState(false);
-  const [showListImport, setShowListImport] = useState(false);
+  const [showListImport, setShowListImport] = useState(searchParams.get('import') === 'list');
+  const [showAssignTask, setShowAssignTask] = useState(false);
   const [reviewFilter, setReviewFilter] = useState<string>('all');
   const [deliveryFilter, setDeliveryFilter] = useState<DeliveryFilter>('all');
   const [sortBy, setSortBy] = useState<SortOption>(workflowSettings.defaultSortOrder);
@@ -507,10 +510,14 @@ export default function Inventory() {
 
       {/* Bulk Actions */}
       {isSelecting && selectedItems.size > 0 && (
-        <div className="flex items-center gap-2 p-3 bg-primary/10 rounded-lg border border-primary/20">
+        <div className="flex flex-wrap items-center gap-2 p-3 bg-primary/10 rounded-lg border border-primary/20">
           <Button size="sm" onClick={() => setShowBulkEdit(true)}>
             <ClipboardEdit className="w-4 h-4 mr-1" />
             Edit {selectedItems.size}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setShowAssignTask(true)}>
+            <ListChecks className="w-4 h-4 mr-1" />
+            Assign task
           </Button>
           <Button size="sm" variant="outline" onClick={handleBulkMarkListed}>
             <Tag className="w-4 h-4 mr-1" />
@@ -888,6 +895,17 @@ export default function Inventory() {
       <LatticeImportDialog open={showLattice} onOpenChange={setShowLattice} />
 
       <ListImportDialog open={showListImport} onOpenChange={setShowListImport} />
+
+      <AssignTaskDialog
+        open={showAssignTask}
+        onOpenChange={setShowAssignTask}
+        itemIds={Array.from(selectedItems)}
+        defaultType={needsDetailsOnly ? 'needs_photos' : undefined}
+        onDone={() => {
+          setSelectedItems(new Set());
+          setIsSelecting(false);
+        }}
+      />
 
       <BulkEditDialog
         open={showBulkEdit}

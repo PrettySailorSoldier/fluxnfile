@@ -12,6 +12,7 @@ import { MeetupLocationManager } from '@/components/settings/MeetupLocationManag
 import { ThemeCustomizer } from '@/components/settings/ThemeCustomizer';
 import { WorkflowSettingsCard } from '@/components/settings/WorkflowSettingsCard';
 import { ProfileEditor } from '@/components/settings/ProfileEditor';
+import { useTeamMembers } from '@/hooks/useTeam';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,7 +26,8 @@ import {
 } from '@/components/ui/alert-dialog';
 
 export default function Settings() {
-  const { team, leaveTeam, signOut } = useAuth();
+  const { team, user, leaveTeam, signOut } = useAuth();
+  const { data: members = [] } = useTeamMembers();
   const [showTemplates, setShowTemplates] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
   const navigate = useNavigate();
@@ -68,6 +70,22 @@ export default function Settings() {
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="font-medium">{team?.name}</p>
+          {members.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">
+                {members.length} member{members.length === 1 ? '' : 's'} — everyone sees and can edit the same items,
+                tasks, categories and locations
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {members.map((m) => (
+                  <span key={m.id} className="text-xs rounded-full bg-muted px-2.5 py-1">
+                    {m.full_name || 'Unnamed'}
+                    {m.id === user?.id ? ' (you)' : ''}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <code className="text-xs bg-muted px-2 py-1 rounded flex-1 truncate">
               {team?.id}
