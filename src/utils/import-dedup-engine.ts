@@ -2,9 +2,10 @@
  * Universal deduplication and data-merge engine for Flux&File imports.
  *
  * DEDUPLICATION PRIORITY CHAIN (in order):
- * 1. ASIN match (amazon_asin column) — strongest signal, exact match
- * 2. Order number match (amazon_order_id column) — exact match
- * 3. Fuzzy title match — normalized title Jaccard similarity ≥ 0.82 threshold
+ * 1. UPC/EAN match (upc column, leading zeros ignored) — exact product match
+ * 2. ASIN match (amazon_asin column) — exact match
+ * 3. Order number match (amazon_order_id column) — exact match
+ * 4. Fuzzy title match — normalized title Jaccard similarity ≥ 0.82 threshold
  *
  * MERGE BEHAVIOR:
  * - When a duplicate is found, MERGE new data into the existing record.
@@ -32,6 +33,7 @@ export interface ExistingItemIndex {
   title: string | null;
   amazon_asin: string | null;
   amazon_order_id: string | null;
+  upc?: string | null;
   data_sources: string[] | null;
   vine_review_status: string | null;
   vine_review_quality: string | null;
@@ -74,6 +76,7 @@ const FUZZY_THRESHOLD = 0.82;
  */
 export function findDuplicate(
   incoming: {
+    upc?: string | null;
     asin?: string | null;
     orderId?: string | null;
     title: string;
@@ -82,7 +85,16 @@ export function findDuplicate(
 ): ExistingItemIndex | null {
   const incomingNorm = normalizeTitle(incoming.title);
 
-  // 1. ASIN match (highest priority)
+  // 1. UPC match (highest priority) — compare with leading zeros stripped
+  if (incoming.upc) {
+    const key = incoming.upc.replace(/\D/g, '').replace(/^0+/, '');
+    const upcMatch = key
+      ? existingItems.find((e) => e.upc && e.upc.replace(/\D/g, '').replace(/^0+/, '') === key)
+      : undefined;
+    if (upcMatch) return upcMatch;
+  }
+
+  // 2. ASIN match
   if (incoming.asin) {
     const asinMatch = existingItems.find(
       e => e.amazon_asin && e.amazon_asin.toUpperCase() === incoming.asin!.toUpperCase()
@@ -90,7 +102,7 @@ export function findDuplicate(
     if (asinMatch) return asinMatch;
   }
 
-  // 2. Order number match
+  // 3. Order number match
   if (incoming.orderId) {
     const orderMatch = existingItems.find(
       e => e.amazon_order_id && e.amazon_order_id === incoming.orderId
@@ -98,7 +110,8 @@ export function findDuplicate(
     if (orderMatch) return orderMatch;
   }
 
-  // 3. Fuzzy title match
+  // 4. Fuzzy title match
+  if (!incomingNorm) return null;
   let bestScore = 0;
   let bestMatch: ExistingItemIndex | null = null;
   for (const existing of existingItems) {
@@ -141,6 +154,9 @@ export function computeMergeData(
 
   // Fields that only fill in if currently null/empty
   const fillIfEmpty = [
+    'upc',
+    'brand',
+    'retail_price',
     'amazon_asin',
     'amazon_order_id',
     'amazon_order_url',

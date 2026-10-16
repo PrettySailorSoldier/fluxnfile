@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useOrderSheetItems, Item } from '@/hooks/useInventory';
 import { useAuth } from '@/contexts/AuthContext';
@@ -18,7 +18,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Package, Search, CheckCircle2, Loader2, Trash2, ShoppingCart, FileSpreadsheet, Upload, ChevronDown, ScanLine } from 'lucide-react';
+import { Package, Search, CheckCircle2, Loader2, Trash2, ShoppingCart, FileSpreadsheet, Upload, ChevronDown, ScanLine, Table2, Layers } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   DropdownMenu,
@@ -36,6 +36,7 @@ import { ReviewStatusBadge } from '@/components/amazon/ReviewStatusBadge';
 import { AmazonImportDialog } from '@/components/amazon/AmazonImportDialog';
 import { VineReportImportDialog } from '@/components/amazon/VineReportImportDialog';
 import { LatticeImportDialog } from '@/components/amazon/LatticeImportDialog';
+import { ListImportDialog } from '@/components/inventory/ListImportDialog';
 
 function formatDate(dateStr: string | null | undefined) {
   if (!dateStr) return '';
@@ -48,8 +49,10 @@ function formatDate(dateStr: string | null | undefined) {
 
 export default function OrderSheet() {
   const { team } = useAuth();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: items = [], isLoading } = useOrderSheetItems();
+  const [showListImport, setShowListImport] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [confirmItem, setConfirmItem] = useState<Item | null>(null);
@@ -207,6 +210,12 @@ export default function OrderSheet() {
             Scan Package
           </Button>
         )}
+        {items.length > 0 && (
+          <Button size="sm" variant="outline" onClick={() => navigate('/scan?mode=add')}>
+            <Layers className="w-4 h-4 mr-1" />
+            Batch scan
+          </Button>
+        )}
 
         {/* Import */}
         <DropdownMenu>
@@ -222,6 +231,10 @@ export default function OrderSheet() {
               Import Source
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => setShowListImport(true)}>
+              <Table2 className="w-4 h-4 mr-2" />
+              Any list (CSV / Excel)
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => setShowLattice(true)}>
               <Upload className="w-4 h-4 mr-2" />
               Lattice CSV
@@ -298,6 +311,11 @@ export default function OrderSheet() {
       <AmazonImportDialog open={showAmazonImport} onOpenChange={setShowAmazonImport} />
       <VineReportImportDialog open={showVineReport} onOpenChange={setShowVineReport} />
       <LatticeImportDialog open={showLattice} onOpenChange={setShowLattice} />
+      <ListImportDialog
+        open={showListImport}
+        onOpenChange={setShowListImport}
+        defaultDestination="order_sheet"
+      />
 
       <AlertDialog open={showClearDialog} onOpenChange={setShowClearDialog}>
         <AlertDialogContent>
@@ -356,7 +374,10 @@ function OrderItemCard({ item, onConfirm }: { item: Item; onConfirm: () => void 
                 </Badge>
               )}
               {isVine && reviewStatus && (
-                <ReviewStatusBadge status={reviewStatus} size="sm" />
+                <ReviewStatusBadge
+                  status={reviewStatus as Parameters<typeof ReviewStatusBadge>[0]['status']}
+                  size="sm"
+                />
               )}
             </div>
           </div>

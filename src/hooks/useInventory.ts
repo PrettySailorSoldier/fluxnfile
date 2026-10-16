@@ -51,6 +51,9 @@ export interface Item {
   // Amazon / import fields
   amazon_asin: string | null;
   upc: string | null;
+  // Autofilled product details (barcode lookup / list import)
+  brand?: string | null;
+  retail_price?: number | null;
   amazon_order_id: string | null;
   amazon_order_number: string | null;
   amazon_order_url: string | null;
@@ -241,6 +244,24 @@ export const statusConfig: Record<ItemStatus, { label: string; className: string
   sold: { label: 'Sold', className: 'status-sold' },
   shipped: { label: 'Shipped', className: 'status-shipped' },
 };
+
+/**
+ * An unsold item is missing something needed to list it: a real title,
+ * an asking price, a photo, or a category.
+ */
+export function getMissingDetails(item: Pick<Item, 'title' | 'target_price' | 'photos' | 'category_id' | 'status'>): string[] {
+  if (item.status === 'sold' || item.status === 'shipped') return [];
+  const missing: string[] = [];
+  if (!item.title || item.title.startsWith('Unknown item (')) missing.push('title');
+  if (item.target_price == null) missing.push('price');
+  if (!item.photos || item.photos.length === 0) missing.push('photo');
+  if (!item.category_id) missing.push('category');
+  return missing;
+}
+
+export function needsDetails(item: Pick<Item, 'title' | 'target_price' | 'photos' | 'category_id' | 'status'>): boolean {
+  return getMissingDetails(item).length > 0;
+}
 
 export const conditionLabels: Record<ItemCondition, string> = {
   new: 'New',

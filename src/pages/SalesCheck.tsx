@@ -227,13 +227,13 @@ function ScannerOverlay({ onResult, onClose }: ScannerOverlayProps) {
 
     const timer = setTimeout(async () => {
       const result = await scan(SCANNER_VIDEO_ID);
-      if (result.status === 'found' || result.status === 'not_asin') {
+      if (result.status === 'found' || result.status === 'not_recognized') {
         onResult(result.rawValue);
         onClose();
       } else if (result.status === 'cancelled') {
         onClose();
       } else {
-        toast.error(result.message || 'Scanner error');
+        toast.error(result.status === 'error' ? result.message : 'Scanner error');
         onClose();
       }
     }, 300);

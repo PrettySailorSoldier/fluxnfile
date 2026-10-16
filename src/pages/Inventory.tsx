@@ -2,8 +2,18 @@ import { useState, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import type { TablesUpdate } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
-import { useItems, useCategories, statusConfig, ItemStatus, Item } from '@/hooks/useInventory';
+import {
+  useItems,
+  useCategories,
+  useStorageLocations,
+  statusConfig,
+  calculateProfit,
+  needsDetails,
+  ItemStatus,
+  Item,
+} from '@/hooks/useInventory';
 import { useWorkflowSettings } from '@/hooks/useUserPreferences';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -32,6 +42,9 @@ import {
   FileSpreadsheet,
   Upload,
   ChevronDown,
+  ClipboardEdit,
+  Sparkles,
+  Table2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { SwipeableItem } from '@/components/inventory/SwipeableItem';
@@ -39,8 +52,8 @@ import { QuickEditSheet } from '@/components/inventory/QuickEditSheet';
 import { MarketplaceExport } from '@/components/fb/MarketplaceExport';
 import { AmazonImportDialog } from '@/components/amazon/AmazonImportDialog';
 import { ReviewStatusBadge } from '@/components/amazon/ReviewStatusBadge';
-import { BarcodeScannerModal } from '@/components/inventory/BarcodeScannerModal';
-import { LinkUpcSheet } from '@/components/inventory/LinkUpcSheet';
+import { BulkEditDialog, type BulkEdit } from '@/components/inventory/BulkEditDialog';
+import { ListImportDialog } from '@/components/inventory/ListImportDialog';
 import { VineReportImportDialog } from '@/components/amazon/VineReportImportDialog';
 import { LatticeImportDialog } from '@/components/amazon/LatticeImportDialog';
 
@@ -50,7 +63,12 @@ type SortOption =
   | 'value_high'
   | 'value_low'
   | 'review_urgent'
-  | 'title_az';
+  | 'title_az'
+  | 'profit_high'
+  | 'margin_high'
+  | 'price_high'
+  | 'aging'
+  | 'location';
 
 type DeliveryFilter = 'all' | 'delivered' | 'arriving' | 'not_shipped';
 
@@ -61,11 +79,17 @@ export default function Inventory() {
   const [searchParams] = useSearchParams();
   const { data: items = [], isLoading } = useItems();
   const { data: categories = [] } = useCategories();
+  const { data: storageLocations = [] } = useStorageLocations();
   const workflowSettings = useWorkflowSettings();
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>(searchParams.get('status') || 'all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [locationFilter, setLocationFilter] = useState<string>('all');
+  const [decisionFilter, setDecisionFilter] = useState<string>('all');
+  const [needsDetailsOnly, setNeedsDetailsOnly] = useState(searchParams.get('view') === 'needs-details');
+  const [showBulkEdit, setShowBulkEdit] = useState(false);
+  const [showListImport, setShowListImport] = useState(false);
   const [reviewFilter, setReviewFilter] = useState<string>('all');
   const [deliveryFilter, setDeliveryFilter] = useState<DeliveryFilter>('all');
   const [sortBy, setSortBy] = useState<SortOption>(workflowSettings.defaultSortOrder);
@@ -80,17 +104,28 @@ export default function Inventory() {
   const [showVineReport, setShowVineReport] = useState(false);
   const [showLattice, setShowLattice] = useState(false);
   const [quickEditItem, setQuickEditItem] = useState<Item | null>(null);
-  const [showScanner, setShowScanner] = useState(false);
-  const [scanHighlightId, setScanHighlightId] = useState<string | null>(null);
-  const [linkUpc, setLinkUpc] = useState<string | null>(null);
+
+  const needsDetailsCount = useMemo(() => items.filter(needsDetails).length, [items]);
 
   const filteredItems = useMemo(() => {
     let result = items.filter((item) => {
+      const q = search.trim().toLowerCase();
       const matchesSearch =
-        !search ||
-        item.title?.toLowerCase().includes(search.toLowerCase()) ||
-        item.category?.name?.toLowerCase().includes(search.toLowerCase()) ||
-        item.acquisition_source?.toLowerCase().includes(search.toLowerCase());
+        !q ||
+        item.title?.toLowerCase().includes(q) ||
+        item.category?.name?.toLowerCase().includes(q) ||
+        item.acquisition_source?.toLowerCase().includes(q) ||
+        item.brand?.toLowerCase().includes(q) ||
+        item.storage_location?.name?.toLowerCase().includes(q) ||
+        item.upc?.includes(q.replace(/\D/g, '') || '\u0000') ||
+        item.amazon_asin?.toLowerCase() === q ||
+        String(item.tracking_number ?? '') === q.replace(/^#/, '');
+
+      if (needsDetailsOnly && !needsDetails(item)) return false;
+      if (locationFilter !== 'all') {
+        if (locationFilter === 'none' ? item.storage_location_id : item.storage_location_id !== locationFilter) return false;
+      }
+      if (decisionFilter !== 'all' && item.physical_status !== decisionFilter) return false;
 
       const matchesStatus = statusFilter === 'all' || item.status === statusFilter;
       const matchesCategory = categoryFilter === 'all' || item.category_id === categoryFilter;
@@ -166,6 +201,27 @@ export default function Inventory() {
         }
         case 'title_az':
           return (a.title || '').localeCompare(b.title || '');
+        case 'profit_high':
+          return calculateProfit(b).netProfit - calculateProfit(a).netProfit;
+        case 'margin_high':
+          return calculateProfit(b).margin - calculateProfit(a).margin;
+        case 'price_high':
+          return (b.actual_price ?? b.target_price ?? 0) - (a.actual_price ?? a.target_price ?? 0);
+        case 'aging': {
+          // Oldest unsold stock first; sold/shipped sink to the bottom
+          const aSold = a.status === 'sold' || a.status === 'shipped' ? 1 : 0;
+          const bSold = b.status === 'sold' || b.status === 'shipped' ? 1 : 0;
+          if (aSold !== bSold) return aSold - bSold;
+          return (
+            new Date(a.acquisition_date || a.created_at).getTime() -
+            new Date(b.acquisition_date || b.created_at).getTime()
+          );
+        }
+        case 'location': {
+          const la = a.storage_location?.name ?? '\uffff';
+          const lb = b.storage_location?.name ?? '\uffff';
+          return la.localeCompare(lb) || (a.title || '').localeCompare(b.title || '');
+        }
         case 'newest':
         default:
           return (
@@ -176,7 +232,7 @@ export default function Inventory() {
     });
 
     return result;
-  }, [items, search, statusFilter, categoryFilter, reviewFilter, dateFrom, dateTo, deliveryFilter, sortBy]);
+  }, [items, search, statusFilter, categoryFilter, reviewFilter, dateFrom, dateTo, deliveryFilter, sortBy, needsDetailsOnly, locationFilter, decisionFilter]);
 
   // Status counts for filter badges
   const statusCounts = items.reduce((acc, item) => {
@@ -187,6 +243,8 @@ export default function Inventory() {
   const activeFilterCount = [
     statusFilter !== 'all',
     categoryFilter !== 'all',
+    locationFilter !== 'all',
+    decisionFilter !== 'all',
     reviewFilter !== 'all',
     deliveryFilter !== 'all',
     !!dateFrom,
@@ -197,6 +255,9 @@ export default function Inventory() {
   const clearAllFilters = () => {
     setStatusFilter('all');
     setCategoryFilter('all');
+    setLocationFilter('all');
+    setDecisionFilter('all');
+    setNeedsDetailsOnly(false);
     setReviewFilter('all');
     setDeliveryFilter('all');
     setDateFrom('');
@@ -207,13 +268,14 @@ export default function Inventory() {
   // Mutations
   const updateItemStatus = useMutation({
     mutationFn: async ({ ids, status }: { ids: string[]; status: ItemStatus }) => {
-      const updates = ids.map(id =>
-        supabase.from('items').update({
+      const { error } = await supabase
+        .from('items')
+        .update({
           status,
           sale_date: status === 'sold' || status === 'shipped' ? new Date().toISOString().split('T')[0] : null,
-        }).eq('id', id)
-      );
-      await Promise.all(updates);
+        })
+        .in('id', ids);
+      if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['items'] });
@@ -226,10 +288,54 @@ export default function Inventory() {
     },
   });
 
+  const bulkEdit = useMutation({
+    mutationFn: async ({ ids, edit }: { ids: string[]; edit: BulkEdit }) => {
+      const update: TablesUpdate<'items'> = {};
+      if (edit.status) {
+        update.status = edit.status;
+        update.sale_date =
+          edit.status === 'sold' || edit.status === 'shipped' ? new Date().toISOString().split('T')[0] : null;
+      }
+      if (edit.categoryId !== undefined) update.category_id = edit.categoryId;
+      if (edit.storageLocationId !== undefined) update.storage_location_id = edit.storageLocationId;
+      if (edit.decision) update.physical_status = edit.decision;
+      if (edit.condition) update.condition = edit.condition;
+      if (edit.targetPrice !== undefined) update.target_price = edit.targetPrice;
+      if (Object.keys(update).length > 0) {
+        const { error } = await supabase.from('items').update(update).in('id', ids);
+        if (error) throw error;
+      }
+      // Percent-of-cost pricing needs each item's own cost
+      if (edit.markupPercent !== undefined) {
+        const targets = items.filter((i) => ids.includes(i.id));
+        const results = await Promise.all(
+          targets.map((i) =>
+            supabase
+              .from('items')
+              .update({ target_price: Math.round(i.original_cost * (1 + edit.markupPercent! / 100) * 100) / 100 })
+              .eq('id', i.id)
+          )
+        );
+        const failed = results.find((r) => r.error);
+        if (failed?.error) throw failed.error;
+      }
+    },
+    onSuccess: (_d, { ids }) => {
+      queryClient.invalidateQueries({ queryKey: ['items'] });
+      toast.success(`Updated ${ids.length} item${ids.length === 1 ? '' : 's'}`);
+      setShowBulkEdit(false);
+      setSelectedItems(new Set());
+      setIsSelecting(false);
+    },
+    onError: () => {
+      toast.error('Bulk update failed');
+    },
+  });
+
   const deleteItems = useMutation({
     mutationFn: async (ids: string[]) => {
-      const deletes = ids.map(id => supabase.from('items').delete().eq('id', id));
-      await Promise.all(deletes);
+      const { error } = await supabase.from('items').delete().in('id', ids);
+      if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['items'] });
@@ -278,38 +384,16 @@ export default function Inventory() {
     }
   };
 
-  const handleScanMatch = (item: Item) => {
-    setScanHighlightId(item.id);
-    setQuickEditItem(item);
-    setTimeout(() => setScanHighlightId(null), 4000);
-  };
-
-  const handleScanNoMatch = async (code: string, codeType: 'asin' | 'upc') => {
-    // The scanned item may be an unconfirmed order — send it to the
-    // Order Sheet confirm flow instead of creating a duplicate
-    const unconfirmed = team?.id
-      ? (
-          await supabase
-            .from('items')
-            .select('id, title')
-            .eq('team_id', team.id)
-            .ilike(codeType === 'asin' ? 'amazon_asin' : 'upc', code)
-            .eq('physical_status', 'unconfirmed')
-            .limit(1)
-            .maybeSingle()
-        ).data
-      : null;
-
-    if (unconfirmed) {
-      toast.info(`"${unconfirmed.title || 'Untitled item'}" is on the Order Sheet — confirm it there`);
-      navigate(`/order-sheet?confirm=${unconfirmed.id}`);
-    } else if (codeType === 'upc') {
-      // Unknown product barcode — link it to an item once, match forever after
-      setLinkUpc(code);
-    } else {
-      toast.warning(`No item found for ASIN ${code} — add it as a new item`);
-      navigate(`/add?asin=${code}&acquisition_source=${encodeURIComponent(workflowSettings.defaultAcquisitionSource)}`);
+  /** Needs-details queue: after saving, jump to the next item still missing something */
+  const openNextNeedingDetails = (currentId: string) => {
+    const queue = filteredItems.filter((i) => i.id !== currentId && needsDetails(i));
+    queryClient.invalidateQueries({ queryKey: ['items'] });
+    if (queue.length === 0) {
+      setQuickEditItem(null);
+      toast.success('All caught up — nothing else needs details');
+      return;
     }
+    setQuickEditItem(queue[0]);
   };
 
   if (isLoading) {
@@ -323,13 +407,13 @@ export default function Inventory() {
   return (
     <div className="p-4 space-y-4 pb-24">
       {/* Header */}
-      <div className="flex items-center justify-between pt-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
         <h1 className="text-2xl font-bold text-foreground">Inventory</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setShowScanner(true)}
+            onClick={() => navigate('/scan')}
           >
             <ScanLine className="w-4 h-4 mr-1" />
             Scan
@@ -348,6 +432,10 @@ export default function Inventory() {
                 Import Source
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setShowListImport(true)}>
+                <Table2 className="w-4 h-4 mr-2" />
+                Any list (CSV / Excel)
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setShowLattice(true)}>
                 <Upload className="w-4 h-4 mr-2" />
                 Lattice CSV
@@ -420,7 +508,11 @@ export default function Inventory() {
       {/* Bulk Actions */}
       {isSelecting && selectedItems.size > 0 && (
         <div className="flex items-center gap-2 p-3 bg-primary/10 rounded-lg border border-primary/20">
-          <Button size="sm" onClick={handleBulkMarkListed}>
+          <Button size="sm" onClick={() => setShowBulkEdit(true)}>
+            <ClipboardEdit className="w-4 h-4 mr-1" />
+            Edit {selectedItems.size}
+          </Button>
+          <Button size="sm" variant="outline" onClick={handleBulkMarkListed}>
             <Tag className="w-4 h-4 mr-1" />
             Mark Listed
           </Button>
@@ -443,6 +535,42 @@ export default function Inventory() {
             className="pl-9"
           />
         </div>
+
+        {/* Needs-details queue */}
+        {needsDetailsCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setNeedsDetailsOnly((v) => !v)}
+            className={`w-full flex items-center justify-between rounded-lg border px-3 py-2 text-sm transition-colors ${
+              needsDetailsOnly
+                ? 'border-amber-500/60 bg-amber-500/15 text-amber-700 dark:text-amber-400'
+                : 'border-amber-500/30 bg-amber-500/5 text-foreground'
+            }`}
+          >
+            <span className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-amber-500" />
+              {needsDetailsOnly ? 'Showing items that need details' : 'Needs details'}
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="rounded-full bg-amber-500 text-white text-xs font-semibold px-2 py-0.5">
+                {needsDetailsCount}
+              </span>
+              {needsDetailsOnly && filteredItems.length > 0 && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  className="text-xs underline underline-offset-2"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setQuickEditItem(filteredItems[0]);
+                  }}
+                >
+                  Start
+                </span>
+              )}
+            </span>
+          </button>
+        )}
 
         {/* Filter toggle row */}
         <div className="flex gap-2">
@@ -497,6 +625,11 @@ export default function Inventory() {
                   <SelectItem value="value_low">Lowest value first</SelectItem>
                   <SelectItem value="review_urgent">🔴 Review urgency</SelectItem>
                   <SelectItem value="title_az">A → Z</SelectItem>
+                  <SelectItem value="profit_high">Most profit first</SelectItem>
+                  <SelectItem value="margin_high">Best margin first</SelectItem>
+                  <SelectItem value="price_high">Highest price first</SelectItem>
+                  <SelectItem value="aging">Oldest unsold first</SelectItem>
+                  <SelectItem value="location">By storage location</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -538,6 +671,45 @@ export default function Inventory() {
                         {cat.name}
                       </SelectItem>
                     ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Location + Keep/Sell */}
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Location
+                </p>
+                <Select value={locationFilter} onValueChange={setLocationFilter}>
+                  <SelectTrigger className="h-8 text-sm">
+                    <SelectValue placeholder="All" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="none">No location</SelectItem>
+                    {storageLocations.map((loc) => (
+                      <SelectItem key={loc.id} value={loc.id}>
+                        {loc.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Keep / Sell
+                </p>
+                <Select value={decisionFilter} onValueChange={setDecisionFilter}>
+                  <SelectTrigger className="h-8 text-sm">
+                    <SelectValue placeholder="All" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="sell">Selling</SelectItem>
+                    <SelectItem value="keep">Keeping</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -643,7 +815,6 @@ export default function Inventory() {
               item={item}
               isSelecting={isSelecting}
               isSelected={selectedItems.has(item.id)}
-              isHighlighted={item.id === scanHighlightId}
               onSelect={toggleSelect}
               onClick={() => navigate(`/item/${item.id}`)}
               onTap={() => setQuickEditItem(item)}
@@ -700,29 +871,32 @@ export default function Inventory() {
           queryClient.invalidateQueries({ queryKey: ['items'] });
           setQuickEditItem(null);
         }}
+        onSaveNext={
+          needsDetailsOnly && quickEditItem
+            ? () => openNextNeedingDetails(quickEditItem.id)
+            : undefined
+        }
+        queueLabel={
+          needsDetailsOnly && quickEditItem
+            ? `Needs details · ${Math.max(0, filteredItems.filter((i) => i.id !== quickEditItem.id).length)} more after this`
+            : undefined
+        }
       />
 
       <VineReportImportDialog open={showVineReport} onOpenChange={setShowVineReport} />
 
       <LatticeImportDialog open={showLattice} onOpenChange={setShowLattice} />
 
-      <BarcodeScannerModal
-        open={showScanner}
-        items={items}
-        onMatchFound={handleScanMatch}
-        onNoMatch={handleScanNoMatch}
-        onClose={() => setShowScanner(false)}
-      />
+      <ListImportDialog open={showListImport} onOpenChange={setShowListImport} />
 
-      <LinkUpcSheet
-        upc={linkUpc}
-        open={!!linkUpc}
-        items={items}
-        onClose={() => setLinkUpc(null)}
-        onLinked={(item) => {
-          queryClient.invalidateQueries({ queryKey: ['items'] });
-          handleScanMatch({ ...item, upc: linkUpc });
-        }}
+      <BulkEditDialog
+        open={showBulkEdit}
+        onOpenChange={setShowBulkEdit}
+        count={selectedItems.size}
+        categories={categories}
+        storageLocations={storageLocations}
+        isSaving={bulkEdit.isPending}
+        onApply={(edit) => bulkEdit.mutate({ ids: Array.from(selectedItems), edit })}
       />
     </div>
   );
