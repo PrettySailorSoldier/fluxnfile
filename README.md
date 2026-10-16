@@ -1,73 +1,124 @@
-# Welcome to your Lovable project
+# Flux&File
 
-## Project info
+Resale inventory tracker for a small team. Scan or import what you buy, sort it into keep or sell, track where it lives, and follow each item through listing, offers, meetups and sale.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+Runs as a mobile-first web app and as an Android/iOS app via Capacitor, backed by Supabase.
 
-## How can I edit this code?
+## What it does
 
-There are several ways of editing your application.
+- **Scan intake** (`/scan`): keeps the camera open for item-after-item scanning. Unknown barcodes are looked up and autofilled (title, photo, brand, category, suggested price). Scanning the same product again adds another unit. Also works with typed codes and Bluetooth/USB scanner guns.
+- **Imports**: Amazon order history, Amazon Vine reports (XLSX), Lattice CSV, and any CSV/TSV/Excel list with automatic column mapping. Imports deduplicate on UPC, ASIN and order number.
+- **Order Sheet**: items you've ordered but haven't physically received, checked off as you scan them in.
+- **Inventory**: filters, sorts (profit, margin, age, location), bulk edit, and a "Needs details" queue for items missing a title, price, photo or category.
+- **Selling**: Facebook Marketplace export, offer tracker, meetup scheduling with safety check-ins, and message templates.
+- **Team tools**: shared tasks, rough notes for boxes not yet sorted, analytics, and Amazon review reminders.
 
-**Use Lovable**
+## Tech stack
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+| Layer | Tools |
+|---|---|
+| Frontend | React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui, TanStack Query, React Router |
+| Backend | Supabase (Postgres with row-level security, Auth, Storage, Edge Functions on Deno) |
+| Mobile | Capacitor 8 (camera, haptics, status bar, splash screen) |
+| Barcodes | `@zxing/library` |
+| Hosting | Vercel (web) |
 
-Changes made via Lovable will be committed automatically to this repo.
+## Getting started
 
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
+Requires Node.js 22 or newer and npm.
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+git clone https://github.com/PrettySailorSoldier/fluxnfile.git
+cd fluxnfile
+npm install
 ```
 
-**Edit a file directly in GitHub**
+Create a `.env` file in the project root:
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+```sh
+VITE_SUPABASE_URL=https://<project-ref>.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=<publishable or anon key>
+```
 
-**Use GitHub Codespaces**
+Both values are in the Supabase dashboard under **Project Settings → API**. They're safe to ship to the browser. Never put the service-role key here.
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+```sh
+npm run dev      # http://localhost:8080
+```
 
-## What technologies are used for this project?
+## Scripts
 
-This project is built with:
+| Command | What it does |
+|---|---|
+| `npm run dev` | Start the dev server on port 8080 |
+| `npm run build` | Production build into `dist/` |
+| `npm run preview` | Serve the production build locally |
+| `npm run lint` | Run ESLint |
+| `npm run cap:sync` | Build and sync `dist/` into the native projects |
+| `npm run cap:android` | Build, sync, and open the project in Android Studio |
+| `npm run cap:copy` | Build and copy web assets only (no plugin sync) |
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+## Project layout
 
-## How can I deploy this project?
+```
+src/
+  pages/                 one file per route (Inventory, ScanSession, OrderSheet, ...)
+  components/
+    inventory/           scanner, quick edit, bulk edit, list import
+    amazon/              Amazon, Vine and Lattice import dialogs
+    fb/                  Facebook Marketplace tools, offers, meetups, safety check-ins
+    ui/                  shadcn/ui primitives
+  hooks/                 data hooks (useInventory, useOffers, useBarcodeScanner, ...)
+  lib/                   barcode parsing, product lookup, scan-intake logic
+  utils/                 import parsers and the dedup engine
+  integrations/supabase/ Supabase client and generated database types
+supabase/
+  migrations/            database schema, applied in filename order
+  functions/             Edge Functions (see below)
+docs/                    feature write-ups
+```
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+## Database
 
-## Can I connect a custom domain to my Lovable project?
+The schema lives in `supabase/migrations/`. The Supabase GitHub integration applies new migrations to the linked project when changes land on `main`, and the result shows up as the **Supabase Preview** check on the commit.
 
-Yes, you can!
+To apply them yourself with the [Supabase CLI](https://supabase.com/docs/guides/cli):
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+```sh
+supabase link --project-ref <project-ref>
+supabase db push
+```
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+Write new migrations so they're safe to run twice: use `IF NOT EXISTS`, and `DROP ... IF EXISTS` before creating policies, triggers and constraints. Changes made by hand in the SQL Editor aren't recorded as applied, so the integration will run the matching migration file again.
+
+After a schema change, regenerate the TypeScript types:
+
+```sh
+supabase gen types typescript --project-id <project-ref> > src/integrations/supabase/types.ts
+```
+
+## Edge Functions
+
+| Function | Purpose | Secrets |
+|---|---|---|
+| `lookup-upc` | Barcode → product details (UPCitemdb, Open Food Facts, Open Library, OpenWeb Ninja), cached in `product_catalog` | `UPCITEMDB_API_KEY` (optional, paid tier), `OPENWEBNINJA_API_KEY` (optional, enables ASIN lookups) |
+| `fetch-amazon-prices` | Current Amazon prices by ASIN | `OPENWEBNINJA_API_KEY` |
+| `review-reminder` | Notifies team members about Amazon items still awaiting review after 3 days | none |
+
+`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are provided to every function automatically.
+
+```sh
+supabase functions deploy lookup-upc
+supabase secrets set UPCITEMDB_API_KEY=...
+```
+
+## Deploying
+
+- **Web:** Vercel builds `main` automatically with `npm run build`. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in the Vercel project's environment variables.
+- **Android:** `npm run cap:android`, then build or run from Android Studio. The `android/` and `ios/` folders are generated and not committed. Run `npx cap add android` (or `ios`) once on a new machine.
+
+When a release includes a migration, make sure it has applied before the frontend that depends on it goes live.
+
+## Further reading
+
+- [docs/SCAN-INTAKE-UPGRADE.md](docs/SCAN-INTAKE-UPGRADE.md): scan session, product lookup and list import, with a quick test script and planned next tasks.
