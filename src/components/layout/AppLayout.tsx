@@ -4,6 +4,7 @@ import { Settings } from 'lucide-react';
 import { BottomNav } from './BottomNav';
 import { useTheme } from '@/contexts/ThemeContext';
 import { NotificationBell } from '@/components/notifications/NotificationBell';
+import { useTeamRealtime } from '@/hooks/useTeam';
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -12,6 +13,8 @@ interface AppLayoutProps {
 export function AppLayout({ children }: AppLayoutProps) {
   const { backgroundImageUrl } = useTheme();
   const navigate = useNavigate();
+  // Teammates' imports, scans and task changes appear without a refresh
+  useTeamRealtime();
 
   return (
     <div className="min-h-screen pb-20 relative">

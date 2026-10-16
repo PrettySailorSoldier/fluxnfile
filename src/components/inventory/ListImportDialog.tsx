@@ -22,6 +22,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { TablesInsert, TablesUpdate } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWorkflowSettings } from '@/hooks/useUserPreferences';
+import { notifyTeammates } from '@/hooks/useTeam';
 import {
   useCategories,
   useStorageLocations,
@@ -122,7 +123,7 @@ const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().t
 
 export function ListImportDialog({ open, onOpenChange, defaultDestination = 'sell' }: ListImportDialogProps) {
   const queryClient = useQueryClient();
-  const { user, team } = useAuth();
+  const { user, team, profile } = useAuth();
   const workflow = useWorkflowSettings();
   const { data: categories = [] } = useCategories();
   const { data: storageLocations = [] } = useStorageLocations();
@@ -407,6 +408,16 @@ export function ListImportDialog({ open, onOpenChange, defaultDestination = 'sel
       queryClient.invalidateQueries({ queryKey: ['unconfirmed-count'] });
       queryClient.invalidateQueries({ queryKey: ['categories'] });
       queryClient.invalidateQueries({ queryKey: ['storage_locations'] });
+      if (inserts.length > 0) {
+        void notifyTeammates(team.id, user.id, {
+          type: 'list_import',
+          title: '📋 New items imported',
+          message: `${profile?.full_name || 'Your teammate'} imported ${inserts.length} item${inserts.length === 1 ? '' : 's'}${
+            destination === 'order_sheet' ? ' to the Order Sheet' : ''
+          }${fileName && fileName !== 'Pasted rows' ? ` from ${fileName}` : ''}`,
+          link: destination === 'order_sheet' ? '/order-sheet' : '/inventory',
+        });
+      }
       setResult({
         created: inserts.length,
         updated: updates.length,

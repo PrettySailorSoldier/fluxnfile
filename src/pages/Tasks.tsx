@@ -32,10 +32,19 @@ export default function Tasks() {
     enabled: !!team?.id,
   });
 
-  const myTasks = tasks?.filter(
-    (t) => (t.assigned_to === user?.id || !t.assigned_to) && t.status !== 'completed'
-  );
-  const teamTasks = tasks?.filter((t) => t.status !== 'completed');
+  // In progress first, then by due date (no date last), then newest
+  const byUrgency = (a: NonNullable<typeof tasks>[number], b: NonNullable<typeof tasks>[number]) => {
+    const rank = (s: string) => (s === 'in_progress' ? 0 : 1);
+    if (rank(a.status) !== rank(b.status)) return rank(a.status) - rank(b.status);
+    const da = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+    const db = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+    if (da !== db) return da - db;
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  };
+  const myTasks = tasks
+    ?.filter((t) => (t.assigned_to === user?.id || !t.assigned_to) && t.status !== 'completed')
+    .sort(byUrgency);
+  const teamTasks = tasks?.filter((t) => t.status !== 'completed').sort(byUrgency);
   const completedTasks = tasks?.filter((t) => t.status === 'completed');
 
   return (
@@ -54,7 +63,7 @@ export default function Tasks() {
             My Tasks ({myTasks?.length || 0})
           </TabsTrigger>
           <TabsTrigger value="team">
-            Team ({teamTasks?.length || 0})
+            All open ({teamTasks?.length || 0})
           </TabsTrigger>
           <TabsTrigger value="done">
             Done ({completedTasks?.length || 0})
@@ -68,7 +77,7 @@ export default function Tasks() {
             myTasks.map((task) => <TaskCard key={task.id} task={task} />)
           ) : (
             <p className="text-center text-muted-foreground py-8">
-              No tasks assigned to you
+              Nothing on your plate. Tasks assigned to you or to anyone show up here.
             </p>
           )}
         </TabsContent>

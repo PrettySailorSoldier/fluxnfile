@@ -10,7 +10,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { Flag, Camera, Loader2, X as XIcon } from 'lucide-react';
+import { Flag, Camera, Loader2, X as XIcon, ListChecks } from 'lucide-react';
+import { formatDistanceToNow } from 'date-fns';
+import { notifyUsers, useTeamMembers, memberName } from '@/hooks/useTeam';
+import { AssignTaskDialog } from '@/components/tasks/AssignTaskDialog';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -43,7 +46,9 @@ interface QuickEditSheetProps {
 export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queueLabel }: QuickEditSheetProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { user, team } = useAuth();
+  const { user, team, profile } = useAuth();
+  const { data: members = [] } = useTeamMembers();
+  const [showAssign, setShowAssign] = useState(false);
   const { data: storageLocations = [] } = useStorageLocations();
   const { data: categories = [] } = useCategories();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -182,6 +187,14 @@ export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queue
         .update({ flagged_for: partner.id, flag_note: flagNote || null })
         .eq('id', item.id);
       if (error) throw error;
+      if (team?.id) {
+        await notifyUsers(team.id, [partner.id], {
+          type: 'item_flagged',
+          title: '🚩 Flagged for you',
+          message: `${profile?.full_name || 'Your teammate'} flagged “${(item.title || 'an item').slice(0, 60)}”${flagNote ? `: ${flagNote.slice(0, 80)}` : ''}`,
+          link: `/item/${item.id}`,
+        });
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['items'] });
@@ -204,6 +217,14 @@ export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queue
           <SheetTitle>{item?.title || 'Untitled Item'}</SheetTitle>
           {item?.acquisition_source && (
             <p className="text-sm text-muted-foreground">{item.acquisition_source}</p>
+          )}
+          {item && (item.created_by || item.confirmed_by) && (
+            <p className="text-xs text-muted-foreground">
+              {item.created_by && <>Added by {memberName(members, item.created_by, user?.id)} · {formatDistanceToNow(new Date(item.created_at), { addSuffix: true })}</>}
+              {item.confirmed_by && item.confirmed_by !== item.created_by && (
+                <> · received by {memberName(members, item.confirmed_by, user?.id)}</>
+              )}
+            </p>
           )}
           {queueLabel && <p className="text-xs text-amber-600 font-medium">{queueLabel}</p>}
           <div className="flex gap-2 overflow-x-auto py-1">
@@ -423,16 +444,22 @@ export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queue
             </div>
           )}
 
-          <button
-            type="button"
-            className="text-sm text-primary underline-offset-4 hover:underline block"
-            onClick={() => {
-              onClose();
-              navigate(`/item/${item?.id}`);
-            }}
-          >
-            View Full Details →
-          </button>
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              className="text-sm text-primary underline-offset-4 hover:underline"
+              onClick={() => {
+                onClose();
+                navigate(`/item/${item?.id}`);
+              }}
+            >
+              View Full Details →
+            </button>
+            <Button type="button" variant="outline" size="sm" onClick={() => setShowAssign(true)} disabled={!item}>
+              <ListChecks className="w-4 h-4 mr-1" />
+              Assign task
+            </Button>
+          </div>
 
           {/* ── Flag for Partner ───────────────────────────────────────────── */}
           <div className="rounded-lg border border-border bg-muted/20 px-3 py-3 space-y-2">
@@ -496,6 +523,14 @@ export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queue
           </div>
         </div>
       </SheetContent>
+      <AssignTaskDialog
+        open={showAssign}
+        onOpenChange={setShowAssign}
+        itemIds={item ? [item.id] : []}
+        defaultType={
+          item && missing.includes('photo') ? 'needs_photos' : item && missing.includes('price') ? 'needs_pricing' : undefined
+        }
+      />
     </Sheet>
   );
 }

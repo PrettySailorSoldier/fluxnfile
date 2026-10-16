@@ -40,6 +40,7 @@ import {
   type ItemCondition,
 } from '@/hooks/useInventory';
 import { useWorkflowSettings } from '@/hooks/useUserPreferences';
+import { notifyTeammates } from '@/hooks/useTeam';
 import { useContinuousScanner } from '@/hooks/useContinuousScanner';
 import { QuickEditSheet } from '@/components/inventory/QuickEditSheet';
 import { LinkUpcSheet } from '@/components/inventory/LinkUpcSheet';
@@ -144,7 +145,7 @@ export default function ScanSession() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const { user, team } = useAuth();
+  const { user, team, profile } = useAuth();
   const workflow = useWorkflowSettings();
   const { data: categories = [] } = useCategories();
   const { data: storageLocations = [] } = useStorageLocations();
@@ -591,6 +592,21 @@ export default function ScanSession() {
   const finish = () => {
     sessionStorage.removeItem(ROWS_KEY);
     scanner.stop();
+    // Let teammates know what came in (fire-and-forget)
+    if (team?.id && user?.id && (summary.added > 0 || summary.received > 0)) {
+      const parts = [
+        summary.received > 0 ? `received ${summary.received}` : null,
+        summary.added > 0 ? `added ${summary.added}` : null,
+      ].filter(Boolean);
+      void notifyTeammates(team.id, user.id, {
+        type: 'scan_session',
+        title: '📦 Items scanned in',
+        message: `${profile?.full_name || 'Your teammate'} ${parts.join(' and ')} item${summary.added + summary.received === 1 ? '' : 's'}${
+          summary.needsDetails > 0 ? ` — ${summary.needsDetails} need details` : ''
+        }`,
+        link: summary.needsDetails > 0 ? '/inventory?view=needs-details' : '/inventory',
+      });
+    }
     navigate(summary.needsDetails > 0 ? '/inventory?view=needs-details' : '/inventory');
   };
 
