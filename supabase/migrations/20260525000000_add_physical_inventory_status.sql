@@ -7,6 +7,9 @@ ADD COLUMN IF NOT EXISTS held_by UUID REFERENCES auth.users(id);
 
 -- Constrain valid values
 ALTER TABLE public.items
+DROP CONSTRAINT IF EXISTS items_physical_status_check;
+
+ALTER TABLE public.items
 ADD CONSTRAINT items_physical_status_check
 CHECK (physical_status IN ('unconfirmed', 'keep', 'sell'));
 
@@ -20,4 +23,5 @@ UPDATE public.items
 SET
   physical_status = 'sell',
   confirmed_at = created_at
-WHERE status IN ('refurbishing', 'ready_to_list', 'listed', 'sold', 'shipped');
+WHERE status IN ('refurbishing', 'ready_to_list', 'listed', 'sold', 'shipped')
+  AND physical_status = 'unconfirmed';

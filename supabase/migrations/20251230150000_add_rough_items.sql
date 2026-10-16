@@ -1,7 +1,7 @@
 -- Create rough_items table for quick inventory notes
 -- These are rough notes about items in boxes that will later be converted to real inventory items
 
-CREATE TABLE public.rough_items (
+CREATE TABLE IF NOT EXISTS public.rough_items (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   team_id UUID NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE,
   created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
@@ -30,6 +30,7 @@ CREATE TABLE public.rough_items (
 ALTER TABLE public.rough_items ENABLE ROW LEVEL SECURITY;
 
 -- Team members can view rough items for their team
+DROP POLICY IF EXISTS "Team members can view rough items" ON public.rough_items;
 CREATE POLICY "Team members can view rough items"
   ON public.rough_items
   FOR SELECT
@@ -40,6 +41,7 @@ CREATE POLICY "Team members can view rough items"
   );
 
 -- Team members can insert rough items for their team
+DROP POLICY IF EXISTS "Team members can insert rough items" ON public.rough_items;
 CREATE POLICY "Team members can insert rough items"
   ON public.rough_items
   FOR INSERT
@@ -50,6 +52,7 @@ CREATE POLICY "Team members can insert rough items"
   );
 
 -- Team members can update rough items for their team
+DROP POLICY IF EXISTS "Team members can update rough items" ON public.rough_items;
 CREATE POLICY "Team members can update rough items"
   ON public.rough_items
   FOR UPDATE
@@ -60,6 +63,7 @@ CREATE POLICY "Team members can update rough items"
   );
 
 -- Team members can delete rough items for their team
+DROP POLICY IF EXISTS "Team members can delete rough items" ON public.rough_items;
 CREATE POLICY "Team members can delete rough items"
   ON public.rough_items
   FOR DELETE
@@ -70,11 +74,12 @@ CREATE POLICY "Team members can delete rough items"
   );
 
 -- Create index for faster queries
-CREATE INDEX idx_rough_items_team_id ON public.rough_items(team_id);
-CREATE INDEX idx_rough_items_is_processed ON public.rough_items(is_processed);
-CREATE INDEX idx_rough_items_box_label ON public.rough_items(box_label);
+CREATE INDEX IF NOT EXISTS idx_rough_items_team_id ON public.rough_items(team_id);
+CREATE INDEX IF NOT EXISTS idx_rough_items_is_processed ON public.rough_items(is_processed);
+CREATE INDEX IF NOT EXISTS idx_rough_items_box_label ON public.rough_items(box_label);
 
 -- Add trigger for updated_at
+DROP TRIGGER IF EXISTS update_rough_items_updated_at ON public.rough_items;
 CREATE TRIGGER update_rough_items_updated_at
   BEFORE UPDATE ON public.rough_items
   FOR EACH ROW

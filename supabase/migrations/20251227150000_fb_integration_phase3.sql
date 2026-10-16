@@ -69,44 +69,54 @@ ALTER TABLE public.meetups ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.safety_checkins ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for offers
+DROP POLICY IF EXISTS "Users can view their team offers" ON public.offers;
 CREATE POLICY "Users can view their team offers"
   ON public.offers FOR SELECT
   USING (public.is_team_member(team_id));
 
+DROP POLICY IF EXISTS "Users can insert offers for their team" ON public.offers;
 CREATE POLICY "Users can insert offers for their team"
   ON public.offers FOR INSERT
   WITH CHECK (public.is_team_member(team_id));
 
+DROP POLICY IF EXISTS "Users can update their team offers" ON public.offers;
 CREATE POLICY "Users can update their team offers"
   ON public.offers FOR UPDATE
   USING (public.is_team_member(team_id));
 
+DROP POLICY IF EXISTS "Users can delete their team offers" ON public.offers;
 CREATE POLICY "Users can delete their team offers"
   ON public.offers FOR DELETE
   USING (public.is_team_member(team_id));
 
 -- RLS Policies for meetups
+DROP POLICY IF EXISTS "Users can view their team meetups" ON public.meetups;
 CREATE POLICY "Users can view their team meetups"
   ON public.meetups FOR SELECT
   USING (public.is_team_member(team_id));
 
+DROP POLICY IF EXISTS "Users can insert meetups for their team" ON public.meetups;
 CREATE POLICY "Users can insert meetups for their team"
   ON public.meetups FOR INSERT
   WITH CHECK (public.is_team_member(team_id));
 
+DROP POLICY IF EXISTS "Users can update their team meetups" ON public.meetups;
 CREATE POLICY "Users can update their team meetups"
   ON public.meetups FOR UPDATE
   USING (public.is_team_member(team_id));
 
+DROP POLICY IF EXISTS "Users can delete their team meetups" ON public.meetups;
 CREATE POLICY "Users can delete their team meetups"
   ON public.meetups FOR DELETE
   USING (public.is_team_member(team_id));
 
 -- RLS Policies for safety_checkins
+DROP POLICY IF EXISTS "Users can view their team safety checkins" ON public.safety_checkins;
 CREATE POLICY "Users can view their team safety checkins"
   ON public.safety_checkins FOR SELECT
   USING (public.is_team_member(team_id));
 
+DROP POLICY IF EXISTS "Users can insert safety checkins for their team" ON public.safety_checkins;
 CREATE POLICY "Users can insert safety checkins for their team"
   ON public.safety_checkins FOR INSERT
   WITH CHECK (public.is_team_member(team_id));
@@ -140,4 +150,8 @@ CROSS JOIN (
     ('Coffee Shop', 'coffee_shop', 'Public, good for small items'),
     ('Library Entrance', 'library', 'Public area with security')
 ) AS suggestions(location_name, location_type, notes)
+WHERE NOT EXISTS (
+  SELECT 1 FROM public.meetup_locations ml
+  WHERE ml.team_id = t.id AND ml.name = suggestions.location_name
+)
 ON CONFLICT DO NOTHING;

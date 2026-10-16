@@ -3,7 +3,7 @@
 
 -- Add the column
 ALTER TABLE public.items
-ADD COLUMN tracking_number INTEGER;
+ADD COLUMN IF NOT EXISTS tracking_number INTEGER;
 
 -- Create a function to generate tracking numbers per team
 CREATE OR REPLACE FUNCTION public.generate_tracking_number()
@@ -27,6 +27,7 @@ END;
 $$;
 
 -- Create trigger to auto-generate tracking number on insert
+DROP TRIGGER IF EXISTS set_tracking_number ON public.items;
 CREATE TRIGGER set_tracking_number
   BEFORE INSERT ON public.items
   FOR EACH ROW
@@ -48,7 +49,7 @@ FROM numbered_items
 WHERE public.items.id = numbered_items.id;
 
 -- Add a unique constraint per team (optional but recommended)
-CREATE UNIQUE INDEX idx_items_team_tracking_number 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_items_team_tracking_number
 ON public.items (team_id, tracking_number);
 
 -- Add a comment for documentation
