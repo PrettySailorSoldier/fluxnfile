@@ -71,7 +71,7 @@ export default function AddItem() {
   const runLookup = async (raw: string) => {
     const parsed = classifyCode(raw);
     if (!parsed) {
-      toast.error('That doesn’t look like a UPC, EAN, ISBN or ASIN');
+      toast.error('That doesn’t look like a valid UPC, EAN, ISBN, ASIN or Amazon X00 code');
       return;
     }
     setBarcode(parsed.value);
@@ -79,6 +79,8 @@ export default function AddItem() {
     const result = await lookupProduct(parsed.value, parsed.codeType);
     setLookingUp(false);
     setLookup(result);
+    // An Amazon X00 sticker isn't stored — keep the ASIN it resolved to
+    if (parsed.codeType === 'fnsku' && result.asin) setBarcode(result.asin);
     if (!result.found) {
       toast.info(result.error ?? 'Product not found — fill in the details yourself');
       return;

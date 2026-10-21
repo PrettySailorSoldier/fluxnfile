@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { X, ScanLine, Loader2 } from 'lucide-react';
 import { Item } from '@/hooks/useInventory';
 import { toast } from 'sonner';
+import { lookupProduct } from '@/lib/productLookup';
 
 const VIEWFINDER_ID = 'zxing-viewfinder';
 
@@ -34,6 +35,17 @@ export function BarcodeScannerModal({
 
       switch (result.status) {
         case 'found': {
+          // Amazon X00 sticker → look up the ASIN it belongs to
+          if (result.codeType === 'fnsku') {
+            const lookup = await lookupProduct(result.value, 'fnsku');
+            if (!lookup.asin) {
+              toast.warning('Couldn’t match that Amazon sticker to a product. Scan the product’s own barcode instead.');
+              onClose();
+              break;
+            }
+            result.value = lookup.asin;
+            result.codeType = 'asin';
+          }
           const match =
             result.codeType === 'asin'
               ? items.find(

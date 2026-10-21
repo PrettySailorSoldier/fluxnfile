@@ -26,6 +26,28 @@ Goal: **scan → autofill → sort/fill in**, or **upload a list → everything 
    - `OPENWEBNINJA_API_KEY` (already used by fetch-amazon-prices) also enables ASIN autofill.
 4. Build/deploy the frontend as usual (`npm run build`, or `npm run cap:sync` for the app).
 
+## Scanning the outside of shipping boxes (Oct 21)
+
+Boxes usually carry three kinds of barcodes. Here is how each is handled now:
+
+| Barcode | Example | What happens |
+|---|---|---|
+| Product barcode (UPC / EAN-13) | `4262392441427` | Lookup order: UPCitemdb → Open Food/Products/Beauty Facts → **Amazon search** (finds non-US EANs the free databases don't know). If Amazon returns an ASIN that's on the Order Sheet, the item is **received**. |
+| Amazon sticker (FNSKU) | `X0051UTBFP` | Was rejected as "not a product code". It's now resolved to its ASIN through Amazon search, then handled like an ASIN scan (receives orders, adds new items). |
+| Shipping labels | `1Z…`, `420` + ZIP, bad check digit | Rejected. A shipping label is listed only once, however often the camera passes over it. |
+
+Other scanner fixes:
+- Repeat scans are tracked **per code**, so moving between two barcodes on one box no longer adds the item 2–3 times. A second, different barcode of the same product within 10 s is saved on the same item ("Same box").
+- EAN-8, UPC-E and ITF must read the same twice in a row. These short formats are often misread off part of a bigger barcode.
+- The Amazon API URL was wrong (`/amazon/product` doesn't exist). It's now `/realtime-amazon-data/product-details`. This also fixes `fetch-amazon-prices`.
+
+**Deploy:**
+1. Run `supabase/migrations/20261021000000_catalog_fnsku_asin.sql`.
+2. Run `supabase functions deploy lookup-upc fetch-amazon-prices`.
+3. Run `supabase secrets set OPENWEBNINJA_API_KEY=...` (Real-Time Amazon Data). Amazon search and X00 stickers need it.
+
+Each unknown barcode costs 2 Amazon calls (search + details) once. After that the result is cached.
+
 ## Quick test
 
 - Inventory → **Scan** → type `012345678905` + Enter → a new item appears, autofilled if the lookup finds it. Type it again → the row shows ×2.

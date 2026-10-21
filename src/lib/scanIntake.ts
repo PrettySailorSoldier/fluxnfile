@@ -58,6 +58,8 @@ const MATCH_FIELDS =
 
 /** Every item (any status) with this barcode, oldest first. */
 export async function findByCode(teamId: string, code: string, codeType: CodeType): Promise<MatchRow[]> {
+  // FNSKUs aren't stored on items — resolve them to an ASIN first
+  if (codeType === 'fnsku') return [];
   let query = supabase.from('items').select(MATCH_FIELDS).eq('team_id', teamId);
   query = codeType === 'asin' ? query.ilike('amazon_asin', code) : query.in('upc', upcVariants(code));
   const { data, error } = await query.order('created_at', { ascending: true }).limit(100);
@@ -132,7 +134,7 @@ export function buildItemFromLookup(
     photos,
     category_id: matchCategory(found?.category, ctx.categories),
     upc: codeType === 'upc' ? code : null,
-    amazon_asin: codeType === 'asin' ? code : null,
+    amazon_asin: codeType === 'asin' ? code : found?.asin ?? null,
     original_cost: ctx.defaults.cost || 0,
     acquisition_date: today,
     acquisition_source: ctx.defaults.source || null,
@@ -199,6 +201,19 @@ export async function cloneUnit(sourceId: string, ctx: IntakeContext): Promise<M
   const { data, error } = await supabase.from('items').insert(insert).select(MATCH_FIELDS).single();
   if (error) throw error;
   return data as unknown as MatchRow;
+}
+
+/**
+ * Record another barcode for items (e.g. the ASIN behind an FNSKU sticker, or
+ * the UPC printed next to it). Only fills blanks — never overwrites a code.
+ */
+export async function attachCode(itemIds: string[], code: string, codeType: CodeType): Promise<void> {
+  if (itemIds.length === 0 || codeType === 'fnsku') return;
+  const { error } =
+    codeType === 'asin'
+      ? await supabase.from('items').update({ amazon_asin: code }).in('id', itemIds).is('amazon_asin', null)
+      : await supabase.from('items').update({ upc: code }).in('id', itemIds).is('upc', null);
+  if (error) throw error;
 }
 
 export async function deleteItem(id: string): Promise<void> {

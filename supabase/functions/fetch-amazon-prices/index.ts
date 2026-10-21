@@ -7,7 +7,7 @@ const corsHeaders = {
 };
 
 // OpenWeb Ninja API configuration
-const OPENWEBNINJA_API_URL = 'https://api.openwebninja.com/amazon/product';
+const OPENWEBNINJA_API_URL = 'https://api.openwebninja.com/realtime-amazon-data/product-details';
 
 interface PriceResult {
   asin: string;
