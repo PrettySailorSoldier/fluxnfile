@@ -35,7 +35,18 @@ export function BarcodeScannerModal({
 
       switch (result.status) {
         case 'found': {
-          // Amazon X00 sticker → look up the ASIN it belongs to
+          // Amazon X00 sticker → a sticker matched before is saved on its item;
+          // otherwise look up the ASIN it belongs to
+          const bySticker =
+            result.codeType === 'fnsku'
+              ? items.find((item) => item.fnsku?.toUpperCase() === result.value)
+              : undefined;
+          if (bySticker) {
+            toast.success(`Found: ${bySticker.title || 'Untitled item'}`);
+            onMatchFound(bySticker);
+            onClose();
+            break;
+          }
           if (result.codeType === 'fnsku') {
             const lookup = await lookupProduct(result.value, 'fnsku');
             if (!lookup.asin) {

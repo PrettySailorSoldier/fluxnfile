@@ -4,8 +4,8 @@
  * Code types:
  *  - asin: Amazon ASIN (B0…) or ISBN-10 printed on Amazon labels / older books
  *  - upc:  UPC-A / UPC-E / EAN-13 / EAN-8 / ITF-14 product barcodes (incl. ISBN-13)
- *  - fnsku: Amazon fulfillment sticker (X00…). Not stored on items — the lookup
- *           resolves it to an ASIN.
+ *  - fnsku: Amazon fulfillment sticker (X00…). Saved on items (items.fnsku) once
+ *           matched; the lookup can also resolve it to an ASIN.
  */
 
 export type CodeType = 'asin' | 'upc' | 'fnsku';

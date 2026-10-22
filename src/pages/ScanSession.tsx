@@ -44,7 +44,7 @@ import { notifyTeammates } from '@/hooks/useTeam';
 import { useContinuousScanner } from '@/hooks/useContinuousScanner';
 import { QuickEditSheet } from '@/components/inventory/QuickEditSheet';
 import { LinkUpcSheet } from '@/components/inventory/LinkUpcSheet';
-import { classifyCode, type CodeType } from '@/lib/barcode';
+import { classifyCode, isFnsku, type CodeType } from '@/lib/barcode';
 import { isUnknownTitle, lookupProduct, type ProductLookup } from '@/lib/productLookup';
 import { jaccardSimilarity, normalizeTitle } from '@/utils/import-dedup-engine';
 import { playSynthesizedTone } from '@/utils/audioGenerator';
@@ -308,10 +308,16 @@ export default function ScanSession() {
     return null;
   };
 
+  /** Save any X00 sticker this scan resolved through, so the sticker alone finds the item next time. */
+  const saveStickers = async (itemIds: string[], codes: string[]) => {
+    for (const sticker of codes.filter(isFnsku)) await attachCode(itemIds, sticker, 'fnsku');
+  };
+
   /** Second barcode on a box we just handled: save it on that item instead of adding another. */
-  const linkSameBox = async (row: SessionRow, code: string, codeType: CodeType) => {
+  const linkSameBox = async (row: SessionRow, code: string, codeType: CodeType, altCodes: string[] = []) => {
     await attachCode(row.itemIds, code, codeType);
-    patchRow(row.key, (r) => ({ altCodes: [...new Set([...(r.altCodes ?? []), code])] }));
+    await saveStickers(row.itemIds, altCodes);
+    patchRow(row.key, (r) => ({ altCodes: [...new Set([...(r.altCodes ?? []), code, ...altCodes])] }));
     signal('existing', `Same box: ${row.title}`);
     invalidate();
   };
@@ -345,8 +351,10 @@ export default function ScanSession() {
         return;
       }
 
-      // Amazon FNSKU sticker (X00…) → look up the product's ASIN, then carry on as an ASIN scan
-      if (codeType === 'fnsku') {
+      // Amazon FNSKU sticker (X00…). A sticker matched before is saved on its item
+      // (items.fnsku) and is found directly; otherwise look up the product's ASIN
+      // and carry on as an ASIN scan.
+      if (codeType === 'fnsku' && (await findByCode(c.teamId, code, 'fnsku')).length === 0) {
         if (rowsRef.current.some((r) => r.kind === 'amazon_label' && r.code === code)) return;
         const lookup = await lookupProduct(code, 'fnsku');
         if (!lookup.asin && currentMode === 'add' && askFirst()) {
@@ -379,7 +387,7 @@ export default function ScanSession() {
         const same = findSessionProduct([code, ...altCodes], null);
         // A different barcode of something we handled a few seconds ago → same box
         if (same && same.row.code !== code && same.recent) {
-          await linkSameBox(same.row, code, codeType);
+          await linkSameBox(same.row, code, codeType, altCodes);
           return;
         }
         // Another unit of something added earlier this session
@@ -430,6 +438,7 @@ export default function ScanSession() {
       if (unconfirmed.length > 0) {
         let target = unconfirmed[0];
         const undo = await receiveItem(target, c);
+        await saveStickers([target.id], altCodes);
         // Imported without a name → fill it in from the barcode lookup
         if (isUnknownTitle(target.title)) {
           target = await fillFromLookup(target, preLookup ?? (await lookupProduct(code, codeType)));
@@ -449,6 +458,7 @@ export default function ScanSession() {
       // 2. Already in inventory — don't double count; offer +1 unit
       if (matches.length > 0) {
         const first = inStock[0] ?? matches[matches.length - 1];
+        await saveStickers([first.id], altCodes);
         pushRow({
           code, codeType, kind: 'existing', title: first.title || 'Untitled item',
           photo: first.photos?.[0] ?? null, itemIds: [], matchIds: (inStock.length ? inStock : matches).map((m) => m.id),
@@ -466,7 +476,7 @@ export default function ScanSession() {
       if (lookup.found) {
         const same = findSessionProduct(asin ? [asin] : [], lookup.title, codeType);
         if (same?.recent) {
-          await linkSameBox(same.row, code, codeType);
+          await linkSameBox(same.row, code, codeType, altCodes);
           return;
         }
       }
@@ -538,6 +548,7 @@ export default function ScanSession() {
 
       // 3e. Create a new, autofilled item
       const created = await createFromBarcode(code, codeType, c, lookup);
+      await saveStickers([created.id], altCodes);
       pushRow({
         code, codeType, kind: 'added', title: created.title || 'Untitled item',
         photo: created.photos?.[0] ?? null, itemIds: [created.id], price: created.target_price,

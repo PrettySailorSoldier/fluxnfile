@@ -122,6 +122,7 @@ export default function Inventory() {
         item.storage_location?.name?.toLowerCase().includes(q) ||
         item.upc?.includes(q.replace(/\D/g, '') || '\u0000') ||
         item.amazon_asin?.toLowerCase() === q ||
+        item.fnsku?.toLowerCase() === q ||
         String(item.tracking_number ?? '') === q.replace(/^#/, '');
 
       if (needsDetailsOnly && !needsDetails(item)) return false;

@@ -67,7 +67,7 @@ export function LinkUpcSheet({
     const words = q.split(/\s+/).filter(Boolean);
     const pool = words.length
       ? items.filter((item) => {
-          const hay = `${item.title ?? ''} ${item.amazon_asin ?? ''} ${item.amazon_order_number ?? ''}`.toLowerCase();
+          const hay = `${item.title ?? ''} ${item.amazon_asin ?? ''} ${item.fnsku ?? ''} ${item.amazon_order_number ?? ''}`.toLowerCase();
           return words.every((w) => hay.includes(w));
         })
       : items;
@@ -85,6 +85,10 @@ export function LinkUpcSheet({
       } else if (codeType === 'asin' && upc && !item.amazon_asin) {
         const { error } = await supabase.from('items').update({ amazon_asin: upc }).eq('id', item.id);
         if (error) throw error;
+      } else if (codeType === 'fnsku' && upc) {
+        // The X00 sticker — Amazon lookups aren't needed for this box again
+        const { error } = await supabase.from('items').update({ fnsku: upc }).eq('id', item.id);
+        if (error) console.warn('[LinkUpcSheet] sticker not saved:', error.message);
       }
       return item;
     },
