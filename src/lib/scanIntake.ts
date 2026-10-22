@@ -30,6 +30,12 @@ export interface IntakeDefaults {
   /** Suggested asking price as % of retail */
   resalePercent: number;
   roundTo99: boolean;
+  /**
+   * A barcode that matches nothing asks "which item is this?" (pick from the
+   * order list) instead of adding a new item — for sorting a backlog of boxes
+   * that are all already on the Order Sheet.
+   */
+  askWhenUnmatched?: boolean;
 }
 
 export interface IntakeContext {
@@ -249,39 +255,38 @@ export async function deleteItem(id: string): Promise<void> {
   if (error) throw error;
 }
 
+/** Rank order-list items by how closely their title matches a product name. Best first. */
+export function rankByTitle<T extends { title: string | null }>(
+  candidates: T[],
+  productTitle: string | null
+): { item: T; score: number }[] {
+  const target = productTitle && !isUnknownTitle(productTitle) ? normalizeTitle(productTitle) : null;
+  const scored = candidates.map((item) => ({
+    item,
+    score: target && item.title && !isUnknownTitle(item.title) ? jaccardSimilarity(target, normalizeTitle(item.title)) : 0,
+  }));
+  return scored.sort((a, b) => b.score - a.score);
+}
+
 /**
  * Product barcodes aren't on Amazon order exports, so an unknown UPC might
  * still be an Order Sheet item. If the looked-up title clearly matches one
  * unconfirmed item that has no barcode yet, return it.
+ * `candidates` is the already-loaded Order Sheet (thousands of rows for a
+ * Vine history — no need to download it again per scan).
  */
 export async function findOrderSheetNameMatch(
-  teamId: string,
-  lookupTitle: string | null
+  lookupTitle: string | null,
+  candidates: { id: string; title: string | null; upc: string | null; physical_status: string }[]
 ): Promise<MatchRow | null> {
   if (!lookupTitle) return null;
-  const { data } = await supabase
-    .from('items')
-    .select(MATCH_FIELDS)
-    .eq('team_id', teamId)
-    .eq('physical_status', 'unconfirmed')
-    .is('upc', null)
-    .limit(500);
-  const rows = (data ?? []) as unknown as MatchRow[];
-  const target = normalizeTitle(lookupTitle);
-  let best: MatchRow | null = null;
-  let bestScore = 0;
-  let secondScore = 0;
-  for (const row of rows) {
-    if (!row.title) continue;
-    const score = jaccardSimilarity(target, normalizeTitle(row.title));
-    if (score > bestScore) {
-      secondScore = bestScore;
-      bestScore = score;
-      best = row;
-    } else if (score > secondScore) {
-      secondScore = score;
-    }
-  }
+  const pool = candidates.filter((c) => c.physical_status === 'unconfirmed' && !c.upc);
+  const [best, second] = rankByTitle(pool, lookupTitle);
   // Confident and unambiguous only
-  return best && bestScore >= 0.5 && bestScore - secondScore >= 0.15 ? best : null;
+  if (!best || best.score < 0.5 || best.score - (second?.score ?? 0) < 0.15) return null;
+  const { data, error } = await supabase.from('items').select(MATCH_FIELDS).eq('id', best.item.id).single();
+  if (error) return null;
+  const row = data as unknown as MatchRow;
+  // Someone may have received it since the list loaded
+  return row.physical_status === 'unconfirmed' ? row : null;
 }

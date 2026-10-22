@@ -47,6 +47,9 @@ function formatDate(dateStr: string | null | undefined) {
   });
 }
 
+/** Order Sheet cards rendered per page */
+const PAGE = 100;
+
 export default function OrderSheet() {
   const { team } = useAuth();
   const navigate = useNavigate();
@@ -74,6 +77,10 @@ export default function OrderSheet() {
     if (target) setConfirmItem(target);
     setSearchParams({}, { replace: true });
   }, [searchParams, items, setSearchParams]);
+
+  // Vine histories run to thousands of items — render a page at a time
+  const [shownCount, setShownCount] = useState(PAGE);
+  useEffect(() => setShownCount(PAGE), [search]);
 
   const filtered = useMemo(() => {
     if (!search) return items;
@@ -269,16 +276,23 @@ export default function OrderSheet() {
             </CardContent>
           </Card>
         ) : (
-          filtered.map((item) => (
-            <OrderItemCard
-              key={item.id}
-              item={item}
-              onConfirm={() => {
-                setConfirmSource('list');
-                setConfirmItem(item);
-              }}
-            />
-          ))
+          <>
+            {filtered.slice(0, shownCount).map((item) => (
+              <OrderItemCard
+                key={item.id}
+                item={item}
+                onConfirm={() => {
+                  setConfirmSource('list');
+                  setConfirmItem(item);
+                }}
+              />
+            ))}
+            {filtered.length > shownCount && (
+              <Button variant="outline" className="w-full" onClick={() => setShownCount((n) => n + PAGE)}>
+                Show more ({filtered.length - shownCount} left)
+              </Button>
+            )}
+          </>
         )}
       </div>
 

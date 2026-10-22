@@ -46,7 +46,7 @@ Other scanner fixes:
 2. Run `supabase functions deploy lookup-upc fetch-amazon-prices`.
 3. Run `supabase secrets set OPENWEBNINJA_API_KEY=...` (Real-Time Amazon Data). Amazon search and X00 stickers need it.
 
-Each unknown barcode costs 2 Amazon calls (search + details) once. After that the result is cached.
+Each unknown barcode costs 1 Amazon search call, once. After that the result is cached.
 
 ## Importing Vine orders so boxes match (Oct 22)
 
@@ -57,6 +57,20 @@ A scanned box matches an Order Sheet item by **ASIN**. Lattice and the Vine Item
 - **Scanning:** when a scan receives an unnamed order, it fills in the title, photos, brand and retail price from the barcode lookup.
 
 Suggested order: import the Lattice CSV, then the Itemized Report for each year.
+
+## Sorting a backlog of boxes (Oct 22)
+
+For a pile of untracked boxes whose orders are already imported (Lattice + Itemized Reports):
+
+1. Inventory → **Scan** → **Add** mode. Pick the **location** you're putting boxes in (e.g. "Garage shelf A") and Sell/Keep.
+2. Scan each box (UPC/EAN, or the Amazon X00 sticker).
+   - **Matched** (by ASIN via Amazon, by a barcode linked earlier, or by a confident name match): the order is marked received at that location. Unnamed orders get their name and photo filled in.
+   - **Not matched** → **Which item is this?** opens. It's ranked by the looked-up product name. You can search with words from the box or an ASIN; each row shows the order date and a link to the Amazon page (useful for unnamed orders). Tap the item. The barcode is saved, so the next identical box matches by itself. "Not in my list — add as new item" is there for strays.
+3. When you're done, whatever is still on the **Order Sheet** wasn't found.
+
+You can turn this off in the scan session's ⚙ settings: "When a box doesn't match, ask which item it is". With it off, unmatched barcodes become new items as before.
+
+The Order Sheet and Inventory lists now load all items; Supabase caps one request at 1,000 rows, so they page. The Order Sheet shows 100 at a time.
 
 ## Quick test
 

@@ -282,7 +282,9 @@ async function fromAmazonDetails(asin: string): Promise<SourceResult> {
 /**
  * Search Amazon for a barcode or FNSKU and take the top product. Amazon indexes
  * UPC/EAN codes (and usually FNSKUs), so this finds products the free barcode
- * databases have never seen. Then fetch full details for that ASIN.
+ * databases have never seen. One request: the search row has the title, photo
+ * and price, and the ASIN is what matters for matching orders — skipping the
+ * details call halves the cost of sorting a pile of boxes.
  */
 async function fromAmazonSearch(query: string): Promise<SourceResult> {
   const apiKey = Deno.env.get('OPENWEBNINJA_API_KEY');
@@ -299,13 +301,9 @@ async function fromAmazonSearch(query: string): Promise<SourceResult> {
     const top = products.find((p: { asin?: string; product_title?: string }) => p?.asin && p?.product_title);
     if (!top) return { hit: false };
 
-    const details = await fromAmazonDetails(top.asin);
-    if (details.hit) return { hit: true, data: { ...details.data, fuzzy: true, source: 'amazon-search' } };
-
-    // Details call failed — the search row still has the basics
     const price = num(top.product_price);
     const original = num(top.product_original_price);
-    const img = typeof top.product_photo === 'string' ? top.product_photo : null;
+    const img = typeof top.product_photo === 'string' && top.product_photo.startsWith('http') ? top.product_photo : null;
     return {
       hit: true,
       data: {
