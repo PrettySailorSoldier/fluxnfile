@@ -70,37 +70,47 @@ export function LatticeImportDialog({
     return matchesFilter && matchesSearch;
   });
 
+  /** One or several Lattice exports at once (e.g. "1-500" and "501-1000") — merged by ASIN. */
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
 
     setIsProcessing(true);
 
     try {
-      const text = await file.text();
+      const byAsin = new Map<string, LatticeItem>();
+      const rejected: string[] = [];
 
-      if (!isLatticeCSV(text)) {
+      for (const file of files) {
+        const text = await file.text();
+        if (!isLatticeCSV(text)) {
+          rejected.push(file.name);
+          continue;
+        }
+        for (const item of parseLatticeCSV(text).items) {
+          const prev = byAsin.get(item.asin);
+          // Same ASIN in two exports: keep the row that has the product name
+          if (!prev || (!prev.description && item.description)) byAsin.set(item.asin, item);
+        }
+      }
+
+      if (rejected.length > 0) {
         toast.error(
-          "This doesn't look like a Lattice export. Export from Lattice using the CSV option."
+          `${rejected.join(', ')} ${rejected.length === 1 ? "doesn't" : "don't"} look like a Lattice export — skipped.`
         );
+      }
+      const items = [...byAsin.values()];
+      if (items.length === 0) {
+        if (rejected.length < files.length) toast.error('No items found in this CSV.');
         return;
       }
 
-      const result = parseLatticeCSV(text);
-
-      if (result.items.length === 0) {
-        toast.error('No items found in this CSV.');
-        return;
-      }
-
-      setAllItems(result.items);
-      setImportStats({
-        alreadyReviewed: result.alreadyReviewed,
-        pendingReview: result.pendingReview,
-      });
+      const alreadyReviewed = items.filter((i) => i.reviewStatus === 'Approved').length;
+      setAllItems(items);
+      setImportStats({ alreadyReviewed, pendingReview: items.length - alreadyReviewed });
       setStep('preview');
       toast.success(
-        `Found ${result.totalFound} Vine items (${result.alreadyReviewed} reviewed, ${result.pendingReview} pending)`
+        `Found ${items.length} Vine items (${alreadyReviewed} reviewed, ${items.length - alreadyReviewed} pending)`
       );
     } catch (err) {
       toast.error('Failed to read CSV. Please try again.');
@@ -270,14 +280,15 @@ export function LatticeImportDialog({
               >
                 <Upload className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
                 <p className="font-medium text-foreground mb-1">
-                  Click to upload Lattice CSV
+                  Click to upload Lattice CSV files
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  Export from Lattice → top right menu → Export CSV
+                  Select one or several exports at once. Export from Lattice → top right menu → Export CSV
                 </p>
                 <input
                   ref={fileInputRef}
                   type="file"
+                  multiple
                   accept=".csv"
                   className="hidden"
                   onChange={handleFileUpload}

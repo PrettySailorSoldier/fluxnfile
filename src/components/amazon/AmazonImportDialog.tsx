@@ -773,18 +773,38 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     }
   }
 
+  /** Several order-history exports at once (e.g. one per year) — their rows are combined. */
+  async function handleSpreadsheetBatch(files: File[]) {
+    try {
+      const rows: Record<string, string>[] = [];
+      for (const file of files) rows.push(...(await parseFile(file)));
+      processRowsAsCsv(rows);
+      if (rows.length > 0) toast.success(`Read ${rows.length} rows from ${files.length} files`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Could not read file.';
+      setCsvFileError(msg);
+      toast.error(msg);
+    }
+  }
+
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>, type: 'csv' | 'html') {
-    const file = e.target.files?.[0];
-    if (file) handleFileSelect(file, type);
+    const files = Array.from(e.target.files ?? []);
+    if (type === 'csv' && files.length > 1) void handleSpreadsheetBatch(files);
+    else if (files[0]) handleFileSelect(files[0], type);
     e.target.value = '';
   }
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
     setIsDragOver(false);
-    const file = e.dataTransfer.files?.[0];
+    const dropped = Array.from(e.dataTransfer.files ?? []);
+    const file = dropped[0];
     if (!file) return;
     const isSpreadsheet = /\.(xlsx|xls|csv)$/i.test(file.name) || file.type === 'text/csv';
+    if (importMethod === 'csv' && dropped.length > 1) {
+      void handleSpreadsheetBatch(dropped.filter((f) => /\.(xlsx|xls|csv)$/i.test(f.name)));
+      return;
+    }
     const isHtml = file.name.endsWith('.html') || file.name.endsWith('.htm') || file.type === 'text/html';
     if (importMethod === 'csv' && isSpreadsheet) {
       handleFileSelect(file, 'csv');
@@ -1109,6 +1129,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                 ref={csvInputRef}
                 type="file"
                 accept=".xlsx,.xls,.csv"
+                multiple
                 className="hidden"
                 onChange={(e) => handleInputChange(e, 'csv')}
               />

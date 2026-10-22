@@ -33,7 +33,7 @@ Boxes usually carry three kinds of barcodes. Here is how each is handled now:
 | Barcode | Example | What happens |
 |---|---|---|
 | Product barcode (UPC / EAN-13) | `4262392441427` | Lookup order: UPCitemdb → Open Food/Products/Beauty Facts → **Amazon search** (finds non-US EANs the free databases don't know). If Amazon returns an ASIN that's on the Order Sheet, the item is **received**. |
-| Amazon sticker (FNSKU) | `X0051UTBFP` | Was rejected as "not a product code". It's now resolved to its ASIN through Amazon search, then handled like an ASIN scan (receives orders, adds new items). |
+| Amazon sticker (FNSKU) | `X0051UTBFP` | Was rejected as "not a product code". The app now reads the product name printed on the sticker and matches it to an order (see "Reading X00 stickers" below). Amazon search doesn't index X00 codes, so they aren't sent to it. |
 | Shipping labels | `1Z…`, `420` + ZIP, bad check digit | Rejected. A shipping label is listed only once, however often the camera passes over it. |
 
 Other scanner fixes:
@@ -57,6 +57,23 @@ A scanned box matches an Order Sheet item by **ASIN**. Lattice and the Vine Item
 - **Scanning:** when a scan receives an unnamed order, it fills in the title, photos, brand and retail price from the barcode lookup.
 
 Suggested order: import the Lattice CSV, then the Itemized Report for each year.
+
+## Reading X00 stickers + batch imports (Oct 22)
+
+**Why reading the sticker:** an X00 code belongs to the seller's warehouse stock. With the API key set, live tests returned "not found" for X00 stickers. Every sticker does print a short product name ("Golf Target Clot", "Tankless Water Heater ...Protection (Gray)"), so the scan session reads that instead.
+
+- When an X00 is scanned, `src/lib/stickerOcr.ts` copies the camera frame. Using where ZXing found the barcode, it turns the label upright and reads two areas with Tesseract (loaded on demand from the CDN, about 7 MB once): the strip under the barcode, and the whole frame.
+- `rankBySticker` / `findOrderSheetStickerMatch` in `src/lib/scanIntake.ts` match those words against order titles. Cut-off words count ("clot" → "cloth"), and OCR slips of one or two letters count ("protegtio" → "protection").
+- **One clear winner** (at least 3 words, half the sticker matched, ahead of the runner-up): the order is received automatically. The row says "Read “…” on the sticker" and can be undone.
+- **Otherwise:** "Which item is this?" opens with the closest matches on top and shows what the sticker says. Three tankless water heaters on the list is a real case of this.
+- **Either way:** the sticker is saved on the item (`items.fnsku`) once matched.
+- **Tested** in headless Chromium on two real sticker photos at 1280, 960 and 720 px. The golf sticker matched its order outright at every size. The heater tied across the three heater orders, as it should. Each read took 0.3–1.7 s on desktop; expect a few seconds on a phone.
+- **`lookup-upc`** no longer spends an Amazon lookup on X00 codes.
+
+**Batch imports:** the Vine Itemized Report, Lattice and Amazon order-history importers take several files at once.
+- **Vine Itemized Reports**, one per year: merged, with the same order across two years counted once.
+- **Lattice exports:** merged by ASIN, keeping the row that has a name.
+- **Order-history spreadsheets:** rows combined.
 
 ## Amazon X00 stickers are remembered (Oct 22)
 

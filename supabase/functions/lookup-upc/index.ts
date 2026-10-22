@@ -14,7 +14,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
  *   ISBN  → Open Library → UPCitemdb
  *   UPC   → UPCitemdb → Open Food Facts → Open Products Facts → Amazon search
  *   ASIN  → Amazon product details
- *   FNSKU → Amazon search (X00… stickers) → product details; returns the ASIN
+ *   FNSKU → nothing: X00 stickers are seller-specific and Amazon search doesn't
+ *           index them (tested), so no lookup is spent. The app reads the
+ *           product name printed on the sticker instead.
  *   (Amazon sources need OPENWEBNINJA_API_KEY)
  *
  * Secrets (all optional):
@@ -280,8 +282,8 @@ async function fromAmazonDetails(asin: string): Promise<SourceResult> {
 }
 
 /**
- * Search Amazon for a barcode or FNSKU and take the top product. Amazon indexes
- * UPC/EAN codes (and usually FNSKUs), so this finds products the free barcode
+ * Search Amazon for a barcode and take the top product. Amazon indexes many
+ * UPC/EAN codes, so this finds products the free barcode
  * databases have never seen. One request: the search row has the title, photo
  * and price, and the ASIN is what matters for matching orders — skipping the
  * details call halves the cost of sorting a pile of boxes.
@@ -368,6 +370,14 @@ async function lookupOne(
   }
   const { codeType, digits, key } = parsed;
 
+  // X00 stickers: an Amazon search finds nothing for them, so don't spend a lookup
+  if (codeType === 'fnsku') {
+    return {
+      result: emptyResult(digits, codeType, { error: 'Amazon X00 stickers can’t be looked up — pick the item from your list' }),
+      calledExternal: false,
+    };
+  }
+
   // 0. Cache
   if (db) {
     const { data: row } = await db.from('product_catalog').select('*').eq('code', key).maybeSingle();
@@ -383,17 +393,15 @@ async function lookupOne(
   const chain: Array<() => Promise<SourceResult>> =
     codeType === 'asin'
       ? [() => fromAmazonDetails(digits)]
-      : codeType === 'fnsku'
-        ? [() => fromAmazonSearch(digits)]
-        : codeType === 'isbn'
-          ? [() => fromOpenLibrary(digits), () => fromUpcItemDb(digits)]
-          : [
-              () => fromUpcItemDb(digits),
-              () => fromOpenFacts(digits, 'world.openfoodfacts.org', 'openfoodfacts'),
-              () => fromOpenFacts(digits, 'world.openproductsfacts.org', 'openproductsfacts'),
-              () => fromOpenFacts(digits, 'world.openbeautyfacts.org', 'openbeautyfacts'),
-              () => fromAmazonSearch(digits),
-            ];
+      : codeType === 'isbn'
+        ? [() => fromOpenLibrary(digits), () => fromUpcItemDb(digits)]
+        : [
+            () => fromUpcItemDb(digits),
+            () => fromOpenFacts(digits, 'world.openfoodfacts.org', 'openfoodfacts'),
+            () => fromOpenFacts(digits, 'world.openproductsfacts.org', 'openproductsfacts'),
+            () => fromOpenFacts(digits, 'world.openbeautyfacts.org', 'openbeautyfacts'),
+            () => fromAmazonSearch(digits),
+          ];
 
   let hit: (Partial<ProductLookup> & { raw?: unknown }) | null = null;
   let transient = false;
