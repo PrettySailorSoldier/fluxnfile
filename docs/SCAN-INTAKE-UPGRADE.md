@@ -46,7 +46,35 @@ Other scanner fixes:
 2. Run `supabase functions deploy lookup-upc fetch-amazon-prices`.
 3. Run `supabase secrets set OPENWEBNINJA_API_KEY=...` (Real-Time Amazon Data). Amazon search and X00 stickers need it.
 
-Each unknown barcode costs 2 Amazon calls (search + details) once. After that the result is cached.
+Each unknown barcode costs 1 Amazon search call, once. After that the result is cached.
+
+## Importing Vine orders so boxes match (Oct 22)
+
+A scanned box matches an Order Sheet item by **ASIN**. Lattice and the Vine Itemized Report both carry ASINs:
+
+- **Lattice CSV:** rows with a blank Description were skipped. In a real export that was 2,163 of 3,142 rows, mostly the newest orders. They're now imported as `Unknown item (ASIN)`. Re-importing fills in the name once Lattice has it. The duplicate check now pages past 1,000 rows, inserts go in chunks of 500, and updates run 25 at a time.
+- **Vine Itemized Report (.xlsx):** fills in the names of items imported without one. It looks up existing ASINs 200 at a time; a single request listing every ASIN was too long and failed silently, which would have imported duplicates.
+- **Scanning:** when a scan receives an unnamed order, it fills in the title, photos, brand and retail price from the barcode lookup.
+
+Suggested order: import the Lattice CSV, then the Itemized Report for each year.
+
+## Imports stay out of Inventory
+
+Imported orders (Lattice, Vine Itemized Report, Amazon order history) are created as `physical_status = 'unconfirmed'` and only show on the **Order Sheet**. Inventory, Dashboard, Analytics, Facebook tools, Sales Check and the Needs details queue only read found items (`useItems` filters out `unconfirmed`). An item moves to Inventory only when a box is scanned (or confirmed by hand) — that sets it to Sell or Keep at a location. The one import that can skip this is **Import → Any list**, which asks you where its rows should go.
+
+## Sorting a backlog of boxes (Oct 22)
+
+For a pile of untracked boxes whose orders are already imported (Lattice + Itemized Reports):
+
+1. Inventory → **Scan** → **Add** mode. Pick the **location** you're putting boxes in (e.g. "Garage shelf A") and Sell/Keep.
+2. Scan each box (UPC/EAN, or the Amazon X00 sticker).
+   - **Matched** (by ASIN via Amazon, by a barcode linked earlier, or by a confident name match): the order is marked received at that location. Unnamed orders get their name and photo filled in.
+   - **Not matched** → **Which item is this?** opens. It's ranked by the looked-up product name. You can search with words from the box or an ASIN; each row shows the order date and a link to the Amazon page (useful for unnamed orders). Tap the item. The barcode is saved, so the next identical box matches by itself. "Not in my list — add as new item" is there for strays.
+3. When you're done, whatever is still on the **Order Sheet** wasn't found.
+
+You can turn this off in the scan session's ⚙ settings: "When a box doesn't match, ask which item it is". With it off, unmatched barcodes become new items as before.
+
+The Order Sheet and Inventory lists now load all items; Supabase caps one request at 1,000 rows, so they page. The Order Sheet shows 100 at a time.
 
 ## Quick test
 

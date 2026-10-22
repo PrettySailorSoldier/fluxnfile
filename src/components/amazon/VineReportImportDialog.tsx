@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
+import { isUnknownTitle } from '@/lib/productLookup';
 import { toast } from 'sonner';
 import {
   FileSpreadsheet,
@@ -117,23 +118,27 @@ export function VineReportImportDialog({
 
       const asins = selected.map(i => i.asin).filter(Boolean);
 
-      // Fetch existing items by ASIN — cast since generated types lag migration
-      const { data: existingRows } = await supabase
-        .from('items')
-        .select('id, amazon_asin, amazon_order_number, original_cost')
-        .eq('team_id', team.id)
-        .in('amazon_asin', asins) as {
-          data: Array<{
-            id: string;
-            amazon_asin: string | null;
-            amazon_order_number: string | null;
-            original_cost: number | null;
-          }> | null;
-        };
+      // Fetch existing items by ASIN, 200 at a time — one request with every
+      // ASIN of a yearly report is too long for the URL and caps at 1,000 rows
+      type ExistingRow = {
+        id: string;
+        amazon_asin: string | null;
+        amazon_order_number: string | null;
+        original_cost: number | null;
+        title: string | null;
+      };
+      const existingRows: ExistingRow[] = [];
+      for (let i = 0; i < asins.length; i += 200) {
+        const { data, error } = await supabase
+          .from('items')
+          .select('id, amazon_asin, amazon_order_number, original_cost, title')
+          .eq('team_id', team.id)
+          .in('amazon_asin', asins.slice(i, i + 200));
+        if (error) throw error;
+        existingRows.push(...((data ?? []) as ExistingRow[]));
+      }
 
-      const existingMap = new Map(
-        existingRows?.map(e => [e.amazon_asin, e]) ?? []
-      );
+      const existingMap = new Map(existingRows.map(e => [e.amazon_asin, e]));
 
       const toInsert = selected.filter(item => !existingMap.has(item.asin));
       const toMerge = selected.filter(item => existingMap.has(item.asin));
@@ -157,8 +162,10 @@ export function VineReportImportDialog({
           photos: [] as string[],
         }));
 
-        const { error } = await supabase.from('items').insert(itemsToInsert);
-        if (error) throw error;
+        for (let i = 0; i < itemsToInsert.length; i += 500) {
+          const { error } = await supabase.from('items').insert(itemsToInsert.slice(i, i + 500));
+          if (error) throw error;
+        }
       }
 
       // MERGE missing fields into existing items — never overwrites good data
@@ -170,6 +177,11 @@ export function VineReportImportDialog({
             if (!existing) return null;
 
             const updates: TablesUpdate<'items'> = {};
+
+            // Lattice exports leave many names blank — this report has them
+            if (isUnknownTitle(existing.title) && item.productName) {
+              updates.title = item.productName.slice(0, 255);
+            }
 
             if (!existing.amazon_order_number && item.orderNumber) {
               updates.amazon_order_number = item.orderNumber;
@@ -185,14 +197,15 @@ export function VineReportImportDialog({
 
             if (Object.keys(updates).length === 0) return null;
 
-            return supabase.from('items').update(updates).eq('id', existing.id);
+            return () => supabase.from('items').update(updates).eq('id', existing.id);
           })
           .filter((op): op is NonNullable<typeof op> => op !== null);
 
-        if (mergeOps.length > 0) {
-          await Promise.all(mergeOps);
-          mergedCount = mergeOps.length;
+        // 25 at a time — thousands of parallel requests get rate-limited
+        for (let i = 0; i < mergeOps.length; i += 25) {
+          await Promise.all(mergeOps.slice(i, i + 25).map(run => run()));
         }
+        mergedCount = mergeOps.length;
       }
 
       return { inserted: toInsert.length, merged: mergedCount, skipped: toMerge.length };
@@ -201,7 +214,7 @@ export function VineReportImportDialog({
       queryClient.invalidateQueries({ queryKey: ['items'] });
       const parts: string[] = [];
       if (inserted > 0) parts.push(`${inserted} new items imported`);
-      if (merged > 0) parts.push(`${merged} items updated with order numbers/values`);
+      if (merged > 0) parts.push(`${merged} items updated (names, order numbers, values)`);
       if (skipped > 0 && merged === 0) parts.push(`${skipped} already up to date`);
       toast.success(parts.join(' · ') || 'Import complete!');
       setStep('done');
