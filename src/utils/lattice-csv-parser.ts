@@ -77,7 +77,9 @@ export function parseLatticeCSV(csvText: string): LatticeParseResult {
       const asin = (row['ASIN'] || '').trim();
       const description = (row['Description'] || '').trim();
 
-      if (!asin || !description) continue;
+      // Recent orders often export without a Description — keep them; the ASIN
+      // is what a scanned box matches on, and the name gets filled in later.
+      if (!asin) continue;
 
       const etv = parseDollar(row['ETV']);
       const fmv = parseDollar(row['FMV']);

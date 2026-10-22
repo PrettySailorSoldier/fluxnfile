@@ -48,6 +48,16 @@ Other scanner fixes:
 
 Each unknown barcode costs 2 Amazon calls (search + details) once. After that the result is cached.
 
+## Importing Vine orders so boxes match (Oct 22)
+
+A scanned box matches an Order Sheet item by **ASIN**. Lattice and the Vine Itemized Report both carry ASINs:
+
+- **Lattice CSV:** rows with a blank Description were skipped. In a real export that was 2,163 of 3,142 rows, mostly the newest orders. They're now imported as `Unknown item (ASIN)`. Re-importing fills in the name once Lattice has it. The duplicate check now pages past 1,000 rows, inserts go in chunks of 500, and updates run 25 at a time.
+- **Vine Itemized Report (.xlsx):** fills in the names of items imported without one. It looks up existing ASINs 200 at a time; a single request listing every ASIN was too long and failed silently, which would have imported duplicates.
+- **Scanning:** when a scan receives an unnamed order, it fills in the title, photos, brand and retail price from the barcode lookup.
+
+Suggested order: import the Lattice CSV, then the Itemized Report for each year.
+
 ## Quick test
 
 - Inventory → **Scan** → type `012345678905` + Enter → a new item appears, autofilled if the lookup finds it. Type it again → the row shows ×2.

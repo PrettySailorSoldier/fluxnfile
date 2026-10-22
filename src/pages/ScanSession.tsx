@@ -53,6 +53,7 @@ import {
   cloneUnit,
   createFromBarcode,
   deleteItem,
+  fillFromLookup,
   findByCode,
   findOrderSheetNameMatch,
   receiveItem,
@@ -387,8 +388,12 @@ export default function ScanSession() {
       // ── Add & receive mode ──
       // 1. Receive the oldest unconfirmed unit (repeat scans walk through identical units)
       if (unconfirmed.length > 0) {
-        const target = unconfirmed[0];
+        let target = unconfirmed[0];
         const undo = await receiveItem(target, c);
+        // Imported without a name → fill it in from the barcode lookup
+        if (isUnknownTitle(target.title)) {
+          target = await fillFromLookup(target, preLookup ?? (await lookupProduct(code, codeType)));
+        }
         pushRow({
           code, codeType, kind: 'received', title: target.title || 'Untitled item',
           photo: target.photos?.[0] ?? null, itemIds: [target.id], undo, altCodes,
@@ -431,7 +436,7 @@ export default function ScanSession() {
         const byAsin = await findByCode(c.teamId, asin, 'asin');
         const waiting = byAsin.filter((m) => m.physical_status === 'unconfirmed');
         if (waiting.length > 0) {
-          const target = waiting[0];
+          const target = await fillFromLookup(waiting[0], lookup);
           const undo = await receiveItem(target, c, target.upc ? {} : { upc: code });
           pushRow({
             code, codeType, kind: 'received', title: target.title || lookup.title || 'Item',

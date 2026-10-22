@@ -12,6 +12,7 @@ import type { TablesInsert } from '@/integrations/supabase/types';
 import type { Category, ItemCondition } from '@/hooks/useInventory';
 import { upcVariants, type CodeType } from '@/lib/barcode';
 import {
+  isUnknownTitle,
   lookupProduct,
   matchCategory,
   suggestPrice,
@@ -101,6 +102,33 @@ export async function receiveItem(
     .eq('id', row.id);
   if (error) throw error;
   return undo;
+}
+
+/**
+ * Orders imported without a name (Lattice exports often leave Description
+ * blank) get their title, photos and brand from the scan's product lookup.
+ * Returns the row with what changed, so the session list can show it.
+ */
+export async function fillFromLookup(row: MatchRow, lookup: ProductLookup | null): Promise<MatchRow> {
+  if (!lookup?.found || !lookup.title || !isUnknownTitle(row.title)) return row;
+  const photos = row.photos?.length
+    ? row.photos
+    : lookup.images.length
+      ? lookup.images.slice(0, 3)
+      : lookup.imageUrl
+        ? [lookup.imageUrl]
+        : [];
+  const { error } = await supabase
+    .from('items')
+    .update({
+      title: lookup.title,
+      photos,
+      ...(lookup.brand ? { brand: lookup.brand } : {}),
+      ...(lookup.retailPrice ? { retail_price: lookup.retailPrice } : {}),
+    })
+    .eq('id', row.id);
+  if (error) throw error;
+  return { ...row, title: lookup.title, photos };
 }
 
 export async function undoReceive(id: string, undo: ReceiveUndo): Promise<void> {

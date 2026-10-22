@@ -24,6 +24,7 @@ import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { Upload, CheckCircle2, Clock } from 'lucide-react';
 import { useWorkflowSettings } from '@/hooks/useUserPreferences';
+import { isUnknownTitle, unknownItemTitle } from '@/lib/productLookup';
 
 interface LatticeImportDialogProps {
   open: boolean;
@@ -134,14 +135,27 @@ export function LatticeImportDialog({
       if (selected.length === 0) throw new Error('No items selected');
 
       // Fetch existing items by amazon_asin to detect duplicates
-      const { data: existing } = await supabase
-        .from('items')
-        .select('amazon_asin')
-        .eq('team_id', team.id)
-        .not('amazon_asin', 'is', null);
+      // (paged — a single select stops at 1,000 rows)
+      const existing: { amazon_asin: string | null; title: string | null }[] = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase
+          .from('items')
+          .select('amazon_asin, title')
+          .eq('team_id', team.id)
+          .not('amazon_asin', 'is', null)
+          .order('id')
+          .range(from, from + 999);
+        if (error) throw error;
+        existing.push(...(data ?? []));
+        if (!data || data.length < 1000) break;
+      }
 
       const existingAsins = new Set(
-        existing?.map(e => e.amazon_asin).filter(Boolean) || []
+        existing.map(e => e.amazon_asin).filter(Boolean)
+      );
+      // Imported earlier without a name — a newer export may have it now
+      const untitledAsins = new Set(
+        existing.filter(e => isUnknownTitle(e.title)).map(e => e.amazon_asin)
       );
 
       const toInsert = selected.filter(item => !existingAsins.has(item.asin));
@@ -151,7 +165,7 @@ export function LatticeImportDialog({
         const itemsToInsert = toInsert.map(item => ({
           team_id: team.id,
           created_by: user.id,
-          title: item.description.slice(0, 255),
+          title: item.description ? item.description.slice(0, 255) : unknownItemTitle(item.asin),
           original_cost: item.valueToUse,
           target_price: calcTargetPrice(item.valueToUse),
           amazon_asin: item.asin,
@@ -167,28 +181,36 @@ export function LatticeImportDialog({
           photos: [] as string[],
         }));
 
-        const { error } = await supabase.from('items').insert(itemsToInsert);
-        if (error) throw error;
+        // Big exports (3,000+ rows) go in chunks so one request doesn't time out
+        for (let i = 0; i < itemsToInsert.length; i += 500) {
+          const { error } = await supabase.from('items').insert(itemsToInsert.slice(i, i + 500));
+          if (error) throw error;
+        }
       }
 
       if (toUpdate.length > 0) {
-        await Promise.all(
-          toUpdate.map(item => {
-            const update: TablesUpdate<'items'> = {};
-            if (item.reviewStatus === 'Approved') {
-              update.amazon_review_status = 'reviewed_grant';
-            }
-            if (item.deliveryStatus) {
-              update.delivery_status = item.deliveryStatus;
-            }
-            if (Object.keys(update).length === 0) return Promise.resolve({ error: null });
-            return supabase
-              .from('items')
-              .update(update)
-              .eq('team_id', team.id)
-              .eq('amazon_asin', item.asin);
-          })
-        );
+        const updates = toUpdate.map(item => () => {
+          const update: TablesUpdate<'items'> = {};
+          if (item.reviewStatus === 'Approved') {
+            update.amazon_review_status = 'reviewed_grant';
+          }
+          if (item.deliveryStatus) {
+            update.delivery_status = item.deliveryStatus;
+          }
+          if (item.description && untitledAsins.has(item.asin)) {
+            update.title = item.description.slice(0, 255);
+          }
+          if (Object.keys(update).length === 0) return Promise.resolve({ error: null });
+          return supabase
+            .from('items')
+            .update(update)
+            .eq('team_id', team.id)
+            .eq('amazon_asin', item.asin);
+        });
+        // 25 at a time — thousands of parallel requests get rate-limited
+        for (let k = 0; k < updates.length; k += 25) {
+          await Promise.all(updates.slice(k, k + 25).map(run => run()));
+        }
       }
 
       return { inserted: toInsert.length, updated: toUpdate.length };
@@ -349,7 +371,9 @@ export function LatticeImportDialog({
                     />
                     <div className="flex-1 min-w-0 space-y-1">
                       <p className="text-sm font-medium line-clamp-2">
-                        {item.description}
+                        {item.description || (
+                          <span className="text-muted-foreground italic">No name in export — scan the box to fill it in</span>
+                        )}
                       </p>
                       <div className="flex items-center gap-2 flex-wrap">
                         <Badge variant="outline" className="text-xs font-mono">
