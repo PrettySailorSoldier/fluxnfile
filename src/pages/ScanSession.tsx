@@ -45,9 +45,11 @@ import { useContinuousScanner } from '@/hooks/useContinuousScanner';
 import { QuickEditSheet } from '@/components/inventory/QuickEditSheet';
 import { LinkUpcSheet } from '@/components/inventory/LinkUpcSheet';
 import { classifyCode, type CodeType } from '@/lib/barcode';
-import { lookupProduct } from '@/lib/productLookup';
+import { isUnknownTitle, lookupProduct, type ProductLookup } from '@/lib/productLookup';
+import { jaccardSimilarity, normalizeTitle } from '@/utils/import-dedup-engine';
 import { playSynthesizedTone } from '@/utils/audioGenerator';
 import {
+  attachCode,
   cloneUnit,
   createFromBarcode,
   deleteItem,
@@ -72,6 +74,7 @@ type RowKind =
   | 'on_order' // find mode: on the order sheet, not received
   | 'not_found' // find mode: not in inventory
   | 'unrecognized' // barcode that isn't a product code
+  | 'amazon_label' // FNSKU sticker that couldn't be resolved to a product
   | 'error';
 
 interface SessionRow {
@@ -92,8 +95,15 @@ interface SessionRow {
   inStock?: number;
   autofilled?: boolean;
   matchedByName?: boolean;
+  /** Product came from an Amazon keyword search — worth a quick check */
+  fuzzy?: boolean;
+  /** Other barcodes of the same product seen this session (ASIN, FNSKU, UPC…) */
+  altCodes?: string[];
   message?: string;
 }
+
+/** A second, different barcode of the same product within this window = the same box. */
+const SAME_BOX_MS = 10_000;
 
 const DEFAULTS_KEY = 'scan-session-defaults';
 const ROWS_KEY = 'scan-session-rows';
@@ -134,6 +144,7 @@ const KIND_STYLE: Record<RowKind, { label: string; className: string }> = {
   on_order: { label: 'On order sheet', className: 'bg-blue-500/15 text-blue-600 border-blue-500/30' },
   not_found: { label: 'Not in inventory', className: 'bg-muted text-muted-foreground border-border' },
   unrecognized: { label: 'Not a product code', className: 'bg-red-500/10 text-red-500 border-red-500/30' },
+  amazon_label: { label: 'Amazon sticker', className: 'bg-amber-500/15 text-amber-600 border-amber-500/30' },
   error: { label: 'Error', className: 'bg-red-500/10 text-red-500 border-red-500/30' },
 };
 
@@ -264,18 +275,80 @@ export default function ScanSession() {
 
   // ── Core: handle one scan ──────────────────────────────────────────────────
 
+  /**
+   * A row from this session for the same product: shares a barcode (incl. the
+   * ASIN/FNSKU behind it) or, when `title` is given, came from the other kind
+   * of barcode (UPC vs Amazon) moments ago under the same name. Newest first.
+   */
+  const findSessionProduct = (codes: string[], title: string | null, codeType?: CodeType) => {
+    const now = Date.now();
+    const wanted = codes.filter(Boolean);
+    const target = title && !isUnknownTitle(title) ? normalizeTitle(title) : null;
+    for (const r of rowsRef.current) {
+      if ((r.kind !== 'added' && r.kind !== 'received') || r.itemIds.length === 0) continue;
+      const recent = now - r.at < SAME_BOX_MS;
+      const sameCode = wanted.some((code) => code === r.code || r.altCodes?.includes(code));
+      const sameName =
+        recent && !!target && r.codeType !== codeType && !isUnknownTitle(r.title) &&
+        jaccardSimilarity(target, normalizeTitle(r.title)) >= 0.6;
+      if (sameCode || sameName) return { row: r, recent };
+    }
+    return null;
+  };
+
+  /** Second barcode on a box we just handled: save it on that item instead of adding another. */
+  const linkSameBox = async (row: SessionRow, code: string, codeType: CodeType) => {
+    await attachCode(row.itemIds, code, codeType);
+    patchRow(row.key, (r) => ({ altCodes: [...new Set([...(r.altCodes ?? []), code])] }));
+    signal('existing', `Same box: ${row.title}`);
+    invalidate();
+  };
+
   const processCode = useCallback(
-    async (code: string, codeType: CodeType) => {
+    async (scannedCode: string, scannedType: CodeType) => {
       const c = ctxRef.current;
       if (!c) return;
       const currentMode = modeRef.current;
+      let code = scannedCode;
+      let codeType = scannedType;
+      let preLookup: ProductLookup | undefined;
+      const altCodes: string[] = [];
 
-      // Another unit of something added earlier this session
+      // Amazon FNSKU sticker (X00…) → look up the product's ASIN, then carry on as an ASIN scan
+      if (codeType === 'fnsku') {
+        if (rowsRef.current.some((r) => r.kind === 'amazon_label' && r.code === code)) return;
+        const lookup = await lookupProduct(code, 'fnsku');
+        if (!lookup.asin) {
+          pushRow({
+            code, codeType, kind: 'amazon_label', title: `Amazon sticker ${code}`, photo: null, itemIds: [],
+            message: /OPENWEBNINJA/.test(lookup.error ?? '')
+              ? 'Looking up Amazon X00 stickers needs the Amazon data key (OPENWEBNINJA_API_KEY). Scan the product barcode on the box instead.'
+              : 'Couldn’t match this Amazon sticker to a product. Scan the product barcode on the box instead.',
+          });
+          signal('amazon_label', 'Amazon sticker — scan the product barcode');
+          return;
+        }
+        altCodes.push(code);
+        code = lookup.asin;
+        codeType = 'asin';
+        preLookup = lookup;
+      }
+
       if (currentMode === 'add') {
-        const sessionRow = rowsRef.current.find((r) => r.kind === 'added' && r.code === code && r.itemIds.length > 0);
-        if (sessionRow) {
+        const same = findSessionProduct([code, ...altCodes], null);
+        // A different barcode of something we handled a few seconds ago → same box
+        if (same && same.row.code !== code && same.recent) {
+          await linkSameBox(same.row, code, codeType);
+          return;
+        }
+        // Another unit of something added earlier this session
+        if (same && same.row.kind === 'added') {
+          const sessionRow = same.row;
           const unit = await cloneUnit(sessionRow.itemIds[sessionRow.itemIds.length - 1], c);
-          patchRow(sessionRow.key, (r) => ({ itemIds: [...r.itemIds, unit.id] }));
+          patchRow(sessionRow.key, (r) => ({
+            itemIds: [...r.itemIds, unit.id],
+            altCodes: [...new Set([...(r.altCodes ?? []), code, ...altCodes])].filter((x) => x !== r.code),
+          }));
           signal('added', `+1 · ${sessionRow.title} (×${sessionRow.itemIds.length + 1})`);
           invalidate();
           return;
@@ -318,7 +391,7 @@ export default function ScanSession() {
         const undo = await receiveItem(target, c);
         pushRow({
           code, codeType, kind: 'received', title: target.title || 'Untitled item',
-          photo: target.photos?.[0] ?? null, itemIds: [target.id], undo,
+          photo: target.photos?.[0] ?? null, itemIds: [target.id], undo, altCodes,
           location: storageLocations.find((l) => l.id === (c.defaults.storageLocationId || target.storage_location_id))?.name ?? null,
           price: target.target_price,
           message: unconfirmed.length > 1 ? `${unconfirmed.length - 1} more unit${unconfirmed.length > 2 ? 's' : ''} still on the order sheet` : undefined,
@@ -341,9 +414,53 @@ export default function ScanSession() {
       }
 
       // 3. Unknown — look it up
-      const lookup = await lookupProduct(code, codeType);
+      const lookup = preLookup ?? (await lookupProduct(code, codeType));
+      const asin = codeType === 'asin' ? code : lookup.asin;
 
-      // 3a. A UPC whose product name clearly matches an Order Sheet item → link + receive
+      // 3a. Same box as something handled a moment ago (other barcode, same product)
+      if (lookup.found) {
+        const same = findSessionProduct(asin ? [asin] : [], lookup.title, codeType);
+        if (same?.recent) {
+          await linkSameBox(same.row, code, codeType);
+          return;
+        }
+      }
+
+      // 3b. The lookup found the Amazon ASIN → match items imported from Amazon orders
+      if (codeType === 'upc' && asin) {
+        const byAsin = await findByCode(c.teamId, asin, 'asin');
+        const waiting = byAsin.filter((m) => m.physical_status === 'unconfirmed');
+        if (waiting.length > 0) {
+          const target = waiting[0];
+          const undo = await receiveItem(target, c, target.upc ? {} : { upc: code });
+          pushRow({
+            code, codeType, kind: 'received', title: target.title || lookup.title || 'Item',
+            photo: target.photos?.[0] ?? lookup.imageUrl, itemIds: [target.id], undo, altCodes: [asin],
+            location: storageLocations.find((l) => l.id === (c.defaults.storageLocationId || target.storage_location_id))?.name ?? null,
+            price: target.target_price,
+            message: waiting.length > 1 ? `${waiting.length - 1} more unit${waiting.length > 2 ? 's' : ''} still on the order sheet` : undefined,
+          });
+          signal('received', `Received: ${target.title || 'item'}`);
+          invalidate();
+          return;
+        }
+        if (byAsin.length > 0) {
+          await attachCode(byAsin.map((m) => m.id), code, codeType);
+          const have = inStockOf(byAsin);
+          const first = have[0] ?? byAsin[byAsin.length - 1];
+          pushRow({
+            code, codeType, kind: 'existing', title: first.title || 'Untitled item',
+            photo: first.photos?.[0] ?? null, itemIds: [], matchIds: (have.length ? have : byAsin).map((m) => m.id),
+            location: first.storage_location?.name ?? null, price: first.target_price, inStock: have.length,
+            message: 'Matched by Amazon ASIN — barcode saved',
+          });
+          signal('existing', `Already have ${have.length || 'sold'}: ${first.title || 'item'}`);
+          invalidate();
+          return;
+        }
+      }
+
+      // 3c. A UPC whose product name clearly matches an Order Sheet item → link + receive
       if (codeType === 'upc' && lookup.found) {
         const nameMatch = await findOrderSheetNameMatch(c.teamId, lookup.title);
         if (nameMatch) {
@@ -351,7 +468,7 @@ export default function ScanSession() {
           pushRow({
             code, codeType, kind: 'received', title: nameMatch.title || lookup.title || 'Item',
             photo: nameMatch.photos?.[0] ?? lookup.imageUrl, itemIds: [nameMatch.id], undo, matchedByName: true,
-            price: nameMatch.target_price,
+            price: nameMatch.target_price, altCodes: asin ? [asin] : [],
           });
           signal('received', `Matched order: ${nameMatch.title || 'item'}`);
           invalidate();
@@ -359,14 +476,20 @@ export default function ScanSession() {
         }
       }
 
-      // 3b. Create a new, autofilled item
+      // 3d. Create a new, autofilled item
       const created = await createFromBarcode(code, codeType, c, lookup);
       pushRow({
         code, codeType, kind: 'added', title: created.title || 'Untitled item',
         photo: created.photos?.[0] ?? null, itemIds: [created.id], price: created.target_price,
         location: storageLocations.find((l) => l.id === created.storage_location_id)?.name ?? null,
         autofilled: lookup.found,
-        message: lookup.found ? undefined : lookup.error ?? 'Product not found — fill in details later',
+        fuzzy: lookup.found && lookup.fuzzy,
+        altCodes: [...altCodes, ...(asin && asin !== code ? [asin] : [])],
+        message: lookup.found
+          ? lookup.fuzzy
+            ? 'Found by searching Amazon — check it’s the right product'
+            : undefined
+          : lookup.error ?? 'Product not found — fill in details later',
       });
       signal('added', lookup.found ? `Added: ${created.title}` : 'Added — needs details');
       invalidate();
@@ -400,6 +523,8 @@ export default function ScanSession() {
     if (result.status === 'found') {
       enqueue(result.value, result.codeType);
     } else {
+      // Sweeping past the same shipping label again shouldn't pile up rows
+      if (rowsRef.current.some((r) => r.kind === 'unrecognized' && r.code === result.rawValue)) return;
       pushRow({
         code: result.rawValue, codeType: null, kind: 'unrecognized', title: result.rawValue.slice(0, 40),
         photo: null, itemIds: [], message: 'Shipping/tracking label? Scan the product barcode or Amazon label instead.',
@@ -434,7 +559,7 @@ export default function ScanSession() {
   const submitManual = () => {
     const parsed = classifyCode(manualCode);
     if (!parsed) {
-      toast.error('That doesn’t look like a UPC, EAN, ISBN or ASIN');
+      toast.error('That doesn’t look like a valid UPC, EAN, ISBN, ASIN or Amazon X00 code');
       return;
     }
     enqueue(parsed.value, parsed.codeType);
@@ -714,7 +839,7 @@ export default function ScanSession() {
               'absolute inset-x-3 bottom-3 rounded-lg px-3 py-2 text-sm font-medium text-white shadow-lg animate-in fade-in slide-in-from-bottom-2',
               feedback.kind === 'received' && 'bg-green-600/95',
               feedback.kind === 'added' && 'bg-primary/95',
-              (feedback.kind === 'existing' || feedback.kind === 'on_order') && 'bg-amber-600/95',
+              (feedback.kind === 'existing' || feedback.kind === 'on_order' || feedback.kind === 'amazon_label') && 'bg-amber-600/95',
               (feedback.kind === 'not_found' || feedback.kind === 'unrecognized' || feedback.kind === 'error') && 'bg-red-600/95'
             )}
           >
@@ -996,6 +1121,11 @@ function SessionRowCard({ row, onUndo, onEdit, onAddUnit, onReceive, onAdd, onLi
                 matched by name
               </Badge>
             )}
+            {row.fuzzy && (
+              <Badge variant="outline" className="h-5 text-[11px]">
+                Amazon search
+              </Badge>
+            )}
             {row.kind === 'existing' && row.inStock != null && (
               <span className="text-[11px] text-muted-foreground">{row.inStock} in stock</span>
             )}
@@ -1046,7 +1176,7 @@ function SessionRowCard({ row, onUndo, onEdit, onAddUnit, onReceive, onAdd, onLi
             Add it
           </Button>
         )}
-        {(isProblem || row.kind === 'not_found' || row.kind === 'existing' || row.kind === 'on_order') && (
+        {(isProblem || row.kind === 'amazon_label' || row.kind === 'not_found' || row.kind === 'existing' || row.kind === 'on_order') && (
           <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-muted-foreground ml-auto" onClick={onDismiss}>
             Dismiss
           </Button>

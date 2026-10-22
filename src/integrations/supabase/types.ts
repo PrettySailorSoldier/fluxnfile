@@ -662,6 +662,7 @@ export type Database = {
       }
       product_catalog: {
         Row: {
+          asin: string | null
           brand: string | null
           category: string | null
           code: string
@@ -680,6 +681,7 @@ export type Database = {
           title: string | null
         }
         Insert: {
+          asin?: string | null
           brand?: string | null
           category?: string | null
           code: string
@@ -698,6 +700,7 @@ export type Database = {
           title?: string | null
         }
         Update: {
+          asin?: string | null
           brand?: string | null
           category?: string | null
           code?: string
