@@ -4,15 +4,18 @@ import { Button } from '@/components/ui/button';
 import { X, ScanLine, Loader2 } from 'lucide-react';
 import { Item } from '@/hooks/useInventory';
 import { toast } from 'sonner';
-import { lookupProduct } from '@/lib/productLookup';
+import { readStickerText } from '@/lib/stickerOcr';
+import type { CodeType } from '@/lib/barcode';
 
 const VIEWFINDER_ID = 'zxing-viewfinder';
 
 interface BarcodeScannerModalProps {
   open: boolean;
   items: Item[];
-  onMatchFound: (item: Item) => void;
-  onNoMatch: (code: string, codeType: 'asin' | 'upc') => void;
+  /** An exact code match (ASIN, linked UPC, or a sticker saved on the item) */
+  onMatchFound: (item: Item, code: string, codeType: CodeType) => void;
+  /** `hint`: words read off an X00 sticker, to rank the picker */
+  onNoMatch: (code: string, codeType: CodeType, hint?: string | null) => void;
   onClose: () => void;
 }
 
@@ -35,27 +38,27 @@ export function BarcodeScannerModal({
 
       switch (result.status) {
         case 'found': {
-          // Amazon X00 sticker → a sticker matched before is saved on its item;
-          // otherwise look up the ASIN it belongs to
+          // Amazon X00 sticker → a sticker matched before is saved on its item
           const bySticker =
             result.codeType === 'fnsku'
               ? items.find((item) => item.fnsku?.toUpperCase() === result.value)
               : undefined;
           if (bySticker) {
             toast.success(`Found: ${bySticker.title || 'Untitled item'}`);
-            onMatchFound(bySticker);
+            onMatchFound(bySticker, result.value, 'fnsku');
             onClose();
             break;
           }
           if (result.codeType === 'fnsku') {
-            const lookup = await lookupProduct(result.value, 'fnsku');
-            if (!lookup.asin) {
-              toast.warning('Couldn’t match that Amazon sticker to a product. Scan the product’s own barcode instead.');
-              onClose();
-              break;
-            }
-            result.value = lookup.asin;
-            result.codeType = 'asin';
+            // A new X00 sticker can't be looked up — read the product name printed on it
+            const reading = result.frame ? toast.loading('Reading the sticker…') : undefined;
+            const printed = result.frame ? await readStickerText(result.frame, result.value) : null;
+            if (reading !== undefined) toast.dismiss(reading);
+            // Never matched on a reading alone — brands sell look-alikes. The picker
+            // opens the closest order's details for the user to confirm.
+            onNoMatch(result.value, 'fnsku', printed);
+            onClose();
+            break;
           }
           const match =
             result.codeType === 'asin'
@@ -68,7 +71,7 @@ export function BarcodeScannerModal({
                 );
           if (match) {
             toast.success(`Found: ${match.title || 'Untitled item'}`);
-            onMatchFound(match);
+            onMatchFound(match, result.value, result.codeType);
           } else {
             onNoMatch(result.value, result.codeType);
           }

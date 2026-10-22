@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { isoFromMDY } from '@/lib/orderDates';
 
 export interface VineReportItem {
   orderNumber: string;
@@ -7,6 +8,9 @@ export interface VineReportItem {
   orderType: 'ORDER' | 'CANCELLATION';
   orderDate: string;
   shippedDate: string;
+  /** The report's own dates (ISO), null when the cell is blank — no fallbacks */
+  orderedOn: string | null;
+  shippedOn: string | null;
   estimatedTaxValue: number;
   selected: boolean;
 }
@@ -114,6 +118,8 @@ export function parseVineReport(workbook: XLSX.WorkBook): VineReportParseResult 
         orderType: 'ORDER',
         orderDate: parseDate(orderDate),
         shippedDate: acquisitionDate,
+        orderedOn: isoFromMDY(orderDate),
+        shippedOn: isoFromMDY(shippedDate),
         estimatedTaxValue: etv,
         selected: true,
       });

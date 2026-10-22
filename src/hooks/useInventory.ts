@@ -67,6 +67,10 @@ export interface Item {
   amazon_refund_date: string | null;
   amazon_tax_amount: number | null;
   delivery_status: string | null;
+  /** Dates from the official order files (20261023000000_order_dates.sql) */
+  ordered_date?: string | null;
+  shipped_date?: string | null;
+  delivered_date?: string | null;
   // Vine fields
   is_vine_order: boolean | null;
   vine_review_status: string | null;

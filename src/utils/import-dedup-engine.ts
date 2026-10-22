@@ -16,7 +16,9 @@ import { isUnknownTitle } from '@/lib/productLookup';
  * - A placeholder title ("Unknown item (…)"), a $0 cost and an empty photo list
  *   count as empty, so a later import can fill them in.
  * - The existing row must carry every field compared here (see
- *   EXISTING_ITEM_FIELDS) — a field that wasn't loaded looks empty.
+ *   EXISTING_ITEM_FIELDS) — a field that wasn't loaded looks empty. The order
+ *   dates are only filled when the row has them (their column exists).
+ * - Prices are never set by an import — only the official order values.
  * - Append the new import source to data_sources array if not already present.
  * - Special always-update fields: vine_review_status, vine_review_quality,
  *   amazon_shipment_status, lattice_review_status — these represent current
@@ -34,13 +36,14 @@ export type DedupeAction =
   | { action: 'merge'; existingId: string; mergeData: Record<string, unknown> }
   | { action: 'skip' };
 
-/** Columns to load for existing items so computeMergeData can tell filled from empty. */
-export const EXISTING_ITEM_FIELDS =
-  'id, title, photos, original_cost, target_price, upc, brand, retail_price, amazon_asin, amazon_order_id, ' +
-  'amazon_order_url, amazon_tracking_url, amazon_invoice_url, amazon_return_status, amazon_refund_amount, ' +
-  'amazon_refund_date, amazon_tax_amount, vine_etv, vine_fmv, is_vine_order, acquisition_date, data_sources, ' +
-  'vine_review_status, vine_review_quality, amazon_shipment_status, lattice_review_status, lattice_review_score, ' +
-  'lattice_review_quality, lattice_reviewed_date, vine_review_date';
+/**
+ * Columns to load for existing items so computeMergeData can tell filled from
+ * empty. All of them: columns added by later migrations (the order dates) are
+ * read when they exist instead of failing the select when they don't.
+ */
+export const EXISTING_ITEM_FIELDS = '*';
+
+const ORDER_DATE_FIELDS = ['ordered_date', 'shipped_date', 'delivered_date'];
 
 export interface ExistingItemIndex {
   id: string;
@@ -173,6 +176,7 @@ export function computeMergeData(
     'retail_price',
     'amazon_asin',
     'amazon_order_id',
+    'amazon_order_number',
     'amazon_order_url',
     'amazon_tracking_url',
     'amazon_invoice_url',
@@ -184,6 +188,8 @@ export function computeMergeData(
     'vine_fmv',
     'is_vine_order',
     'acquisition_date',
+    'delivery_status',
+    ...ORDER_DATE_FIELDS.filter((field) => field in existing),
   ];
 
   for (const field of alwaysUpdate) {
@@ -207,7 +213,6 @@ export function computeMergeData(
   const existingCost = Number(existing.original_cost ?? 0);
   if (typeof incoming.original_cost === 'number' && incoming.original_cost > 0 && !(existingCost > 0)) {
     mergeData.original_cost = incoming.original_cost;
-    if (existing.target_price == null && incoming.target_price != null) mergeData.target_price = incoming.target_price;
   }
 
   const hasPhotos = Array.isArray(existing.photos) && (existing.photos as unknown[]).length > 0;

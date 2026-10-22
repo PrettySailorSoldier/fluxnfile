@@ -57,7 +57,6 @@ import {
   fillFromLookup,
   findByCode,
   findOrderSheetNameMatch,
-  findOrderSheetStickerMatch,
   receiveItem,
   undoReceive,
   type IntakeContext,
@@ -98,7 +97,6 @@ interface SessionRow {
   price?: number | null;
   inStock?: number;
   autofilled?: boolean;
-  matchedByName?: boolean;
   /** Product name to rank the "Which item is this?" list by (lookup title or sticker text) */
   hint?: string | null;
   /** Product came from an Amazon keyword search — worth a quick check */
@@ -366,36 +364,21 @@ export default function ScanSession() {
         stickerFramesRef.current.delete(code);
         const printed = frame && currentMode === 'add' ? await readStickerText(frame, code) : null;
 
-        if (currentMode === 'add') {
-          // The printed words clearly point at one order → receive it
-          const match = await findOrderSheetStickerMatch(printed, orderItemsRef.current);
-          if (match) {
-            const undo = await receiveItem(match, c);
-            await attachCode([match.id], code, 'fnsku');
-            pushRow({
-              code, codeType, kind: 'received', title: match.title || 'Untitled item',
-              photo: match.photos?.[0] ?? null, itemIds: [match.id], undo, matchedByName: true,
-              location: storageLocations.find((l) => l.id === (c.defaults.storageLocationId || match.storage_location_id))?.name ?? null,
-              price: match.target_price,
-              message: `Read “${printed}” on the sticker`,
-            });
-            signal('received', `Received: ${match.title || 'item'}`);
-            invalidate();
-            return;
-          }
-          if (askFirst()) {
-            askWhichItem(
-              {
-                code, codeType, kind: 'unmatched', title: printed ? `Sticker: ${printed}` : `Amazon sticker ${code}`,
-                photo: null, itemIds: [], hint: printed,
-                message: printed
-                  ? 'Pick the item — the closest matches to the sticker are at the top'
-                  : 'Couldn’t read the sticker — pick the item from your list, or scan the product barcode',
-              },
-              printed
-            );
-            return;
-          }
+        // Never received on the reading alone — a brand's look-alikes (a 4-pack of
+        // pathway lights vs. a house-number sign) read much the same. The picker
+        // opens the closest order's details for the user to confirm.
+        if (currentMode === 'add' && orderItemsRef.current.length > 0) {
+          askWhichItem(
+            {
+              code, codeType, kind: 'unmatched', title: printed ? `Sticker: ${printed}` : `Amazon sticker ${code}`,
+              photo: null, itemIds: [], hint: printed,
+              message: printed
+                ? 'Check the closest order’s details and confirm it, or pick another'
+                : 'Couldn’t read the sticker — pick the item from your list, or scan the product barcode',
+            },
+            printed
+          );
+          return;
         }
 
         pushRow({
@@ -541,24 +524,12 @@ export default function ScanSession() {
         }
       }
 
-      // 3c. A UPC whose product name clearly matches an Order Sheet item → link + receive
-      if (codeType === 'upc' && lookup.found) {
-        const nameMatch = await findOrderSheetNameMatch(lookup.title, orderItemsRef.current);
-        if (nameMatch) {
-          const undo = await receiveItem(nameMatch, c, { upc: code });
-          pushRow({
-            code, codeType, kind: 'received', title: nameMatch.title || lookup.title || 'Item',
-            photo: nameMatch.photos?.[0] ?? lookup.imageUrl, itemIds: [nameMatch.id], undo, matchedByName: true,
-            price: nameMatch.target_price, altCodes: asin ? [asin] : [],
-          });
-          signal('received', `Matched order: ${nameMatch.title || 'item'}`);
-          invalidate();
-          return;
-        }
-      }
-
-      // 3d. Sorting a backlog of boxes: they're all on the order list already — ask which one
-      if (askFirst()) {
+      // 3c. A UPC whose product name clearly matches an Order Sheet item, or 3d. sorting
+      // a backlog of boxes that are all on the order list already → ask which one.
+      // A name match is only a guess, so it's shown (details open) for the user to confirm.
+      const nameMatch =
+        codeType === 'upc' && lookup.found ? await findOrderSheetNameMatch(lookup.title, orderItemsRef.current) : null;
+      if (nameMatch || askFirst()) {
         askWhichItem(
           {
             code, codeType, kind: 'unmatched',
@@ -837,9 +808,13 @@ export default function ScanSession() {
 
   const linkRow = linkTarget ? rows.find((r) => r.key === linkTarget.rowKey) ?? null : null;
 
+  // Items that don't have this kind of code yet
   const linkCandidates = useMemo(
-    () => [...orderItems, ...inventoryItems].filter((i) => !i.upc),
-    [orderItems, inventoryItems]
+    () =>
+      [...orderItems, ...inventoryItems].filter((i) =>
+        linkTarget?.codeType === 'fnsku' ? !i.fnsku : linkTarget?.codeType === 'asin' ? true : !i.upc
+      ),
+    [orderItems, inventoryItems, linkTarget?.codeType]
   );
 
   const finish = () => {
@@ -1266,11 +1241,6 @@ function SessionRowCard({ row, onUndo, onEdit, onAddUnit, onReceive, onAdd, onLi
               {row.kind === 'added' && row.autofilled && <Sparkles className="w-3 h-3 mr-1" />}
               {style.label}
             </Badge>
-            {row.matchedByName && (
-              <Badge variant="outline" className="h-5 text-[11px]">
-                matched by name
-              </Badge>
-            )}
             {row.fuzzy && (
               <Badge variant="outline" className="h-5 text-[11px]">
                 Amazon search

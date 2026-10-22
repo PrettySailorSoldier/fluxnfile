@@ -57,6 +57,7 @@ import {
   computeMergeData,
   type ExistingItemIndex,
 } from '@/utils/import-dedup-engine';
+import { isoFromMDY, writeWithOrderDates } from '@/lib/orderDates';
 import { getAcquisitionDate } from '@/utils/lattice-csv-parser';
 import type { OrderHistoryItem } from '@/utils/order-history-extension-parser';
 import type { LatticeItem } from '@/utils/lattice-csv-parser';
@@ -182,7 +183,6 @@ interface ItemPreviewProps {
   index: number;
   isDuplicateAsin: boolean;
   isDuplicateTitle: boolean;
-  defaultMarkup: number;
   onToggleSelect: (index: number) => void;
   onUpdatePrice: (index: number, price: number) => void;
 }
@@ -192,7 +192,6 @@ function ItemPreviewCard({
   index,
   isDuplicateAsin,
   isDuplicateTitle,
-  defaultMarkup,
   onToggleSelect,
   onUpdatePrice,
 }: ItemPreviewProps) {
@@ -200,7 +199,6 @@ function ItemPreviewCard({
   const [editPrice, setEditPrice] = useState(item.price.toString());
   const [imageError, setImageError] = useState(false);
 
-  const targetPrice = item.price * (1 + defaultMarkup / 100);
   const isDuplicateLegacy = isDuplicateAsin || isDuplicateTitle;
   const willMerge = item._isDuplicate;
 
@@ -324,13 +322,6 @@ function ItemPreviewCard({
               </button>
             )}
           </span>
-          {item.price > 0 && (
-            <>
-              <span>→</span>
-              <span>Target: ${targetPrice.toFixed(2)}</span>
-              <span className="text-success">(+{defaultMarkup}%)</span>
-            </>
-          )}
         </div>
 
         {/* Date */}
@@ -417,7 +408,6 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
   const [parsedItems, setParsedItems] = useState<PipelineItem[]>([]);
   const [parseWarnings, setParseWarnings] = useState<string[]>([]);
   const [isParsing, setIsParsing] = useState(false);
-  const [defaultMarkup, setDefaultMarkup] = useState(50);
   const [isVineMode, setIsVineMode] = useState(false);
   const [vineETV, setVineETV] = useState<string>('');
   const [isFetchingPrices, setIsFetchingPrices] = useState(false);
@@ -984,6 +974,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
             amazon_refund_amount: oh.refundAmount,
             amazon_refund_date: oh.refundDate,
             amazon_tax_amount: oh.taxAmount > 0 ? oh.taxAmount : null,
+            ordered_date: new Date(oh.orderPlaced).toISOString().split('T')[0],
             status: 'acquired' as const,
             condition: 'new' as const,
             physical_status: 'unconfirmed',
@@ -995,7 +986,10 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
             title: item.cleanTitle.slice(0, 255),
             amazon_asin: lat.asin || null,
             original_cost: lat.valueToUse,
-            target_price: Math.round(lat.valueToUse * (1 + defaultMarkup / 100) * 100) / 100,
+            ordered_date: isoFromMDY(lat.orderedDate),
+            shipped_date: isoFromMDY(lat.shippedDate),
+            delivered_date: isoFromMDY(lat.deliveredDate),
+            delivery_status: lat.deliveryStatus || null,
             acquisition_date: getAcquisitionDate(lat),
             acquisition_source: 'Amazon Vine',
             is_vine_order: true,
@@ -1017,8 +1011,8 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
           itemData = {
             title: item.cleanTitle.slice(0, 255),
             original_cost: item.price,
-            target_price: Math.round(item.price * (1 + defaultMarkup / 100) * 100) / 100,
             acquisition_date: new Date(item.orderDate).toISOString().split('T')[0],
+            ordered_date: item.confidenceDetails.dateGuessed ? null : new Date(item.orderDate).toISOString().split('T')[0],
             acquisition_source: isVineMode ? 'Vine' : 'Amazon',
             amazon_asin: item.asin || null,
             amazon_order_id: item.amazonOrderId || null,
@@ -1062,7 +1056,9 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
 
       // Batch insert new items (chunks, so a few thousand rows don't time out)
       for (let i = 0; i < toInsert.length; i += 500) {
-        const { error: insertErr } = await supabase.from('items').insert(toInsert.slice(i, i + 500));
+        const { error: insertErr } = await writeWithOrderDates(toInsert.slice(i, i + 500), (rows) =>
+          supabase.from('items').insert(rows)
+        );
         if (insertErr) throw insertErr;
       }
 
@@ -1415,21 +1411,6 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                 </div>
               )}
 
-              {/* Markup setting */}
-              <div className="flex items-center gap-4">
-                <Label htmlFor="markup" className="text-sm whitespace-nowrap">Default Markup:</Label>
-                <div className="flex items-center gap-1">
-                  <Input
-                    id="markup"
-                    type="number"
-                    value={defaultMarkup}
-                    onChange={(e) => setDefaultMarkup(parseFloat(e.target.value) || 0)}
-                    className="w-20 text-sm"
-                  />
-                  <span className="text-sm">%</span>
-                </div>
-              </div>
-
               {/* Items list */}
               <div className="space-y-2 max-h-96 overflow-y-auto border rounded-lg p-4">
                 {parsedItems.map((item, index) => (
@@ -1439,7 +1420,6 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                     index={index}
                     isDuplicateAsin={item.asin ? duplicateAsins.has(item.asin) : false}
                     isDuplicateTitle={duplicateTitles.has(item.cleanTitle.toLowerCase())}
-                    defaultMarkup={defaultMarkup}
                     onToggleSelect={toggleItemSelection}
                     onUpdatePrice={updateItemPrice}
                   />
