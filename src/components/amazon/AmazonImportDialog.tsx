@@ -405,12 +405,20 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     queryKey: ['existing-amazon-items', team?.id],
     queryFn: async () => {
       if (!team?.id) return [];
-      const { data, error } = await supabase
-        .from('items')
-        .select('id, title, amazon_asin, amazon_order_id, data_sources, vine_review_status, vine_review_quality, amazon_shipment_status, lattice_review_status')
-        .eq('team_id', team.id);
-      if (error) throw error;
-      return (data || []) as ExistingItemIndex[];
+      // Paged — a single select stops at 1,000 rows, and a Vine history is several
+      // thousand items; anything past the cap would be imported again as a duplicate
+      const all: ExistingItemIndex[] = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase
+          .from('items')
+          .select('id, title, amazon_asin, amazon_order_id, data_sources, vine_review_status, vine_review_quality, amazon_shipment_status, lattice_review_status')
+          .eq('team_id', team.id)
+          .order('id')
+          .range(from, from + 999);
+        if (error) throw error;
+        all.push(...((data || []) as ExistingItemIndex[]));
+        if (!data || data.length < 1000) return all;
+      }
     },
     enabled: !!team?.id && open,
   });
