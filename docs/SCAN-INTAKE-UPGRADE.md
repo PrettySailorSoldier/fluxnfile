@@ -58,6 +58,10 @@ A scanned box matches an Order Sheet item by **ASIN**. Lattice and the Vine Item
 
 Suggested order: import the Lattice CSV, then the Itemized Report for each year.
 
+## Imports stay out of Inventory
+
+Imported orders (Lattice, Vine Itemized Report, Amazon order history) are created as `physical_status = 'unconfirmed'` and only show on the **Order Sheet**. Inventory, Dashboard, Analytics, Facebook tools, Sales Check and the Needs details queue only read found items (`useItems` filters out `unconfirmed`). An item moves to Inventory only when a box is scanned (or confirmed by hand) — that sets it to Sell or Keep at a location. The one import that can skip this is **Import → Any list**, which asks you where its rows should go.
+
 ## Sorting a backlog of boxes (Oct 22)
 
 For a pile of untracked boxes whose orders are already imported (Lattice + Itemized Reports):
