@@ -78,8 +78,16 @@ export function toScanResult(result: Result): ScanResult {
 export function useBarcodeScanner() {
   const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [torchSupported, setTorchSupported] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
   const readerRef = useRef<BrowserMultiFormatReader | null>(null);
   const resolveRef = useRef<((result: ScanResult) => void) | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  const getTrack = () => {
+    const stream = videoRef.current?.srcObject as MediaStream | null | undefined;
+    return stream?.getVideoTracks()[0] ?? null;
+  };
 
   const stopScanner = useCallback(() => {
     if (readerRef.current) {
@@ -87,6 +95,8 @@ export function useBarcodeScanner() {
       readerRef.current = null;
     }
     setIsScanning(false);
+    setTorchSupported(false);
+    setTorchOn(false);
   }, []);
 
   const scan = useCallback(
@@ -107,6 +117,7 @@ export function useBarcodeScanner() {
 
             const reader = createProductReader();
             readerRef.current = reader;
+            videoRef.current = videoEl;
 
             // decodeFromConstraints requests permission itself (works in Safari PWAs)
             // and asks for the rear camera explicitly
@@ -133,6 +144,12 @@ export function useBarcodeScanner() {
                 }
               }
             );
+
+            // Flashlight, where the browser allows it
+            if (readerRef.current === reader) {
+              const caps = getTrack()?.getCapabilities?.() as (MediaTrackCapabilities & { torch?: boolean }) | undefined;
+              setTorchSupported(!!caps?.torch);
+            }
           } catch (err) {
             stopScanner();
             const message = err instanceof Error ? err.message : 'Camera error';
@@ -151,5 +168,17 @@ export function useBarcodeScanner() {
     resolveRef.current = null;
   }, [stopScanner]);
 
-  return { scan, cancelScan, isScanning, error };
+  const toggleTorch = useCallback(async () => {
+    const track = getTrack();
+    if (!track) return;
+    const next = !torchOn;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: next } as MediaTrackConstraintSet] });
+      setTorchOn(next);
+    } catch {
+      setTorchSupported(false);
+    }
+  }, [torchOn]);
+
+  return { scan, cancelScan, isScanning, error, torchSupported, torchOn, toggleTorch };
 }
