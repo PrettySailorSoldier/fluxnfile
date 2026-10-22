@@ -146,11 +146,11 @@ export function LatticeImportDialog({
 
       // Fetch existing items by amazon_asin to detect duplicates
       // (paged — a single select stops at 1,000 rows)
-      const existing: { amazon_asin: string | null; title: string | null }[] = [];
+      const existing: { amazon_asin: string | null; title: string | null; original_cost: number | null }[] = [];
       for (let from = 0; ; from += 1000) {
         const { data, error } = await supabase
           .from('items')
-          .select('amazon_asin, title')
+          .select('amazon_asin, title, original_cost')
           .eq('team_id', team.id)
           .not('amazon_asin', 'is', null)
           .order('id')
@@ -166,6 +166,10 @@ export function LatticeImportDialog({
       // Imported earlier without a name — a newer export may have it now
       const untitledAsins = new Set(
         existing.filter(e => isUnknownTitle(e.title)).map(e => e.amazon_asin)
+      );
+      // Imported first from Amazon's order history, where Vine orders cost $0 — ETV fills it in
+      const zeroCostAsins = new Set(
+        existing.filter(e => !(Number(e.original_cost ?? 0) > 0)).map(e => e.amazon_asin)
       );
 
       const toInsert = selected.filter(item => !existingAsins.has(item.asin));
@@ -206,6 +210,10 @@ export function LatticeImportDialog({
           }
           if (item.deliveryStatus) {
             update.delivery_status = item.deliveryStatus;
+          }
+          if (item.valueToUse > 0 && zeroCostAsins.has(item.asin)) {
+            update.original_cost = item.valueToUse;
+            update.target_price = calcTargetPrice(item.valueToUse);
           }
           if (item.description && untitledAsins.has(item.asin)) {
             update.title = item.description.slice(0, 255);

@@ -52,6 +52,7 @@ import {
   type DetectedCSVFormat,
 } from '@/utils/amazon-parser';
 import {
+  EXISTING_ITEM_FIELDS,
   findDuplicate,
   computeMergeData,
   type ExistingItemIndex,
@@ -74,6 +75,8 @@ interface AmazonImportDialogProps {
 
 // Extends ParsedAmazonItem with import-pipeline metadata
 interface PipelineItem extends ParsedAmazonItem {
+  /** Order ID from an Amazon order-history spreadsheet */
+  amazonOrderId?: string | null;
   _orderHistoryData?: OrderHistoryItem;
   _latticeData?: LatticeItem;
   _isDuplicate?: boolean;
@@ -347,6 +350,26 @@ function ItemPreviewCard({
   );
 }
 
+/**
+ * Every existing item for duplicate detection, paged (a single select stops at
+ * 1,000 rows), with every field computeMergeData compares — a field that isn't
+ * loaded looks empty and would be overwritten.
+ */
+async function fetchExistingIndex(teamId: string): Promise<ExistingItemIndex[]> {
+  const all: ExistingItemIndex[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from('items')
+      .select(EXISTING_ITEM_FIELDS)
+      .eq('team_id', teamId)
+      .order('id')
+      .range(from, from + 999);
+    if (error) throw error;
+    all.push(...((data || []) as unknown as ExistingItemIndex[]));
+    if (!data || data.length < 1000) return all;
+  }
+}
+
 // ============================================================================
 // FILE PARSER (XLSX)
 // ============================================================================
@@ -405,20 +428,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     queryKey: ['existing-amazon-items', team?.id],
     queryFn: async () => {
       if (!team?.id) return [];
-      // Paged — a single select stops at 1,000 rows, and a Vine history is several
-      // thousand items; anything past the cap would be imported again as a duplicate
-      const all: ExistingItemIndex[] = [];
-      for (let from = 0; ; from += 1000) {
-        const { data, error } = await supabase
-          .from('items')
-          .select('id, title, amazon_asin, amazon_order_id, data_sources, vine_review_status, vine_review_quality, amazon_shipment_status, lattice_review_status')
-          .eq('team_id', team.id)
-          .order('id')
-          .range(from, from + 999);
-        if (error) throw error;
-        all.push(...((data || []) as ExistingItemIndex[]));
-        if (!data || data.length < 1000) return all;
-      }
+      return fetchExistingIndex(team.id);
     },
     enabled: !!team?.id && open,
   });
@@ -463,7 +473,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
       const match = findDuplicate(
         {
           asin: item.asin,
-          orderId: item._orderHistoryData?.orderId ?? null,
+          orderId: item._orderHistoryData?.orderId ?? item.amazonOrderId ?? null,
           title: item.cleanTitle,
         },
         existingItems
@@ -686,6 +696,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
           orderDate,
           price,
           asin,
+          amazonOrderId: orderId || null,
           imageUrl: null,
           selected: true,
           confidence,
@@ -936,16 +947,8 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
       const selectedItems = parsedItems.filter(item => item.selected);
       if (selectedItems.length === 0) throw new Error('No items selected');
 
-      // Fetch fresh existing items for authoritative dedup
-      const { data: freshExisting, error: fetchErr } = await supabase
-        .from('items')
-        .select(
-          'id, title, amazon_asin, amazon_order_id, data_sources, vine_review_status, vine_review_quality, amazon_shipment_status, lattice_review_status'
-        )
-        .eq('team_id', team.id);
-      if (fetchErr) throw fetchErr;
-
-      const existingIndex = (freshExisting || []) as ExistingItemIndex[];
+      // Fetch fresh existing items for authoritative dedup (every item, every compared field)
+      const existingIndex = await fetchExistingIndex(team.id);
 
       const importSource =
         detectedFormat === 'order_history_extension'
@@ -1018,6 +1021,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
             acquisition_date: new Date(item.orderDate).toISOString().split('T')[0],
             acquisition_source: isVineMode ? 'Vine' : 'Amazon',
             amazon_asin: item.asin || null,
+            amazon_order_id: item.amazonOrderId || null,
             is_vine_order: isVineMode,
             condition: 'new' as const,
             status: 'acquired' as const,
@@ -1032,7 +1036,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
         const duplicate = findDuplicate(
           {
             asin: item.asin,
-            orderId: item._orderHistoryData?.orderId ?? null,
+            orderId: item._orderHistoryData?.orderId ?? item.amazonOrderId ?? null,
             title: item.cleanTitle,
           },
           existingIndex
@@ -1056,16 +1060,19 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
         }
       }
 
-      // Batch insert new items
-      if (toInsert.length > 0) {
-        const { error: insertErr } = await supabase.from('items').insert(toInsert);
+      // Batch insert new items (chunks, so a few thousand rows don't time out)
+      for (let i = 0; i < toInsert.length; i += 500) {
+        const { error: insertErr } = await supabase.from('items').insert(toInsert.slice(i, i + 500));
         if (insertErr) throw insertErr;
       }
 
-      // Update merged items
-      for (const { id, mergeData } of toUpdate) {
-        const { error: updateErr } = await supabase.from('items').update(mergeData).eq('id', id);
-        if (updateErr) throw updateErr;
+      // Update merged items, 25 at a time
+      for (let i = 0; i < toUpdate.length; i += 25) {
+        const results = await Promise.all(
+          toUpdate.slice(i, i + 25).map(({ id, mergeData }) => supabase.from('items').update(mergeData).eq('id', id))
+        );
+        const failed = results.find((r) => r.error);
+        if (failed?.error) throw failed.error;
       }
 
       return { inserted: toInsert.length, merged: toUpdate.length, skipped: skipCount };
