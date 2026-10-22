@@ -340,37 +340,52 @@ export function rankBySticker<T extends { title: string | null }>(
   return scored.sort((a, b) => b.hits - a.hits || b.score - a.score);
 }
 
+/** Sticker words a title matches that another title doesn't. */
+function distinctHits(stickerText: string, title: string | null, other: string | null): number {
+  if (!title) return 0;
+  const inTitle = titleWords(title);
+  const inOther = other ? titleWords(other) : [];
+  return [...new Set(titleWords(stickerText))].filter(
+    (w) => inTitle.some((t) => wordMatches(w, t)) && !inOther.some((t) => wordMatches(w, t))
+  ).length;
+}
+
+export interface StickerGuess<T> {
+  item: T;
+  /**
+   * The read clearly points at this item. Even then it's only a guess —
+   * it's shown for checking, never received without the user confirming.
+   */
+  sure: boolean;
+  /** Other items that match nearly as well (same brand, similar names) */
+  lookalikes: number;
+}
+
 /**
- * The one item an X00 sticker's printed words clearly point to, either:
+ * The item an X00 sticker's printed words point to best (at least 2 words
+ * matched). It's "sure" when either:
  *  - at least 3 words matched, half the sticker covered and clearly ahead of
  *    the runner-up (short, clean reads like "golf target clot"), or
  *  - at least 4 words matched and 3 more than the runner-up (long reads with
- *    stray words from a patterned box, where the share covered stays low).
- * Ties — e.g. three tankless water heaters on the list — return null so the
- * user picks from "Which item is this?".
+ *    stray words from a patterned box, where the share covered stays low),
+ * and at least 2 of the matched words aren't in the runner-up's name — a
+ * brand ("Brizled") matches every order from that brand, so it can't tell a
+ * pathway-light 4-pack from a house-number sign.
  */
-export function pickStickerMatch<T extends { title: string | null }>(candidates: T[], stickerText: string | null): T | null {
+export function guessStickerMatch<T extends { title: string | null }>(
+  candidates: T[],
+  stickerText: string | null
+): StickerGuess<T> | null {
   if (!stickerText) return null;
-  const [best, second] = rankBySticker(candidates, stickerText);
-  const runnerUp = second ?? { score: 0, hits: 0 };
-  if (!best) return null;
+  const ranked = rankBySticker(candidates, stickerText);
+  const [best, second] = ranked;
+  if (!best || best.hits < 2) return null;
+  const runnerUp = second ?? { score: 0, hits: 0, item: null };
   const clean = best.hits >= 3 && best.score >= 0.5 && best.hits > runnerUp.hits && best.score - runnerUp.score >= 0.2 - 1e-9;
   const noisy = best.hits >= 4 && best.hits - runnerUp.hits >= 3;
-  return clean || noisy ? best.item : null;
-}
-
-/** pickStickerMatch over the unconfirmed, sticker-less Order Sheet items, fetched fresh. */
-export async function findOrderSheetStickerMatch(
-  stickerText: string | null,
-  candidates: { id: string; title: string | null; physical_status: string; fnsku?: string | null }[]
-): Promise<MatchRow | null> {
-  const pool = candidates.filter((c) => c.physical_status === 'unconfirmed' && !c.fnsku);
-  const best = pickStickerMatch(pool, stickerText);
-  if (!best) return null;
-  const { data, error } = await supabase.from('items').select(MATCH_FIELDS).eq('id', best.id).single();
-  if (error) return null;
-  const row = data as unknown as MatchRow;
-  return row.physical_status === 'unconfirmed' ? row : null;
+  const distinct = distinctHits(stickerText, best.item.title, runnerUp.item?.title ?? null);
+  const lookalikes = ranked.filter((r) => r !== best && r.hits >= 2 && r.hits >= best.hits - 1).length;
+  return { item: best.item, sure: (clean || noisy) && distinct >= 2, lookalikes };
 }
 
 /**

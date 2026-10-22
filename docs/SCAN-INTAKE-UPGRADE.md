@@ -104,6 +104,28 @@ You can turn this off in the scan session's ⚙ settings: "When a box doesn't ma
 
 The Order Sheet and Inventory lists now load all items; Supabase caps one request at 1,000 rows, so they page. The Order Sheet shows 100 at a time.
 
+## Check every guess before it's received (Oct 22)
+
+Brands sell look-alikes. A sticker that read "brizled … lighting … yard" matched a Brizled 4-pack of pathway lights, but the box was a Brizled house-number sign. Now:
+
+- **A name-based guess is never received on its own.** This covers words read off an X00 sticker and a UPC's looked-up product name. **Which item is this?** opens with the closest order's full details already open: title, ETV/FMV, ordered/shipped/delivered dates, order # (links to the Amazon order), ASIN, delivery and review status, and which files it came from.
+  - Tap **This is it** to confirm, or **Not this one** to close it and open another.
+  - When other orders match nearly as well (same brand, similar names), a warning says how many.
+  - The guess is labeled "Best match" when the read clearly points at one order, and "Closest guess — check it" when it doesn't. A brand word ("Brizled") doesn't count toward a clear match, because it matches every order from that brand.
+- **Exact code matches still go straight through:** an ASIN, a UPC linked earlier, or a sticker saved on its item. On the Order Sheet, the confirm sheet now shows the same order details above Keep/Sell. **Not this item** removes the sticker/UPC from that order (so it stops matching) and reopens the picker.
+- **Imports carry only what the files say.** There's no automatic markup any more: `target_price` stays empty until you price an item after receiving it. The Amazon import's "Default Markup" setting is gone.
+- **Order details are kept from the files:**
+  - New columns `ordered_date`, `shipped_date` and `delivered_date` hold the dates as the files print them. Lattice has all three, the Itemized Report has ordered and shipped, and Amazon order history has ordered.
+  - ETV/FMV, review fields and the source files are kept too.
+  - Re-imports still only fill blanks.
+- The Order Sheet search also finds order numbers and stickers.
+
+**Run `supabase/migrations/20261023000000_order_dates.sql`** to keep the dates. Until then, imports work as before and skip the dates. To clear markup prices already set on Order Sheet items:
+
+```sql
+UPDATE items SET target_price = NULL WHERE physical_status = 'unconfirmed';
+```
+
 ## Quick test
 
 - Inventory → **Scan** → type `012345678905` + Enter → a new item appears, autofilled if the lookup finds it. Type it again → the row shows ×2.

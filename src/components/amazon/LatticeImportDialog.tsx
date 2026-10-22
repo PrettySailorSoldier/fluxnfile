@@ -23,8 +23,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { Upload, CheckCircle2, Clock } from 'lucide-react';
-import { useWorkflowSettings } from '@/hooks/useUserPreferences';
 import { isUnknownTitle, unknownItemTitle } from '@/lib/productLookup';
+import { isoFromMDY, writeWithOrderDates } from '@/lib/orderDates';
 
 interface LatticeImportDialogProps {
   open: boolean;
@@ -40,16 +40,6 @@ export function LatticeImportDialog({
   const { team, user } = useAuth();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const workflowSettings = useWorkflowSettings();
-
-  const calcTargetPrice = (cost: number): number | null => {
-    if (cost <= 0) return null;
-    let price = Math.round(cost * (workflowSettings.defaultMarkupPercent / 100) * 100) / 100;
-    if (workflowSettings.roundPricesToNinetyNine && price > 1) {
-      price = Math.floor(price) - 0.01;
-    }
-    return price;
-  };
 
   const [step, setStep] = useState<'upload' | 'preview' | 'done'>('upload');
   const [allItems, setAllItems] = useState<LatticeItem[]>([]);
@@ -145,35 +135,43 @@ export function LatticeImportDialog({
       if (selected.length === 0) throw new Error('No items selected');
 
       // Fetch existing items by amazon_asin to detect duplicates
-      // (paged — a single select stops at 1,000 rows)
-      const existing: { amazon_asin: string | null; title: string | null; original_cost: number | null }[] = [];
+      // (paged — a single select stops at 1,000 rows; '*' so the order-date
+      // columns are read when they exist and skipped when they don't)
+      const existing: Record<string, unknown>[] = [];
       for (let from = 0; ; from += 1000) {
         const { data, error } = await supabase
           .from('items')
-          .select('amazon_asin, title, original_cost')
+          .select('*')
           .eq('team_id', team.id)
           .not('amazon_asin', 'is', null)
           .order('id')
           .range(from, from + 999);
         if (error) throw error;
-        existing.push(...(data ?? []));
+        existing.push(...((data ?? []) as Record<string, unknown>[]));
         if (!data || data.length < 1000) break;
       }
 
-      const existingAsins = new Set(
-        existing.map(e => e.amazon_asin).filter(Boolean)
-      );
-      // Imported earlier without a name — a newer export may have it now
-      const untitledAsins = new Set(
-        existing.filter(e => isUnknownTitle(e.title)).map(e => e.amazon_asin)
-      );
-      // Imported first from Amazon's order history, where Vine orders cost $0 — ETV fills it in
-      const zeroCostAsins = new Set(
-        existing.filter(e => !(Number(e.original_cost ?? 0) > 0)).map(e => e.amazon_asin)
-      );
+      const existingByAsin = new Map<string, Record<string, unknown>[]>();
+      for (const row of existing) {
+        const asin = row.amazon_asin as string;
+        existingByAsin.set(asin, [...(existingByAsin.get(asin) ?? []), row]);
+      }
 
-      const toInsert = selected.filter(item => !existingAsins.has(item.asin));
-      const toUpdate = selected.filter(item => existingAsins.has(item.asin));
+      const toInsert = selected.filter(item => !existingByAsin.has(item.asin));
+      const toUpdate = selected.filter(item => existingByAsin.has(item.asin));
+
+      // Exactly what the export says — no markup; prices are set after an item is received
+      const officialFields = (item: LatticeItem) => ({
+        vine_etv: item.etv > 0 ? item.etv : null,
+        vine_fmv: item.fmv > 0 ? item.fmv : null,
+        ordered_date: isoFromMDY(item.orderedDate),
+        shipped_date: isoFromMDY(item.shippedDate),
+        delivered_date: isoFromMDY(item.deliveredDate),
+        lattice_review_status: item.reviewStatus || null,
+        lattice_review_score: item.reviewRating,
+        lattice_review_quality: item.reviewQuality || null,
+        lattice_reviewed_date: item.reviewedDate || null,
+      });
 
       if (toInsert.length > 0) {
         const itemsToInsert = toInsert.map(item => ({
@@ -181,53 +179,68 @@ export function LatticeImportDialog({
           created_by: user.id,
           title: item.description ? item.description.slice(0, 255) : unknownItemTitle(item.asin),
           original_cost: item.valueToUse,
-          target_price: calcTargetPrice(item.valueToUse),
           amazon_asin: item.asin,
           acquisition_date: getAcquisitionDate(item),
           acquisition_source: 'Vine',
+          is_vine_order: true,
           condition: 'new' as const,
           status: 'acquired' as const,
           amazon_review_status:
             item.reviewStatus === 'Approved' ? 'reviewed_grant' : 'pending',
-          // Cast via unknown — column added by 20260523000002 migration
-          ...({ delivery_status: item.deliveryStatus || null } as unknown as object),
+          delivery_status: item.deliveryStatus || null,
+          data_sources: ['lattice_csv'],
+          ...officialFields(item),
           reviewed_by: [] as string[],
           photos: [] as string[],
         }));
 
         // Big exports (3,000+ rows) go in chunks so one request doesn't time out
         for (let i = 0; i < itemsToInsert.length; i += 500) {
-          const { error } = await supabase.from('items').insert(itemsToInsert.slice(i, i + 500));
+          const { error } = await writeWithOrderDates(itemsToInsert.slice(i, i + 500), rows =>
+            supabase.from('items').insert(rows)
+          );
           if (error) throw error;
         }
       }
 
       if (toUpdate.length > 0) {
-        const updates = toUpdate.map(item => () => {
-          const update: TablesUpdate<'items'> = {};
-          if (item.reviewStatus === 'Approved') {
-            update.amazon_review_status = 'reviewed_grant';
-          }
-          if (item.deliveryStatus) {
-            update.delivery_status = item.deliveryStatus;
-          }
-          if (item.valueToUse > 0 && zeroCostAsins.has(item.asin)) {
-            update.original_cost = item.valueToUse;
-            update.target_price = calcTargetPrice(item.valueToUse);
-          }
-          if (item.description && untitledAsins.has(item.asin)) {
-            update.title = item.description.slice(0, 255);
-          }
-          if (Object.keys(update).length === 0) return Promise.resolve({ error: null });
-          return supabase
-            .from('items')
-            .update(update)
-            .eq('team_id', team.id)
-            .eq('amazon_asin', item.asin);
-        });
+        const updates = toUpdate.flatMap(item =>
+          (existingByAsin.get(item.asin) ?? []).map(row => () => {
+            const update: Record<string, unknown> = {};
+            if (item.reviewStatus === 'Approved' && row.amazon_review_status !== 'reviewed_grant') {
+              update.amazon_review_status = 'reviewed_grant';
+            }
+            if (item.deliveryStatus && item.deliveryStatus !== row.delivery_status) {
+              update.delivery_status = item.deliveryStatus;
+            }
+            // Imported first from Amazon's order history, where Vine orders cost $0 — ETV fills it in
+            if (item.valueToUse > 0 && !(Number(row.original_cost ?? 0) > 0)) {
+              update.original_cost = item.valueToUse;
+            }
+            // Imported earlier without a name — a newer export may have it now
+            if (item.description && isUnknownTitle(row.title as string | null)) {
+              update.title = item.description.slice(0, 255);
+            }
+            // Everything else only fills blanks
+            for (const [key, value] of Object.entries(officialFields(item))) {
+              if (value != null && value !== '' && (row[key] == null || row[key] === '')) update[key] = value;
+            }
+            if (!row.is_vine_order) update.is_vine_order = true;
+            const sources = (row.data_sources as string[] | null) ?? [];
+            if (!sources.includes('lattice_csv')) update.data_sources = [...sources, 'lattice_csv'];
+            // A date column that doesn't exist yet reads as undefined → skip it rather than write it
+            for (const key of ['ordered_date', 'shipped_date', 'delivered_date']) {
+              if (!(key in row)) delete update[key];
+            }
+            if (Object.keys(update).length === 0) return Promise.resolve({ error: null });
+            return supabase.from('items').update(update as TablesUpdate<'items'>).eq('id', row.id as string);
+          })
+        );
         // 25 at a time — thousands of parallel requests get rate-limited
         for (let k = 0; k < updates.length; k += 25) {
-          await Promise.all(updates.slice(k, k + 25).map(run => run()));
+          const results = await Promise.all(updates.slice(k, k + 25).map(run => run()));
+          const failed = results.find(r => r.error);
+          if (failed?.error) throw failed.error;
         }
       }
 

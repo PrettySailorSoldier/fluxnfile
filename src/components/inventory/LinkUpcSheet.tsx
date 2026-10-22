@@ -1,16 +1,17 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Package, Search, Sparkles, Loader2, Plus, ExternalLink } from 'lucide-react';
+import { Package, Search, Sparkles, Loader2, Plus, Check, ChevronDown, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { Item } from '@/hooks/useInventory';
 import type { CodeType } from '@/lib/barcode';
 import { isUnknownTitle, lookupProduct } from '@/lib/productLookup';
-import { rankBySticker, rankByTitle } from '@/lib/scanIntake';
+import { guessStickerMatch, rankBySticker, rankByTitle } from '@/lib/scanIntake';
+import { OrderDetails } from '@/components/inventory/OrderDetails';
 
 const SUGGEST_THRESHOLD = 0.25;
 /** Rendering thousands of order rows on a phone is slow — search narrows it */
@@ -25,16 +26,22 @@ interface LinkUpcSheetProps {
   open: boolean;
   items: Item[];
   onClose: () => void;
-  /** Called after the code is saved onto the chosen item. */
+  /** Called after the user confirms an item and the code is saved onto it. */
   onLinked: (item: Item) => void;
   /** Shows "Not in my list — add as new item" */
   onAddNew?: () => void;
 }
 
+function shortDate(value: string | null | undefined): string | null {
+  const m = value?.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
+}
+
 /**
- * Shown when a scanned barcode isn't linked to any item yet. Ranks the list by
- * the looked-up product name, lets the user search by name or ASIN, and saves
- * the barcode on the chosen item so future scans match instantly.
+ * "Which item is this?" — shown when a scanned code isn't linked to an item
+ * yet. Ranks the list by the looked-up product name (or the words read off an
+ * X00 sticker), opens the best guess's full order details, and only saves the
+ * code once the user confirms "This is it". Nothing is matched on a guess.
  */
 export function LinkUpcSheet({
   upc,
@@ -47,9 +54,16 @@ export function LinkUpcSheet({
   onAddNew,
 }: LinkUpcSheetProps) {
   const [search, setSearch] = useState('');
+  /** The order whose details are open */
+  const [openId, setOpenId] = useState<string | null>(null);
+  const autoOpened = useRef(false);
 
   useEffect(() => {
-    if (!open) setSearch('');
+    if (!open) {
+      setSearch('');
+      setOpenId(null);
+      autoOpened.current = false;
+    }
   }, [open]);
 
   // Best-effort product lookup — linking works fine without it
@@ -67,7 +81,7 @@ export function LinkUpcSheet({
     const words = q.split(/\s+/).filter(Boolean);
     const pool = words.length
       ? items.filter((item) => {
-          const hay = `${item.title ?? ''} ${item.amazon_asin ?? ''} ${item.fnsku ?? ''} ${item.amazon_order_number ?? ''}`.toLowerCase();
+          const hay = `${item.title ?? ''} ${item.amazon_asin ?? ''} ${item.fnsku ?? ''} ${item.amazon_order_number ?? ''} ${item.amazon_order_id ?? ''}`.toLowerCase();
           return words.every((w) => hay.includes(w));
         })
       : items;
@@ -75,7 +89,23 @@ export function LinkUpcSheet({
     return codeType === 'fnsku' ? rankBySticker(pool, productName ?? null) : rankByTitle(pool, productName ?? null);
   }, [items, productName, search, codeType]);
 
-  const bestScore = ranked[0]?.score ?? 0;
+  // The best guess over the whole list (not the search), and how sure it is
+  const guess = useMemo(() => {
+    if (!productName) return null;
+    if (codeType === 'fnsku') return guessStickerMatch(items, productName);
+    const byTitle = rankByTitle(items, productName);
+    const [best, second] = byTitle;
+    if (!best || best.score < SUGGEST_THRESHOLD) return null;
+    const lookalikes = byTitle.filter((r) => r !== best && r.score >= best.score - 0.1).length;
+    return { item: best.item, sure: best.score >= 0.5 && best.score - (second?.score ?? 0) >= 0.15, lookalikes };
+  }, [items, productName, codeType]);
+
+  // Open the best guess's details straight away — checking it is one look
+  useEffect(() => {
+    if (!open || !guess || autoOpened.current) return;
+    autoOpened.current = true;
+    setOpenId(guess.item.id);
+  }, [open, guess]);
 
   const linkMutation = useMutation({
     mutationFn: async (item: Item) => {
@@ -104,6 +134,7 @@ export function LinkUpcSheet({
   });
 
   const shown = ranked.slice(0, MAX_SHOWN);
+  const guessId = guess?.item.id ?? null;
 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
@@ -111,8 +142,9 @@ export function LinkUpcSheet({
         <SheetHeader className="pb-3 text-left">
           <SheetTitle>Which item is this?</SheetTitle>
           <p className="text-sm text-muted-foreground">
-            <span className="font-mono">{upc}</span> isn't linked to an item yet. Pick it from your list —
-            the next box with this barcode matches automatically.
+            <span className="font-mono">{upc}</span> isn't linked to an item yet. Open an order to check its details,
+            then tap <span className="font-medium">This is it</span> — the next box with this barcode matches
+            automatically.
           </p>
         </SheetHeader>
 
@@ -132,11 +164,21 @@ export function LinkUpcSheet({
               </span>
             </div>
           )}
+          {guess && guess.lookalikes > 0 && (
+            <div className="flex gap-2 rounded-lg bg-warning/10 border border-warning/30 px-3 py-2 text-sm">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-warning" />
+              <span>
+                {guess.lookalikes} other order{guess.lookalikes === 1 ? '' : 's'} look{guess.lookalikes === 1 ? 's' : ''}{' '}
+                similar (same brand or kind of product). Compare the title, price and dates with the box before
+                confirming.
+              </span>
+            </div>
+          )}
 
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Type words from the box, or an ASIN…"
+              placeholder="Words from the box, ASIN or order #"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-9"
@@ -156,50 +198,80 @@ export function LinkUpcSheet({
             </p>
           ) : (
             <div className="space-y-2">
-              {shown.map(({ item, score }) => (
-                <div
-                  key={item.id}
-                  role="button"
-                  tabIndex={0}
-                  className="w-full flex items-center gap-3 p-3 rounded-lg border border-border bg-card hover:bg-muted/50 transition-colors text-left cursor-pointer"
-                  onClick={() => !linkMutation.isPending && linkMutation.mutate(item)}
-                  onKeyDown={(e) => e.key === 'Enter' && !linkMutation.isPending && linkMutation.mutate(item)}
-                >
-                  <div className="flex-shrink-0 w-12 h-12 rounded-md overflow-hidden bg-muted flex items-center justify-center">
-                    {item.photos?.[0] ? (
-                      <img src={item.photos[0]} alt="" className="w-full h-full object-cover" />
-                    ) : (
-                      <Package className="w-5 h-5 text-muted-foreground" />
+              {shown.map(({ item }) => {
+                const isOpen = openId === item.id;
+                const etv = item.vine_etv ?? item.original_cost;
+                const date = shortDate(item.ordered_date) ?? shortDate(item.acquisition_date);
+                return (
+                  <div
+                    key={item.id}
+                    className={`rounded-lg border bg-card transition-colors ${isOpen ? 'border-primary/60' : 'border-border'}`}
+                  >
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={isOpen}
+                      className="w-full flex items-center gap-3 p-3 hover:bg-muted/50 text-left cursor-pointer rounded-lg"
+                      onClick={() => setOpenId(isOpen ? null : item.id)}
+                      onKeyDown={(e) => e.key === 'Enter' && setOpenId(isOpen ? null : item.id)}
+                    >
+                      <div className="flex-shrink-0 w-12 h-12 rounded-md overflow-hidden bg-muted flex items-center justify-center">
+                        {item.photos?.[0] ? (
+                          <img src={item.photos[0]} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                          <Package className="w-5 h-5 text-muted-foreground" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm font-medium ${isOpen ? '' : 'line-clamp-2'}`}>{item.title || 'Untitled Item'}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {etv > 0 ? `$${etv.toFixed(2)} ETV` : 'No value'}
+                          {date ? ` · ${date}` : ''}
+                          {item.physical_status === 'unconfirmed' ? ' · on order sheet' : ''}
+                        </p>
+                        {item.id === guessId && (
+                          <Badge
+                            className={`mt-1 ${
+                              guess?.sure
+                                ? 'bg-primary/15 text-primary border-primary/30'
+                                : 'bg-warning/20 text-foreground border-warning/50'
+                            }`}
+                          >
+                            <Sparkles className="w-3 h-3 mr-1" />
+                            {guess?.sure ? 'Best match' : 'Closest guess — check it'}
+                          </Badge>
+                        )}
+                      </div>
+                      <ChevronDown
+                        className={`w-4 h-4 flex-shrink-0 text-muted-foreground transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                      />
+                    </div>
+
+                    {isOpen && (
+                      <div className="px-3 pb-3 space-y-3">
+                        <OrderDetails item={item} showPhoto={false} />
+                        <div className="flex gap-2">
+                          <Button
+                            className="flex-1"
+                            onClick={() => linkMutation.mutate(item)}
+                            disabled={linkMutation.isPending}
+                          >
+                            {linkMutation.isPending ? (
+                              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                            ) : (
+                              <Check className="w-4 h-4 mr-1" />
+                            )}
+                            This is it
+                          </Button>
+                          <Button variant="outline" className="flex-1" onClick={() => setOpenId(null)}>
+                            Not this one
+                          </Button>
+                        </div>
+                      </div>
                     )}
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium line-clamp-2">{item.title || 'Untitled Item'}</p>
-                    <p className="text-xs text-muted-foreground">
-                      ${item.original_cost.toFixed(2)}
-                      {item.acquisition_date ? ` · ${item.acquisition_date}` : ''}
-                      {item.physical_status === 'unconfirmed' ? ' · on order sheet' : ''}
-                    </p>
-                    {item.amazon_asin && (
-                      <a
-                        href={`https://www.amazon.com/dp/${item.amazon_asin}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-primary font-mono"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {item.amazon_asin}
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    )}
-                  </div>
-                  {score >= SUGGEST_THRESHOLD && score === bestScore && (
-                    <Badge className="flex-shrink-0 bg-primary/15 text-primary border-primary/30">
-                      <Sparkles className="w-3 h-3 mr-1" />
-                      Best match
-                    </Badge>
-                  )}
-                </div>
-              ))}
+                );
+              })}
               {ranked.length > MAX_SHOWN && (
                 <p className="text-xs text-muted-foreground text-center py-2">
                   Showing {MAX_SHOWN} of {ranked.length} — type words from the box to narrow it down

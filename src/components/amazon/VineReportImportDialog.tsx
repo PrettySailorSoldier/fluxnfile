@@ -27,7 +27,7 @@ import {
   Upload,
   CheckCircle2,
 } from 'lucide-react';
-import { useWorkflowSettings } from '@/hooks/useUserPreferences';
+import { writeWithOrderDates } from '@/lib/orderDates';
 
 interface VineReportImportDialogProps {
   open: boolean;
@@ -41,16 +41,6 @@ export function VineReportImportDialog({
   const { team, user } = useAuth();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const workflowSettings = useWorkflowSettings();
-
-  const calcTargetPrice = (cost: number): number | null => {
-    if (cost <= 0) return null;
-    let price = Math.round(cost * (workflowSettings.defaultMarkupPercent / 100) * 100) / 100;
-    if (workflowSettings.roundPricesToNinetyNine && price > 1) {
-      price = Math.floor(price) - 0.01;
-    }
-    return price;
-  };
 
   const [step, setStep] = useState<'upload' | 'preview' | 'done'>('upload');
   const [parsedItems, setParsedItems] = useState<VineReportItem[]>([]);
@@ -138,42 +128,40 @@ export function VineReportImportDialog({
       const asins = selected.map(i => i.asin).filter(Boolean);
 
       // Fetch existing items by ASIN, 200 at a time — one request with every
-      // ASIN of a yearly report is too long for the URL and caps at 1,000 rows
-      type ExistingRow = {
-        id: string;
-        amazon_asin: string | null;
-        amazon_order_number: string | null;
-        original_cost: number | null;
-        title: string | null;
-      };
-      const existingRows: ExistingRow[] = [];
+      // ASIN of a yearly report is too long for the URL and caps at 1,000 rows.
+      // '*' so the order-date columns are read when they exist.
+      const existingRows: Record<string, unknown>[] = [];
       for (let i = 0; i < asins.length; i += 200) {
         const { data, error } = await supabase
           .from('items')
-          .select('id, amazon_asin, amazon_order_number, original_cost, title')
+          .select('*')
           .eq('team_id', team.id)
           .in('amazon_asin', asins.slice(i, i + 200));
         if (error) throw error;
-        existingRows.push(...((data ?? []) as ExistingRow[]));
+        existingRows.push(...((data ?? []) as Record<string, unknown>[]));
       }
 
-      const existingMap = new Map(existingRows.map(e => [e.amazon_asin, e]));
+      const existingMap = new Map(existingRows.map(e => [e.amazon_asin as string, e]));
 
       const toInsert = selected.filter(item => !existingMap.has(item.asin));
       const toMerge = selected.filter(item => existingMap.has(item.asin));
 
-      // INSERT new items
+      // INSERT new items — exactly what the report says, no markup
       if (toInsert.length > 0) {
         const itemsToInsert = toInsert.map(item => ({
           team_id: team.id,
           created_by: user.id,
           title: item.productName.slice(0, 255),
           original_cost: item.estimatedTaxValue,
-          target_price: calcTargetPrice(item.estimatedTaxValue),
+          vine_etv: item.estimatedTaxValue,
           amazon_asin: item.asin,
-          ...({ amazon_order_number: item.orderNumber } as unknown as object),
+          amazon_order_number: item.orderNumber,
+          ordered_date: item.orderedOn,
+          shipped_date: item.shippedOn,
           acquisition_date: item.shippedDate,
           acquisition_source: 'Vine',
+          is_vine_order: true,
+          data_sources: ['vine_report'],
           condition: 'new' as const,
           status: 'acquired' as const,
           amazon_review_status: 'pending',
@@ -182,7 +170,9 @@ export function VineReportImportDialog({
         }));
 
         for (let i = 0; i < itemsToInsert.length; i += 500) {
-          const { error } = await supabase.from('items').insert(itemsToInsert.slice(i, i + 500));
+          const { error } = await writeWithOrderDates(itemsToInsert.slice(i, i + 500), rows =>
+            supabase.from('items').insert(rows)
+          );
           if (error) throw error;
         }
       }
@@ -196,33 +186,45 @@ export function VineReportImportDialog({
             if (!existing) return null;
 
             const updates: TablesUpdate<'items'> = {};
+            const isBlank = (key: string) => existing[key] == null || existing[key] === '';
 
             // Lattice exports leave many names blank — this report has them
-            if (isUnknownTitle(existing.title) && item.productName) {
+            if (isUnknownTitle(existing.title as string | null) && item.productName) {
               updates.title = item.productName.slice(0, 255);
             }
 
-            if (!existing.amazon_order_number && item.orderNumber) {
+            if (isBlank('amazon_order_number') && item.orderNumber) {
               updates.amazon_order_number = item.orderNumber;
             }
 
-            if (
-              (!existing.original_cost || existing.original_cost === 0) &&
-              item.estimatedTaxValue > 0
-            ) {
+            if (!(Number(existing.original_cost ?? 0) > 0) && item.estimatedTaxValue > 0) {
               updates.original_cost = item.estimatedTaxValue;
-              updates.target_price = calcTargetPrice(item.estimatedTaxValue);
+            }
+            if (isBlank('vine_etv') && item.estimatedTaxValue > 0) {
+              updates.vine_etv = item.estimatedTaxValue;
+            }
+            // Date columns that don't exist yet aren't in the row at all → left alone
+            if ('ordered_date' in existing && isBlank('ordered_date') && item.orderedOn) {
+              updates.ordered_date = item.orderedOn;
+            }
+            if ('shipped_date' in existing && isBlank('shipped_date') && item.shippedOn) {
+              updates.shipped_date = item.shippedOn;
             }
 
             if (Object.keys(updates).length === 0) return null;
 
-            return () => supabase.from('items').update(updates).eq('id', existing.id);
+            const sources = (existing.data_sources as string[] | null) ?? [];
+            if (!sources.includes('vine_report')) updates.data_sources = [...sources, 'vine_report'];
+
+            return () => supabase.from('items').update(updates).eq('id', existing.id as string);
           })
           .filter((op): op is NonNullable<typeof op> => op !== null);
 
         // 25 at a time — thousands of parallel requests get rate-limited
         for (let i = 0; i < mergeOps.length; i += 25) {
-          await Promise.all(mergeOps.slice(i, i + 25).map(run => run()));
+          const results = await Promise.all(mergeOps.slice(i, i + 25).map(run => run()));
+          const failed = results.find(r => r.error);
+          if (failed?.error) throw failed.error;
         }
         mergedCount = mergeOps.length;
       }
@@ -233,7 +235,7 @@ export function VineReportImportDialog({
       queryClient.invalidateQueries({ queryKey: ['items'] });
       const parts: string[] = [];
       if (inserted > 0) parts.push(`${inserted} new items imported`);
-      if (merged > 0) parts.push(`${merged} items updated (names, order numbers, values)`);
+      if (merged > 0) parts.push(`${merged} items updated (names, order numbers, values, dates)`);
       if (skipped > 0 && merged === 0) parts.push(`${skipped} already up to date`);
       toast.success(parts.join(' · ') || 'Import complete!');
       setStep('done');

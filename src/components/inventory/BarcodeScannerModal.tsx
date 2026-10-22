@@ -5,7 +5,6 @@ import { X, ScanLine, Loader2 } from 'lucide-react';
 import { Item } from '@/hooks/useInventory';
 import { toast } from 'sonner';
 import { readStickerText } from '@/lib/stickerOcr';
-import { attachCode, pickStickerMatch } from '@/lib/scanIntake';
 import type { CodeType } from '@/lib/barcode';
 
 const VIEWFINDER_ID = 'zxing-viewfinder';
@@ -13,7 +12,8 @@ const VIEWFINDER_ID = 'zxing-viewfinder';
 interface BarcodeScannerModalProps {
   open: boolean;
   items: Item[];
-  onMatchFound: (item: Item) => void;
+  /** An exact code match (ASIN, linked UPC, or a sticker saved on the item) */
+  onMatchFound: (item: Item, code: string, codeType: CodeType) => void;
   /** `hint`: words read off an X00 sticker, to rank the picker */
   onNoMatch: (code: string, codeType: CodeType, hint?: string | null) => void;
   onClose: () => void;
@@ -45,7 +45,7 @@ export function BarcodeScannerModal({
               : undefined;
           if (bySticker) {
             toast.success(`Found: ${bySticker.title || 'Untitled item'}`);
-            onMatchFound(bySticker);
+            onMatchFound(bySticker, result.value, 'fnsku');
             onClose();
             break;
           }
@@ -54,16 +54,9 @@ export function BarcodeScannerModal({
             const reading = result.frame ? toast.loading('Reading the sticker…') : undefined;
             const printed = result.frame ? await readStickerText(result.frame, result.value) : null;
             if (reading !== undefined) toast.dismiss(reading);
-            const pool = items.filter((item) => item.physical_status === 'unconfirmed' && !item.fnsku);
-            const picked = pickStickerMatch(pool, printed);
-            if (picked) {
-              await attachCode([picked.id], result.value, 'fnsku');
-              toast.success(`Read “${printed}” — ${picked.title || 'item'}`);
-              onMatchFound({ ...picked, fnsku: result.value });
-            } else {
-              // Let the user pick it, closest matches to the sticker on top
-              onNoMatch(result.value, 'fnsku', printed);
-            }
+            // Never matched on a reading alone — brands sell look-alikes. The picker
+            // opens the closest order's details for the user to confirm.
+            onNoMatch(result.value, 'fnsku', printed);
             onClose();
             break;
           }
@@ -78,7 +71,7 @@ export function BarcodeScannerModal({
                 );
           if (match) {
             toast.success(`Found: ${match.title || 'Untitled item'}`);
-            onMatchFound(match);
+            onMatchFound(match, result.value, result.codeType);
           } else {
             onNoMatch(result.value, result.codeType);
           }

@@ -69,6 +69,8 @@ export default function OrderSheet() {
   const [linkTarget, setLinkTarget] = useState<{ code: string; codeType: CodeType; hint?: string | null } | null>(null);
   // How the confirm sheet was opened — scan-initiated confirms reopen the scanner
   const [confirmSource, setConfirmSource] = useState<'scan' | 'list'>('list');
+  /** The code behind the open confirm sheet, for "Not this item" */
+  const [lastScan, setLastScan] = useState<{ code: string; codeType: CodeType; hint?: string | null } | null>(null);
 
   // Auto-open the confirm sheet when arriving via /order-sheet?confirm=<id>
   // (used by the Inventory scanner when it finds an unconfirmed item)
@@ -90,7 +92,10 @@ export default function OrderSheet() {
     return items.filter(
       (item) =>
         item.title?.toLowerCase().includes(q) ||
-        item.amazon_asin?.toLowerCase().includes(q)
+        item.amazon_asin?.toLowerCase().includes(q) ||
+        item.amazon_order_number?.toLowerCase().includes(q) ||
+        item.amazon_order_id?.toLowerCase().includes(q) ||
+        item.fnsku?.toLowerCase().includes(q)
     );
   }, [items, search]);
 
@@ -116,9 +121,25 @@ export default function OrderSheet() {
     },
   });
 
-  const handleScanMatch = (item: Item) => {
+  const handleScanMatch = (item: Item, scan: { code: string; codeType: CodeType; hint?: string | null }) => {
     setConfirmSource('scan');
+    setLastScan(scan);
     setConfirmItem(item);
+  };
+
+  /** The box is a different order: unlink the code from this one and pick again. */
+  const handleNotThisItem = async (item: Item) => {
+    const scan = lastScan;
+    setConfirmItem(null);
+    if (!scan) return;
+    // A sticker or UPC saved onto the wrong order would keep matching it
+    if (scan.codeType === 'fnsku' && item.fnsku?.toUpperCase() === scan.code.toUpperCase()) {
+      await supabase.from('items').update({ fnsku: null }).eq('id', item.id);
+    } else if (scan.codeType === 'upc' && item.upc === scan.code) {
+      await supabase.from('items').update({ upc: null }).eq('id', item.id);
+    }
+    queryClient.invalidateQueries({ queryKey: ['items'] });
+    setLinkTarget({ code: scan.code, codeType: scan.codeType, hint: scan.hint });
   };
 
   const handleScanNoMatch = async (code: string, codeType: CodeType, hint?: string | null) => {
@@ -202,7 +223,7 @@ export default function OrderSheet() {
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Search items..."
+            placeholder="Search name, ASIN or order #..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
@@ -309,12 +330,13 @@ export default function OrderSheet() {
         open={!!confirmItem}
         onClose={() => setConfirmItem(null)}
         onConfirmed={handleConfirmed}
+        onNotThisItem={confirmSource === 'scan' && lastScan ? handleNotThisItem : undefined}
       />
 
       <BarcodeScannerModal
         open={showScanner}
         items={items}
-        onMatchFound={handleScanMatch}
+        onMatchFound={(item, code, codeType) => handleScanMatch(item, { code, codeType })}
         onNoMatch={handleScanNoMatch}
         onClose={() => setShowScanner(false)}
       />
@@ -329,8 +351,10 @@ export default function OrderSheet() {
         onLinked={(item) => {
           queryClient.invalidateQueries({ queryKey: ['items'] });
           const t = linkTarget;
+          if (!t) return;
           handleScanMatch(
-            t?.codeType === 'fnsku' ? { ...item, fnsku: t.code } : t?.codeType === 'upc' ? { ...item, upc: t.code } : item
+            t.codeType === 'fnsku' ? { ...item, fnsku: t.code } : t.codeType === 'upc' ? { ...item, upc: t.code } : item,
+            t
           );
         }}
       />
