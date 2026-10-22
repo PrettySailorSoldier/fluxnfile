@@ -65,12 +65,22 @@ const MATCH_FIELDS =
 
 /** Every item (any status) with this barcode, oldest first. */
 export async function findByCode(teamId: string, code: string, codeType: CodeType): Promise<MatchRow[]> {
-  // FNSKUs aren't stored on items — resolve them to an ASIN first
-  if (codeType === 'fnsku') return [];
   let query = supabase.from('items').select(MATCH_FIELDS).eq('team_id', teamId);
-  query = codeType === 'asin' ? query.ilike('amazon_asin', code) : query.in('upc', upcVariants(code));
+  query =
+    codeType === 'asin'
+      ? query.ilike('amazon_asin', code)
+      : codeType === 'fnsku'
+        ? query.ilike('fnsku', code)
+        : query.in('upc', upcVariants(code));
   const { data, error } = await query.order('created_at', { ascending: true }).limit(100);
-  if (error) throw error;
+  if (error) {
+    // items.fnsku arrives with a migration; until it's run, stickers just don't match by themselves
+    if (codeType === 'fnsku') {
+      console.warn('[scanIntake] sticker lookup skipped:', error.message);
+      return [];
+    }
+    throw error;
+  }
   return (data ?? []) as unknown as MatchRow[];
 }
 
@@ -169,6 +179,8 @@ export function buildItemFromLookup(
     category_id: matchCategory(found?.category, ctx.categories),
     upc: codeType === 'upc' ? code : null,
     amazon_asin: codeType === 'asin' ? code : found?.asin ?? null,
+    // Only sent for stickers, so item creation keeps working before the fnsku migration runs
+    ...(codeType === 'fnsku' ? { fnsku: code } : {}),
     original_cost: ctx.defaults.cost || 0,
     acquisition_date: today,
     acquisition_source: ctx.defaults.source || null,
@@ -218,6 +230,7 @@ export async function cloneUnit(sourceId: string, ctx: IntakeContext): Promise<M
     category_id: src.category_id,
     upc: src.upc,
     amazon_asin: src.amazon_asin,
+    fnsku: src.fnsku,
     original_cost: src.original_cost,
     acquisition_date: new Date().toISOString().split('T')[0],
     acquisition_source: src.acquisition_source,
@@ -242,12 +255,21 @@ export async function cloneUnit(sourceId: string, ctx: IntakeContext): Promise<M
  * the UPC printed next to it). Only fills blanks — never overwrites a code.
  */
 export async function attachCode(itemIds: string[], code: string, codeType: CodeType): Promise<void> {
-  if (itemIds.length === 0 || codeType === 'fnsku') return;
+  if (itemIds.length === 0) return;
   const { error } =
     codeType === 'asin'
       ? await supabase.from('items').update({ amazon_asin: code }).in('id', itemIds).is('amazon_asin', null)
-      : await supabase.from('items').update({ upc: code }).in('id', itemIds).is('upc', null);
-  if (error) throw error;
+      : codeType === 'fnsku'
+        ? await supabase.from('items').update({ fnsku: code }).in('id', itemIds).is('fnsku', null)
+        : await supabase.from('items').update({ upc: code }).in('id', itemIds).is('upc', null);
+  if (error) {
+    // Saving a sticker is a convenience — never fail the scan over it (e.g. migration not run yet)
+    if (codeType === 'fnsku') {
+      console.warn('[scanIntake] sticker not saved:', error.message);
+      return;
+    }
+    throw error;
+  }
 }
 
 export async function deleteItem(id: string): Promise<void> {

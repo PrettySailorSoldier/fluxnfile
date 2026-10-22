@@ -102,6 +102,7 @@ export type Database = {
           brand: string | null
           retail_price: number | null
           amazon_asin: string | null
+          fnsku: string | null
           amazon_order_id: string | null
           amazon_order_number: string | null
           amazon_order_url: string | null
@@ -168,6 +169,7 @@ export type Database = {
           brand?: string | null
           retail_price?: number | null
           amazon_asin?: string | null
+          fnsku?: string | null
           amazon_order_id?: string | null
           amazon_order_number?: string | null
           amazon_order_url?: string | null
@@ -234,6 +236,7 @@ export type Database = {
           brand?: string | null
           retail_price?: number | null
           amazon_asin?: string | null
+          fnsku?: string | null
           amazon_order_id?: string | null
           amazon_order_number?: string | null
           amazon_order_url?: string | null

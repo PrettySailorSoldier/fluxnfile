@@ -50,6 +50,8 @@ export interface Item {
   review_notes: string | null;
   // Amazon / import fields
   amazon_asin: string | null;
+  /** Amazon X00… sticker scanned on the box (saved once matched) */
+  fnsku?: string | null;
   upc: string | null;
   // Autofilled product details (barcode lookup / list import)
   brand?: string | null;

@@ -58,6 +58,17 @@ A scanned box matches an Order Sheet item by **ASIN**. Lattice and the Vine Item
 
 Suggested order: import the Lattice CSV, then the Itemized Report for each year.
 
+## Amazon X00 stickers are remembered (Oct 22)
+
+When a scanned X00 sticker is matched to an item, whether by Amazon lookup or by picking it in "Which item is this?", the sticker is saved in `items.fnsku`. Scanning that sticker again in Add or Find mode, the Order Sheet scanner, or Inventory search finds the item directly, without an Amazon call.
+
+**Deploy checklist.** Merging updates the app on Vercel, but Supabase changes are manual:
+1. In the SQL editor, run `20261021000000_catalog_fnsku_asin.sql` and `20261022000000_items_fnsku.sql`.
+2. Run `supabase functions deploy lookup-upc fetch-amazon-prices`. Until you do, the live function answers X00 stickers with "Invalid barcode".
+3. Optionally run `supabase secrets set OPENWEBNINJA_API_KEY=...` so stickers and unknown barcodes find their ASIN by themselves. Without it, you pick the item once per sticker.
+
+Sticker lookups and saves are skipped quietly until step 1 is done, so scanning keeps working either way.
+
 ## Imports stay out of Inventory
 
 Imported orders (Lattice, Vine Itemized Report, Amazon order history) are created as `physical_status = 'unconfirmed'` and only show on the **Order Sheet**. Inventory, Dashboard, Analytics, Facebook tools, Sales Check and the Needs details queue only read found items (`useItems` filters out `unconfirmed`). An item moves to Inventory only when a box is scanned (or confirmed by hand) — that sets it to Sell or Keep at a location. The one import that can skip this is **Import → Any list**, which asks you where its rows should go.
