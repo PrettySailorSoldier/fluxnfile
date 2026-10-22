@@ -290,6 +290,78 @@ export function rankByTitle<T extends { title: string | null }>(
   return scored.sort((a, b) => b.score - a.score);
 }
 
+function titleWords(s: string): string[] {
+  return s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+}
+
+/**
+ * How well a title covers the words read off an X00 sticker: the share of
+ * sticker words found in the title. Stickers cut names off mid-word
+ * ("Golf Target Clot"), so a title word only has to start with it.
+ */
+export function stickerScore(stickerText: string, title: string | null): { score: number; hits: number } {
+  const words = [...new Set(titleWords(stickerText))];
+  if (!title || isUnknownTitle(title) || words.length === 0) return { score: 0, hits: 0 };
+  const inTitle = titleWords(title);
+  const hits = words.filter((w) => inTitle.some((t) => wordMatches(w, t))).length;
+  return { score: hits / words.length, hits };
+}
+
+/** Edit distance, for OCR slips like "protectjy" → "protection". */
+function editDistance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cur = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = cur;
+    }
+  }
+  return row[b.length];
+}
+
+/** A sticker word matches a title word it starts (cut-off names), allowing a misread letter or two. */
+function wordMatches(stickerWord: string, titleWord: string): boolean {
+  if (titleWord.startsWith(stickerWord)) return true;
+  if (stickerWord.length < 5) return false;
+  const allowed = stickerWord.length >= 8 ? 2 : 1;
+  return editDistance(stickerWord, titleWord.slice(0, stickerWord.length)) <= allowed;
+}
+
+/** Rank items by how well they match a sticker's printed words. Best first. */
+export function rankBySticker<T extends { title: string | null }>(
+  candidates: T[],
+  stickerText: string | null
+): { item: T; score: number; hits: number }[] {
+  const scored = candidates.map((item) => ({ item, ...(stickerText ? stickerScore(stickerText, item.title) : { score: 0, hits: 0 }) }));
+  return scored.sort((a, b) => b.score - a.score || b.hits - a.hits);
+}
+
+/**
+ * The one Order Sheet item an X00 sticker's printed words clearly point to:
+ * at least 3 words matched, half the sticker covered (OCR adds stray words),
+ * and clearly ahead of the runner-up. Ties — e.g. three tankless water heaters
+ * on the list — go to "Which item is this?" with those at the top.
+ */
+export async function findOrderSheetStickerMatch(
+  stickerText: string | null,
+  candidates: { id: string; title: string | null; physical_status: string; fnsku?: string | null }[]
+): Promise<MatchRow | null> {
+  if (!stickerText) return null;
+  const pool = candidates.filter((c) => c.physical_status === 'unconfirmed' && !c.fnsku);
+  const [best, second] = rankBySticker(pool, stickerText);
+  const runnerUp = second ?? { score: 0, hits: 0 };
+  if (!best || best.hits < 3 || best.score < 0.5 || best.hits <= runnerUp.hits || best.score - runnerUp.score < 0.2 - 1e-9) {
+    return null;
+  }
+  const { data, error } = await supabase.from('items').select(MATCH_FIELDS).eq('id', best.item.id).single();
+  if (error) return null;
+  const row = data as unknown as MatchRow;
+  return row.physical_status === 'unconfirmed' ? row : null;
+}
+
 /**
  * Product barcodes aren't on Amazon order exports, so an unknown UPC might
  * still be an Order Sheet item. If the looked-up title clearly matches one

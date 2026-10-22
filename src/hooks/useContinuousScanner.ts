@@ -9,6 +9,22 @@ import {
 
 type FoundOrUnrecognized = Extract<ScanResult, { status: 'found' | 'not_recognized' }>;
 
+export interface ScanMeta {
+  /** The barcode ran up/down the frame (label turned 90°) */
+  vertical: boolean;
+  /** Where ZXing found the barcode, in video pixels */
+  points: { x: number; y: number }[];
+}
+
+/** Where the barcode lay in the frame, from the points ZXing found along it. */
+function scanMeta(result: Result): ScanMeta {
+  const points = (result.getResultPoints() ?? []).map((p) => ({ x: p.getX(), y: p.getY() }));
+  if (points.length < 2) return { vertical: false, points };
+  const first = points[0];
+  const last = points[points.length - 1];
+  return { vertical: Math.abs(last.y - first.y) > Math.abs(last.x - first.x), points };
+}
+
 /**
  * Short symbologies that ZXing "finds" in blurry frames of other barcodes
  * (e.g. an EAN-8 read off half of an EAN-13). They must decode the same
@@ -32,7 +48,7 @@ interface Options {
  * Call `pause()` while a sheet/dialog is open so stray reads are ignored.
  */
 export function useContinuousScanner(
-  onCode: (result: FoundOrUnrecognized) => void,
+  onCode: (result: FoundOrUnrecognized, meta: ScanMeta) => void,
   { repeatGapMs = 2000 }: Options = {}
 ) {
   const [isRunning, setIsRunning] = useState(false);
@@ -98,7 +114,7 @@ export function useContinuousScanner(
               if (isRepeat || pausedRef.current) return;
               const scan = toScanResult(result);
               if (scan.status === 'found' || scan.status === 'not_recognized') {
-                onCodeRef.current(scan);
+                onCodeRef.current(scan, scanMeta(result));
               }
             } else if (err && !(err instanceof NotFoundException)) {
               console.error('Scanner error:', err);

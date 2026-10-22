@@ -58,35 +58,54 @@ export function VineReportImportDialog({
   const [skippedFreeItems, setSkippedFreeItems] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
 
+  /** One or several yearly reports at once (e.g. 2023–2026) — merged into one preview. */
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
 
     setIsProcessing(true);
 
     try {
-      const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: 'array' });
+      const items: VineReportItem[] = [];
+      const seen = new Set<string>();
+      let cancellations = 0;
+      let freeItems = 0;
+      const rejected: string[] = [];
 
-      if (!isVineReport(workbook)) {
+      for (const file of files) {
+        const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+        if (!isVineReport(workbook)) {
+          rejected.push(file.name);
+          continue;
+        }
+        const result = parseVineReport(workbook);
+        cancellations += result.skippedCancellations;
+        freeItems += result.skippedFreeItems;
+        for (const item of result.items) {
+          // The same order can show up in two years' reports (ordered in Dec, shipped in Jan)
+          const key = `${item.orderNumber}|${item.asin}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          items.push(item);
+        }
+      }
+
+      if (rejected.length > 0) {
         toast.error(
-          "This doesn't look like a Vine Itemized Report. Please download it from your Amazon Vine account."
+          `${rejected.join(', ')} ${rejected.length === 1 ? "doesn't" : "don't"} look like a Vine Itemized Report — skipped.`
         );
+      }
+      if (items.length === 0) {
+        if (rejected.length < files.length) toast.error('No importable items found in the report.');
         return;
       }
 
-      const result = parseVineReport(workbook);
-
-      if (result.items.length === 0) {
-        toast.error('No importable items found in the report.');
-        return;
-      }
-
-      setParsedItems(result.items);
-      setSkippedCancellations(result.skippedCancellations);
-      setSkippedFreeItems(result.skippedFreeItems);
+      setParsedItems(items);
+      setSkippedCancellations(cancellations);
+      setSkippedFreeItems(freeItems);
       setStep('preview');
-      toast.success(`Found ${result.items.length} items to import!`);
+      const fileCount = files.length - rejected.length;
+      toast.success(`Found ${items.length} items${fileCount > 1 ? ` in ${fileCount} reports` : ''} to import!`);
     } catch (err) {
       toast.error('Failed to read file. Please try again.');
       console.error(err);
@@ -266,14 +285,15 @@ export function VineReportImportDialog({
               >
                 <Upload className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
                 <p className="font-medium text-foreground mb-1">
-                  Click to upload Vine Report XLSX
+                  Click to upload Vine Report XLSX files
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  Download from Amazon Vine → Tax Information → Download itemized report
+                  Select one or several years at once. Download from Amazon Vine → Tax Information → Download itemized report
                 </p>
                 <input
                   ref={fileInputRef}
                   type="file"
+                  multiple
                   accept=".xlsx,.xls"
                   className="hidden"
                   onChange={handleFileUpload}
@@ -293,6 +313,7 @@ export function VineReportImportDialog({
                   <li>Click "Tax information" in the menu</li>
                   <li>Select the year</li>
                   <li>Click "Download itemized report" → XLSX</li>
+                  <li>Repeat for each year, then select all the files here together</li>
                 </ol>
               </div>
             </div>

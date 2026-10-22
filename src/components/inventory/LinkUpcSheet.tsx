@@ -10,7 +10,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { Item } from '@/hooks/useInventory';
 import type { CodeType } from '@/lib/barcode';
 import { isUnknownTitle, lookupProduct } from '@/lib/productLookup';
-import { rankByTitle } from '@/lib/scanIntake';
+import { rankBySticker, rankByTitle } from '@/lib/scanIntake';
 
 const SUGGEST_THRESHOLD = 0.25;
 /** Rendering thousands of order rows on a phone is slow — search narrows it */
@@ -71,8 +71,9 @@ export function LinkUpcSheet({
           return words.every((w) => hay.includes(w));
         })
       : items;
-    return rankByTitle(pool, productName ?? null);
-  }, [items, productName, search]);
+    // X00 stickers print a cut-off name ("Golf Target Clot") — match its words instead
+    return codeType === 'fnsku' ? rankBySticker(pool, productName ?? null) : rankByTitle(pool, productName ?? null);
+  }, [items, productName, search, codeType]);
 
   const bestScore = ranked[0]?.score ?? 0;
 
@@ -124,7 +125,7 @@ export function LinkUpcSheet({
           )}
           {productName && !isUnknownTitle(productName) && (
             <div className="rounded-lg bg-primary/10 border border-primary/30 px-3 py-2 text-sm">
-              <span className="text-muted-foreground">Looks like: </span>
+              <span className="text-muted-foreground">{codeType === 'fnsku' ? 'Sticker reads: ' : 'Looks like: '}</span>
               <span className="font-medium">
                 {lookup?.brand ? `${lookup.brand} — ` : ''}
                 {productName}

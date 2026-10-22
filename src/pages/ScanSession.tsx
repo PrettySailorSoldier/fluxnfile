@@ -45,7 +45,8 @@ import { useContinuousScanner } from '@/hooks/useContinuousScanner';
 import { QuickEditSheet } from '@/components/inventory/QuickEditSheet';
 import { LinkUpcSheet } from '@/components/inventory/LinkUpcSheet';
 import { classifyCode, isFnsku, type CodeType } from '@/lib/barcode';
-import { isUnknownTitle, lookupProduct, type ProductLookup } from '@/lib/productLookup';
+import { isUnknownTitle, lookupProduct } from '@/lib/productLookup';
+import { captureFrame, readStickerText, warmUpStickerReader, type StickerFrame } from '@/lib/stickerOcr';
 import { jaccardSimilarity, normalizeTitle } from '@/utils/import-dedup-engine';
 import { playSynthesizedTone } from '@/utils/audioGenerator';
 import {
@@ -56,6 +57,7 @@ import {
   fillFromLookup,
   findByCode,
   findOrderSheetNameMatch,
+  findOrderSheetStickerMatch,
   receiveItem,
   undoReceive,
   type IntakeContext,
@@ -97,6 +99,8 @@ interface SessionRow {
   inStock?: number;
   autofilled?: boolean;
   matchedByName?: boolean;
+  /** Product name to rank the "Which item is this?" list by (lookup title or sticker text) */
+  hint?: string | null;
   /** Product came from an Amazon keyword search — worth a quick check */
   fuzzy?: boolean;
   /** Other barcodes of the same product seen this session (ASIN, FNSKU, UPC…) */
@@ -233,6 +237,8 @@ export default function ScanSession() {
         : null,
     [team?.id, user?.id, categories, defaults]
   );
+  /** Camera frames of X00 stickers waiting to be read, by sticker code */
+  const stickerFramesRef = useRef(new Map<string, StickerFrame>());
   const orderItemsRef = useRef(orderItems);
   orderItemsRef.current = orderItems;
   const ctxRef = useRef(ctx);
@@ -339,48 +345,68 @@ export default function ScanSession() {
       const c = ctxRef.current;
       if (!c) return;
       const currentMode = modeRef.current;
-      let code = scannedCode;
-      let codeType = scannedType;
-      let preLookup: ProductLookup | undefined;
+      const code = scannedCode;
+      const codeType = scannedType;
+      /** Other codes this scan stands for (kept for same-box / +1 unit matching) */
       const altCodes: string[] = [];
 
       // Same box again while it's waiting to be picked → just reopen the picker
       const waiting = currentMode === 'add' ? rowsRef.current.find((r) => r.kind === 'unmatched' && r.code === code) : null;
       if (waiting?.codeType) {
-        setLinkTarget((t) => t ?? { code: waiting.code, codeType: waiting.codeType!, rowKey: waiting.key });
+        setLinkTarget((t) => t ?? { code: waiting.code, codeType: waiting.codeType!, rowKey: waiting.key, hint: waiting.hint });
         return;
       }
 
-      // Amazon FNSKU sticker (X00…). A sticker matched before is saved on its item
-      // (items.fnsku) and is found directly; otherwise look up the product's ASIN
-      // and carry on as an ASIN scan.
+      // Amazon X00 sticker. One matched before is saved on its item (items.fnsku)
+      // and found by findByCode below. A new one can't be looked up (the code is
+      // the seller's, not the product's), so read the product name printed on it.
       if (codeType === 'fnsku' && (await findByCode(c.teamId, code, 'fnsku')).length === 0) {
         if (rowsRef.current.some((r) => r.kind === 'amazon_label' && r.code === code)) return;
-        const lookup = await lookupProduct(code, 'fnsku');
-        if (!lookup.asin && currentMode === 'add' && askFirst()) {
-          askWhichItem(
-            { code, codeType, kind: 'unmatched', title: `Amazon sticker ${code}`, photo: null, itemIds: [],
-              message: /OPENWEBNINJA/.test(lookup.error ?? '')
-                ? 'Amazon X00 stickers need the Amazon data key to look up. Pick the item from your list, or scan the product barcode.'
-                : 'Couldn’t look up this Amazon sticker. Pick the item from your list, or scan the product barcode.' },
-            null
-          );
-          return;
+        const frame = stickerFramesRef.current.get(code) ?? null;
+        stickerFramesRef.current.delete(code);
+        const printed = frame && currentMode === 'add' ? await readStickerText(frame, code) : null;
+
+        if (currentMode === 'add') {
+          // The printed words clearly point at one order → receive it
+          const match = await findOrderSheetStickerMatch(printed, orderItemsRef.current);
+          if (match) {
+            const undo = await receiveItem(match, c);
+            await attachCode([match.id], code, 'fnsku');
+            pushRow({
+              code, codeType, kind: 'received', title: match.title || 'Untitled item',
+              photo: match.photos?.[0] ?? null, itemIds: [match.id], undo, matchedByName: true,
+              location: storageLocations.find((l) => l.id === (c.defaults.storageLocationId || match.storage_location_id))?.name ?? null,
+              price: match.target_price,
+              message: `Read “${printed}” on the sticker`,
+            });
+            signal('received', `Received: ${match.title || 'item'}`);
+            invalidate();
+            return;
+          }
+          if (askFirst()) {
+            askWhichItem(
+              {
+                code, codeType, kind: 'unmatched', title: printed ? `Sticker: ${printed}` : `Amazon sticker ${code}`,
+                photo: null, itemIds: [], hint: printed,
+                message: printed
+                  ? 'Pick the item — the closest matches to the sticker are at the top'
+                  : 'Couldn’t read the sticker — pick the item from your list, or scan the product barcode',
+              },
+              printed
+            );
+            return;
+          }
         }
-        if (!lookup.asin) {
-          pushRow({
-            code, codeType, kind: 'amazon_label', title: `Amazon sticker ${code}`, photo: null, itemIds: [],
-            message: /OPENWEBNINJA/.test(lookup.error ?? '')
-              ? 'Looking up Amazon X00 stickers needs the Amazon data key (OPENWEBNINJA_API_KEY). Scan the product barcode on the box instead.'
-              : 'Couldn’t match this Amazon sticker to a product. Scan the product barcode on the box instead.',
-          });
-          signal('amazon_label', 'Amazon sticker — scan the product barcode');
-          return;
-        }
-        altCodes.push(code);
-        code = lookup.asin;
-        codeType = 'asin';
-        preLookup = lookup;
+
+        pushRow({
+          code, codeType, kind: 'amazon_label', title: `Amazon sticker ${code}`, photo: null, itemIds: [],
+          message:
+            currentMode === 'find'
+              ? 'This sticker isn’t linked to an item yet — scan it once in Add mode to link it'
+              : 'Amazon stickers can’t be looked up. Scan the product barcode on the box instead.',
+        });
+        signal('amazon_label', currentMode === 'find' ? 'Sticker not linked yet' : 'Amazon sticker — scan the product barcode');
+        return;
       }
 
       if (currentMode === 'add') {
@@ -441,7 +467,7 @@ export default function ScanSession() {
         await saveStickers([target.id], altCodes);
         // Imported without a name → fill it in from the barcode lookup
         if (isUnknownTitle(target.title)) {
-          target = await fillFromLookup(target, preLookup ?? (await lookupProduct(code, codeType)));
+          target = await fillFromLookup(target, await lookupProduct(code, codeType));
         }
         pushRow({
           code, codeType, kind: 'received', title: target.title || 'Untitled item',
@@ -469,7 +495,7 @@ export default function ScanSession() {
       }
 
       // 3. Unknown — look it up
-      const lookup = preLookup ?? (await lookupProduct(code, codeType));
+      const lookup = await lookupProduct(code, codeType);
       const asin = codeType === 'asin' ? code : lookup.asin;
 
       // 3a. Same box as something handled a moment ago (other barcode, same product)
@@ -538,6 +564,7 @@ export default function ScanSession() {
             code, codeType, kind: 'unmatched',
             title: lookup.found && lookup.title ? lookup.title : `Barcode ${code}`,
             photo: lookup.imageUrl, itemIds: [], fuzzy: lookup.found && lookup.fuzzy,
+            hint: lookup.found ? lookup.title : null,
             altCodes: [...altCodes, ...(asin && asin !== code ? [asin] : [])],
             message: lookup.found ? 'Not matched to an order yet — pick it from your list' : 'Barcode not recognized — pick the item from your list',
           },
@@ -590,8 +617,13 @@ export default function ScanSession() {
 
   // ── Camera ─────────────────────────────────────────────────────────────────
 
-  const scanner = useContinuousScanner((result) => {
+  const scanner = useContinuousScanner((result, meta) => {
     if (result.status === 'found') {
+      // Keep the camera frame of an X00 sticker — its printed product name gets read later
+      if (result.codeType === 'fnsku' && videoRef.current) {
+        const frame = captureFrame(videoRef.current, meta.vertical, meta.points);
+        if (frame) stickerFramesRef.current.set(result.value, frame);
+      }
       enqueue(result.value, result.codeType);
     } else {
       // Sweeping past the same shipping label again shouldn't pile up rows
@@ -610,6 +642,13 @@ export default function ScanSession() {
     return () => scanner.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cameraEnabled]);
+
+  // Sorting a backlog against the order list → load the sticker reader in the background
+  useEffect(() => {
+    if (mode !== 'add' || !defaults.askWhenUnmatched || orderItems.length === 0) return;
+    const t = setTimeout(warmUpStickerReader, 2500);
+    return () => clearTimeout(t);
+  }, [mode, defaults.askWhenUnmatched, orderItems.length]);
 
   // Ignore the camera while a sheet is open
   useEffect(() => {
@@ -1118,7 +1157,7 @@ export default function ScanSession() {
               onAdd={() => void addFromNotFound(row)}
               onLink={
                 (row.kind === 'added' || row.kind === 'unmatched') && row.codeType
-                  ? () => setLinkTarget({ code: row.code, codeType: row.codeType!, rowKey: row.key })
+                  ? () => setLinkTarget({ code: row.code, codeType: row.codeType!, rowKey: row.key, hint: row.hint })
                   : undefined
               }
               onDismiss={() => removeRow(row.key)}
