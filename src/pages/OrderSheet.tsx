@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useOrderSheetItems, Item } from '@/hooks/useInventory';
+import type { CodeType } from '@/lib/barcode';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { Input } from '@/components/ui/input';
@@ -64,7 +65,8 @@ export default function OrderSheet() {
   const [showVineReport, setShowVineReport] = useState(false);
   const [showLattice, setShowLattice] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
-  const [linkUpc, setLinkUpc] = useState<string | null>(null);
+  /** Unmatched scan waiting for "Which item is this?" (hint = words read off an X00 sticker) */
+  const [linkTarget, setLinkTarget] = useState<{ code: string; codeType: CodeType; hint?: string | null } | null>(null);
   // How the confirm sheet was opened — scan-initiated confirms reopen the scanner
   const [confirmSource, setConfirmSource] = useState<'scan' | 'list'>('list');
 
@@ -119,8 +121,14 @@ export default function OrderSheet() {
     setConfirmItem(item);
   };
 
-  const handleScanNoMatch = async (code: string, codeType: 'asin' | 'upc') => {
+  const handleScanNoMatch = async (code: string, codeType: CodeType, hint?: string | null) => {
     if (!team?.id) return;
+
+    // X00 sticker that didn't match outright → pick it, ranked by the sticker's printed name
+    if (codeType === 'fnsku') {
+      setLinkTarget({ code, codeType, hint: hint ?? null });
+      return;
+    }
 
     // Not on the order sheet — check whether it's already confirmed inventory
     const query = supabase
@@ -149,7 +157,7 @@ export default function OrderSheet() {
     if (codeType === 'upc') {
       // Unknown product barcode — let the user link it to an order once;
       // every future scan of this UPC matches instantly
-      setLinkUpc(code);
+      setLinkTarget({ code, codeType });
     } else {
       toast.warning(`No order found for ASIN ${code}. Import your orders first, or add it manually.`);
     }
@@ -312,13 +320,18 @@ export default function OrderSheet() {
       />
 
       <LinkUpcSheet
-        upc={linkUpc}
-        open={!!linkUpc}
+        upc={linkTarget?.code ?? null}
+        codeType={linkTarget?.codeType}
+        hint={linkTarget?.hint}
+        open={!!linkTarget}
         items={items}
-        onClose={() => setLinkUpc(null)}
+        onClose={() => setLinkTarget(null)}
         onLinked={(item) => {
           queryClient.invalidateQueries({ queryKey: ['items'] });
-          handleScanMatch({ ...item, upc: linkUpc });
+          const t = linkTarget;
+          handleScanMatch(
+            t?.codeType === 'fnsku' ? { ...item, fnsku: t.code } : t?.codeType === 'upc' ? { ...item, upc: t.code } : item
+          );
         }}
       />
 

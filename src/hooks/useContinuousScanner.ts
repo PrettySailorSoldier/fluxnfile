@@ -2,28 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { BarcodeFormat, BrowserMultiFormatReader, NotFoundException, Result } from '@zxing/library';
 import {
   createProductReader,
+  scanMeta,
+  type ScanMeta,
   REAR_CAMERA_CONSTRAINTS,
   toScanResult,
   type ScanResult,
 } from '@/hooks/useBarcodeScanner';
 
 type FoundOrUnrecognized = Extract<ScanResult, { status: 'found' | 'not_recognized' }>;
-
-export interface ScanMeta {
-  /** The barcode ran up/down the frame (label turned 90°) */
-  vertical: boolean;
-  /** Where ZXing found the barcode, in video pixels */
-  points: { x: number; y: number }[];
-}
-
-/** Where the barcode lay in the frame, from the points ZXing found along it. */
-function scanMeta(result: Result): ScanMeta {
-  const points = (result.getResultPoints() ?? []).map((p) => ({ x: p.getX(), y: p.getY() }));
-  if (points.length < 2) return { vertical: false, points };
-  const first = points[0];
-  const last = points[points.length - 1];
-  return { vertical: Math.abs(last.y - first.y) > Math.abs(last.x - first.x), points };
-}
 
 /**
  * Short symbologies that ZXing "finds" in blurry frames of other barcodes

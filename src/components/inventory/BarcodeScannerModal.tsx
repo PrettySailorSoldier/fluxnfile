@@ -4,7 +4,9 @@ import { Button } from '@/components/ui/button';
 import { X, ScanLine, Loader2 } from 'lucide-react';
 import { Item } from '@/hooks/useInventory';
 import { toast } from 'sonner';
-import { lookupProduct } from '@/lib/productLookup';
+import { readStickerText } from '@/lib/stickerOcr';
+import { attachCode, pickStickerMatch } from '@/lib/scanIntake';
+import type { CodeType } from '@/lib/barcode';
 
 const VIEWFINDER_ID = 'zxing-viewfinder';
 
@@ -12,7 +14,8 @@ interface BarcodeScannerModalProps {
   open: boolean;
   items: Item[];
   onMatchFound: (item: Item) => void;
-  onNoMatch: (code: string, codeType: 'asin' | 'upc') => void;
+  /** `hint`: words read off an X00 sticker, to rank the picker */
+  onNoMatch: (code: string, codeType: CodeType, hint?: string | null) => void;
   onClose: () => void;
 }
 
@@ -35,8 +38,7 @@ export function BarcodeScannerModal({
 
       switch (result.status) {
         case 'found': {
-          // Amazon X00 sticker → a sticker matched before is saved on its item;
-          // otherwise look up the ASIN it belongs to
+          // Amazon X00 sticker → a sticker matched before is saved on its item
           const bySticker =
             result.codeType === 'fnsku'
               ? items.find((item) => item.fnsku?.toUpperCase() === result.value)
@@ -48,14 +50,22 @@ export function BarcodeScannerModal({
             break;
           }
           if (result.codeType === 'fnsku') {
-            const lookup = await lookupProduct(result.value, 'fnsku');
-            if (!lookup.asin) {
-              toast.warning('Couldn’t match that Amazon sticker to a product. Scan the product’s own barcode instead.');
-              onClose();
-              break;
+            // A new X00 sticker can't be looked up — read the product name printed on it
+            const reading = result.frame ? toast.loading('Reading the sticker…') : undefined;
+            const printed = result.frame ? await readStickerText(result.frame, result.value) : null;
+            if (reading !== undefined) toast.dismiss(reading);
+            const pool = items.filter((item) => item.physical_status === 'unconfirmed' && !item.fnsku);
+            const picked = pickStickerMatch(pool, printed);
+            if (picked) {
+              await attachCode([picked.id], result.value, 'fnsku');
+              toast.success(`Read “${printed}” — ${picked.title || 'item'}`);
+              onMatchFound({ ...picked, fnsku: result.value });
+            } else {
+              // Let the user pick it, closest matches to the sticker on top
+              onNoMatch(result.value, 'fnsku', printed);
             }
-            result.value = lookup.asin;
-            result.codeType = 'asin';
+            onClose();
+            break;
           }
           const match =
             result.codeType === 'asin'

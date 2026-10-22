@@ -336,27 +336,38 @@ export function rankBySticker<T extends { title: string | null }>(
   stickerText: string | null
 ): { item: T; score: number; hits: number }[] {
   const scored = candidates.map((item) => ({ item, ...(stickerText ? stickerScore(stickerText, item.title) : { score: 0, hits: 0 }) }));
-  return scored.sort((a, b) => b.score - a.score || b.hits - a.hits);
+  // Most matched words first — a busy background adds stray words that lower every score alike
+  return scored.sort((a, b) => b.hits - a.hits || b.score - a.score);
 }
 
 /**
- * The one Order Sheet item an X00 sticker's printed words clearly point to:
- * at least 3 words matched, half the sticker covered (OCR adds stray words),
- * and clearly ahead of the runner-up. Ties — e.g. three tankless water heaters
- * on the list — go to "Which item is this?" with those at the top.
+ * The one item an X00 sticker's printed words clearly point to, either:
+ *  - at least 3 words matched, half the sticker covered and clearly ahead of
+ *    the runner-up (short, clean reads like "golf target clot"), or
+ *  - at least 4 words matched and 3 more than the runner-up (long reads with
+ *    stray words from a patterned box, where the share covered stays low).
+ * Ties — e.g. three tankless water heaters on the list — return null so the
+ * user picks from "Which item is this?".
  */
+export function pickStickerMatch<T extends { title: string | null }>(candidates: T[], stickerText: string | null): T | null {
+  if (!stickerText) return null;
+  const [best, second] = rankBySticker(candidates, stickerText);
+  const runnerUp = second ?? { score: 0, hits: 0 };
+  if (!best) return null;
+  const clean = best.hits >= 3 && best.score >= 0.5 && best.hits > runnerUp.hits && best.score - runnerUp.score >= 0.2 - 1e-9;
+  const noisy = best.hits >= 4 && best.hits - runnerUp.hits >= 3;
+  return clean || noisy ? best.item : null;
+}
+
+/** pickStickerMatch over the unconfirmed, sticker-less Order Sheet items, fetched fresh. */
 export async function findOrderSheetStickerMatch(
   stickerText: string | null,
   candidates: { id: string; title: string | null; physical_status: string; fnsku?: string | null }[]
 ): Promise<MatchRow | null> {
-  if (!stickerText) return null;
   const pool = candidates.filter((c) => c.physical_status === 'unconfirmed' && !c.fnsku);
-  const [best, second] = rankBySticker(pool, stickerText);
-  const runnerUp = second ?? { score: 0, hits: 0 };
-  if (!best || best.hits < 3 || best.score < 0.5 || best.hits <= runnerUp.hits || best.score - runnerUp.score < 0.2 - 1e-9) {
-    return null;
-  }
-  const { data, error } = await supabase.from('items').select(MATCH_FIELDS).eq('id', best.item.id).single();
+  const best = pickStickerMatch(pool, stickerText);
+  if (!best) return null;
+  const { data, error } = await supabase.from('items').select(MATCH_FIELDS).eq('id', best.id).single();
   if (error) return null;
   const row = data as unknown as MatchRow;
   return row.physical_status === 'unconfirmed' ? row : null;

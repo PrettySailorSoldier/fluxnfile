@@ -141,14 +141,23 @@ export function stickerWords(text: string, sticker: string): string[] {
   return [...new Set(words)];
 }
 
+/** The sticker's own X00 code came out of the text → this way up is right. */
+function showsCode(text: string, sticker: string): boolean {
+  const flat = text.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return flat.includes(sticker.slice(0, 5)) || flat.includes(sticker.slice(-5));
+}
+
 /**
- * Read the product words off a captured sticker frame: the whole frame and the
- * strip under the barcode, turned the likely way up (then the other way if that
- * finds nothing), pooled into one list. OCR of a photographed sticker is noisy,
- * so the matching that uses these words tolerates misreads and stray words.
+ * Read the product words off a captured sticker frame. Each way up is read
+ * twice — the strip beside the barcode and the whole frame — and the
+ * orientation that wins is the one where the sticker's own X00 code reads back,
+ * or failing that, the one Tesseract is more confident about (upside-down text
+ * turns into word-like junk at low confidence). Its words are pooled. OCR of a
+ * photographed sticker is noisy, so the matching that uses these words
+ * tolerates misreads and stray words.
  * Returns e.g. "golf target clot", or null when nothing readable was found.
  */
-export async function readStickerText(frame: StickerFrame, sticker: string, budgetMs = 12_000): Promise<string | null> {
+export async function readStickerText(frame: StickerFrame, sticker: string, budgetMs = 15_000): Promise<string | null> {
   const started = Date.now();
   let worker: Worker;
   try {
@@ -156,25 +165,29 @@ export async function readStickerText(frame: StickerFrame, sticker: string, budg
   } catch {
     return null;
   }
-  const read = async (canvas: HTMLCanvasElement | null, mode: 'auto' | 'block'): Promise<string[]> => {
-    if (!canvas || Date.now() - started > budgetMs) return [];
+  const read = async (canvas: HTMLCanvasElement | null, mode: 'auto' | 'block'): Promise<{ text: string; confidence: number }> => {
+    if (!canvas || Date.now() - started > budgetMs) return { text: '', confidence: 0 };
     try {
       // PSM 3 = find text anywhere; PSM 6 = one block of text (the strip)
       await worker.setParameters({ tessedit_pageseg_mode: (mode === 'auto' ? '3' : '6') as PSM });
       const { data } = await worker.recognize(canvas);
-      return stickerWords(data.text ?? '', sticker);
+      return { text: data.text ?? '', confidence: data.confidence ?? 0 };
     } catch {
-      return [];
+      return { text: '', confidence: 0 };
     }
   };
 
   const orientations: Degrees[] = frame.vertical ? [90, 270] : [0, 180];
+  const tries: { text: string; score: number; confirmed: boolean }[] = [];
   for (const degrees of orientations) {
-    const words: string[] = [];
-    for (const w of [...(await read(textStrip(frame, degrees), 'block')), ...(await read(wholeFrame(frame, degrees), 'auto'))]) {
-      if (!words.includes(w)) words.push(w);
-    }
-    if (words.length >= 2) return words.join(' ');
+    const strip = await read(textStrip(frame, degrees), 'block');
+    const whole = await read(wholeFrame(frame, degrees), 'auto');
+    const text = `${strip.text}\n${whole.text}`;
+    const confirmed = showsCode(text, sticker);
+    tries.push({ text, confirmed, score: (confirmed ? 1000 : 0) + strip.confidence + whole.confidence });
+    if (confirmed) break; // right way up — no need to read the other way
   }
-  return null;
+  const best = [...tries].sort((a, b) => b.score - a.score)[0];
+  const words = best ? stickerWords(best.text, sticker) : [];
+  return words.length >= 2 ? words.join(' ') : null;
 }

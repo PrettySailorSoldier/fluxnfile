@@ -7,13 +7,15 @@ import {
   Result,
 } from '@zxing/library';
 import { classifyCode, normalizeUpc, type ScannedCode } from '@/lib/barcode';
+import { captureFrame, type StickerFrame } from '@/lib/stickerOcr';
 
 // Re-exported so existing imports keep working
 export { normalizeUpc };
 export type { ScannedCode };
 
 export type ScanResult =
-  | ({ status: 'found'; rawValue: string } & ScannedCode)
+  /** `frame`: the camera frame of an Amazon X00 sticker, so its printed name can be read */
+  | ({ status: 'found'; rawValue: string; frame?: StickerFrame | null } & ScannedCode)
   | { status: 'not_recognized'; rawValue: string }
   | { status: 'cancelled' }
   | { status: 'error'; message: string };
@@ -44,6 +46,22 @@ export const REAR_CAMERA_CONSTRAINTS: MediaStreamConstraints = {
     height: { ideal: 720 },
   },
 };
+
+export interface ScanMeta {
+  /** The barcode ran up/down the frame (label turned 90°) */
+  vertical: boolean;
+  /** Where ZXing found the barcode, in video pixels */
+  points: { x: number; y: number }[];
+}
+
+/** Where the barcode lay in the frame, from the points ZXing found along it. */
+export function scanMeta(result: Result): ScanMeta {
+  const points = (result.getResultPoints() ?? []).map((p) => ({ x: p.getX(), y: p.getY() }));
+  if (points.length < 2) return { vertical: false, points };
+  const first = points[0];
+  const last = points[points.length - 1];
+  return { vertical: Math.abs(last.y - first.y) > Math.abs(last.x - first.x), points };
+}
 
 /** Turn a ZXing result into a typed scan result. */
 export function toScanResult(result: Result): ScanResult {
@@ -98,6 +116,11 @@ export function useBarcodeScanner() {
               (result: Result | null, err?: Error) => {
                 if (result && resolveRef.current) {
                   const scanResult = toScanResult(result);
+                  // Keep the frame of an X00 sticker before the camera is released
+                  if (scanResult.status === 'found' && scanResult.codeType === 'fnsku') {
+                    const meta = scanMeta(result);
+                    scanResult.frame = captureFrame(videoEl, meta.vertical, meta.points);
+                  }
                   const done = resolveRef.current;
                   resolveRef.current = null;
                   stopScanner();
