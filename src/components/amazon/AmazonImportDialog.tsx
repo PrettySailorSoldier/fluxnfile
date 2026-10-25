@@ -52,10 +52,12 @@ import {
   type DetectedCSVFormat,
 } from '@/utils/amazon-parser';
 import {
+  EXISTING_ITEM_FIELDS,
   findDuplicate,
   computeMergeData,
   type ExistingItemIndex,
 } from '@/utils/import-dedup-engine';
+import { isoFromMDY, writeWithOrderDates } from '@/lib/orderDates';
 import { getAcquisitionDate } from '@/utils/lattice-csv-parser';
 import type { OrderHistoryItem } from '@/utils/order-history-extension-parser';
 import type { LatticeItem } from '@/utils/lattice-csv-parser';
@@ -74,6 +76,8 @@ interface AmazonImportDialogProps {
 
 // Extends ParsedAmazonItem with import-pipeline metadata
 interface PipelineItem extends ParsedAmazonItem {
+  /** Order ID from an Amazon order-history spreadsheet */
+  amazonOrderId?: string | null;
   _orderHistoryData?: OrderHistoryItem;
   _latticeData?: LatticeItem;
   _isDuplicate?: boolean;
@@ -179,7 +183,6 @@ interface ItemPreviewProps {
   index: number;
   isDuplicateAsin: boolean;
   isDuplicateTitle: boolean;
-  defaultMarkup: number;
   onToggleSelect: (index: number) => void;
   onUpdatePrice: (index: number, price: number) => void;
 }
@@ -189,7 +192,6 @@ function ItemPreviewCard({
   index,
   isDuplicateAsin,
   isDuplicateTitle,
-  defaultMarkup,
   onToggleSelect,
   onUpdatePrice,
 }: ItemPreviewProps) {
@@ -197,7 +199,6 @@ function ItemPreviewCard({
   const [editPrice, setEditPrice] = useState(item.price.toString());
   const [imageError, setImageError] = useState(false);
 
-  const targetPrice = item.price * (1 + defaultMarkup / 100);
   const isDuplicateLegacy = isDuplicateAsin || isDuplicateTitle;
   const willMerge = item._isDuplicate;
 
@@ -321,13 +322,6 @@ function ItemPreviewCard({
               </button>
             )}
           </span>
-          {item.price > 0 && (
-            <>
-              <span>→</span>
-              <span>Target: ${targetPrice.toFixed(2)}</span>
-              <span className="text-success">(+{defaultMarkup}%)</span>
-            </>
-          )}
         </div>
 
         {/* Date */}
@@ -345,6 +339,26 @@ function ItemPreviewCard({
       </div>
     </div>
   );
+}
+
+/**
+ * Every existing item for duplicate detection, paged (a single select stops at
+ * 1,000 rows), with every field computeMergeData compares — a field that isn't
+ * loaded looks empty and would be overwritten.
+ */
+async function fetchExistingIndex(teamId: string): Promise<ExistingItemIndex[]> {
+  const all: ExistingItemIndex[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from('items')
+      .select(EXISTING_ITEM_FIELDS)
+      .eq('team_id', teamId)
+      .order('id')
+      .range(from, from + 999);
+    if (error) throw error;
+    all.push(...((data || []) as unknown as ExistingItemIndex[]));
+    if (!data || data.length < 1000) return all;
+  }
 }
 
 // ============================================================================
@@ -394,7 +408,6 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
   const [parsedItems, setParsedItems] = useState<PipelineItem[]>([]);
   const [parseWarnings, setParseWarnings] = useState<string[]>([]);
   const [isParsing, setIsParsing] = useState(false);
-  const [defaultMarkup, setDefaultMarkup] = useState(50);
   const [isVineMode, setIsVineMode] = useState(false);
   const [vineETV, setVineETV] = useState<string>('');
   const [isFetchingPrices, setIsFetchingPrices] = useState(false);
@@ -405,12 +418,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     queryKey: ['existing-amazon-items', team?.id],
     queryFn: async () => {
       if (!team?.id) return [];
-      const { data, error } = await supabase
-        .from('items')
-        .select('id, title, amazon_asin, amazon_order_id, data_sources, vine_review_status, vine_review_quality, amazon_shipment_status, lattice_review_status')
-        .eq('team_id', team.id);
-      if (error) throw error;
-      return (data || []) as ExistingItemIndex[];
+      return fetchExistingIndex(team.id);
     },
     enabled: !!team?.id && open,
   });
@@ -455,7 +463,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
       const match = findDuplicate(
         {
           asin: item.asin,
-          orderId: item._orderHistoryData?.orderId ?? null,
+          orderId: item._orderHistoryData?.orderId ?? item.amazonOrderId ?? null,
           title: item.cleanTitle,
         },
         existingItems
@@ -678,6 +686,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
           orderDate,
           price,
           asin,
+          amazonOrderId: orderId || null,
           imageUrl: null,
           selected: true,
           confidence,
@@ -773,18 +782,38 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     }
   }
 
+  /** Several order-history exports at once (e.g. one per year) — their rows are combined. */
+  async function handleSpreadsheetBatch(files: File[]) {
+    try {
+      const rows: Record<string, string>[] = [];
+      for (const file of files) rows.push(...(await parseFile(file)));
+      processRowsAsCsv(rows);
+      if (rows.length > 0) toast.success(`Read ${rows.length} rows from ${files.length} files`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Could not read file.';
+      setCsvFileError(msg);
+      toast.error(msg);
+    }
+  }
+
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>, type: 'csv' | 'html') {
-    const file = e.target.files?.[0];
-    if (file) handleFileSelect(file, type);
+    const files = Array.from(e.target.files ?? []);
+    if (type === 'csv' && files.length > 1) void handleSpreadsheetBatch(files);
+    else if (files[0]) handleFileSelect(files[0], type);
     e.target.value = '';
   }
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
     setIsDragOver(false);
-    const file = e.dataTransfer.files?.[0];
+    const dropped = Array.from(e.dataTransfer.files ?? []);
+    const file = dropped[0];
     if (!file) return;
     const isSpreadsheet = /\.(xlsx|xls|csv)$/i.test(file.name) || file.type === 'text/csv';
+    if (importMethod === 'csv' && dropped.length > 1) {
+      void handleSpreadsheetBatch(dropped.filter((f) => /\.(xlsx|xls|csv)$/i.test(f.name)));
+      return;
+    }
     const isHtml = file.name.endsWith('.html') || file.name.endsWith('.htm') || file.type === 'text/html';
     if (importMethod === 'csv' && isSpreadsheet) {
       handleFileSelect(file, 'csv');
@@ -908,16 +937,8 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
       const selectedItems = parsedItems.filter(item => item.selected);
       if (selectedItems.length === 0) throw new Error('No items selected');
 
-      // Fetch fresh existing items for authoritative dedup
-      const { data: freshExisting, error: fetchErr } = await supabase
-        .from('items')
-        .select(
-          'id, title, amazon_asin, amazon_order_id, data_sources, vine_review_status, vine_review_quality, amazon_shipment_status, lattice_review_status'
-        )
-        .eq('team_id', team.id);
-      if (fetchErr) throw fetchErr;
-
-      const existingIndex = (freshExisting || []) as ExistingItemIndex[];
+      // Fetch fresh existing items for authoritative dedup (every item, every compared field)
+      const existingIndex = await fetchExistingIndex(team.id);
 
       const importSource =
         detectedFormat === 'order_history_extension'
@@ -953,6 +974,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
             amazon_refund_amount: oh.refundAmount,
             amazon_refund_date: oh.refundDate,
             amazon_tax_amount: oh.taxAmount > 0 ? oh.taxAmount : null,
+            ordered_date: new Date(oh.orderPlaced).toISOString().split('T')[0],
             status: 'acquired' as const,
             condition: 'new' as const,
             physical_status: 'unconfirmed',
@@ -964,7 +986,10 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
             title: item.cleanTitle.slice(0, 255),
             amazon_asin: lat.asin || null,
             original_cost: lat.valueToUse,
-            target_price: Math.round(lat.valueToUse * (1 + defaultMarkup / 100) * 100) / 100,
+            ordered_date: isoFromMDY(lat.orderedDate),
+            shipped_date: isoFromMDY(lat.shippedDate),
+            delivered_date: isoFromMDY(lat.deliveredDate),
+            delivery_status: lat.deliveryStatus || null,
             acquisition_date: getAcquisitionDate(lat),
             acquisition_source: 'Amazon Vine',
             is_vine_order: true,
@@ -986,10 +1011,11 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
           itemData = {
             title: item.cleanTitle.slice(0, 255),
             original_cost: item.price,
-            target_price: Math.round(item.price * (1 + defaultMarkup / 100) * 100) / 100,
             acquisition_date: new Date(item.orderDate).toISOString().split('T')[0],
+            ordered_date: item.confidenceDetails.dateGuessed ? null : new Date(item.orderDate).toISOString().split('T')[0],
             acquisition_source: isVineMode ? 'Vine' : 'Amazon',
             amazon_asin: item.asin || null,
+            amazon_order_id: item.amazonOrderId || null,
             is_vine_order: isVineMode,
             condition: 'new' as const,
             status: 'acquired' as const,
@@ -1004,7 +1030,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
         const duplicate = findDuplicate(
           {
             asin: item.asin,
-            orderId: item._orderHistoryData?.orderId ?? null,
+            orderId: item._orderHistoryData?.orderId ?? item.amazonOrderId ?? null,
             title: item.cleanTitle,
           },
           existingIndex
@@ -1028,16 +1054,21 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
         }
       }
 
-      // Batch insert new items
-      if (toInsert.length > 0) {
-        const { error: insertErr } = await supabase.from('items').insert(toInsert);
+      // Batch insert new items (chunks, so a few thousand rows don't time out)
+      for (let i = 0; i < toInsert.length; i += 500) {
+        const { error: insertErr } = await writeWithOrderDates(toInsert.slice(i, i + 500), (rows) =>
+          supabase.from('items').insert(rows)
+        );
         if (insertErr) throw insertErr;
       }
 
-      // Update merged items
-      for (const { id, mergeData } of toUpdate) {
-        const { error: updateErr } = await supabase.from('items').update(mergeData).eq('id', id);
-        if (updateErr) throw updateErr;
+      // Update merged items, 25 at a time
+      for (let i = 0; i < toUpdate.length; i += 25) {
+        const results = await Promise.all(
+          toUpdate.slice(i, i + 25).map(({ id, mergeData }) => supabase.from('items').update(mergeData).eq('id', id))
+        );
+        const failed = results.find((r) => r.error);
+        if (failed?.error) throw failed.error;
       }
 
       return { inserted: toInsert.length, merged: toUpdate.length, skipped: skipCount };
@@ -1109,6 +1140,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                 ref={csvInputRef}
                 type="file"
                 accept=".xlsx,.xls,.csv"
+                multiple
                 className="hidden"
                 onChange={(e) => handleInputChange(e, 'csv')}
               />
@@ -1379,21 +1411,6 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                 </div>
               )}
 
-              {/* Markup setting */}
-              <div className="flex items-center gap-4">
-                <Label htmlFor="markup" className="text-sm whitespace-nowrap">Default Markup:</Label>
-                <div className="flex items-center gap-1">
-                  <Input
-                    id="markup"
-                    type="number"
-                    value={defaultMarkup}
-                    onChange={(e) => setDefaultMarkup(parseFloat(e.target.value) || 0)}
-                    className="w-20 text-sm"
-                  />
-                  <span className="text-sm">%</span>
-                </div>
-              </div>
-
               {/* Items list */}
               <div className="space-y-2 max-h-96 overflow-y-auto border rounded-lg p-4">
                 {parsedItems.map((item, index) => (
@@ -1403,7 +1420,6 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                     index={index}
                     isDuplicateAsin={item.asin ? duplicateAsins.has(item.asin) : false}
                     isDuplicateTitle={duplicateTitles.has(item.cleanTitle.toLowerCase())}
-                    defaultMarkup={defaultMarkup}
                     onToggleSelect={toggleItemSelection}
                     onUpdatePrice={updateItemPrice}
                   />

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { toScanResult, type ScanResult } from '@/hooks/useBarcodeScanner';
+import { scanMeta, toScanResult, type ScanMeta, type ScanResult } from '@/hooks/useBarcodeScanner';
 import {
   cameraErrorMessage,
   createReadConfirmer,
@@ -13,18 +13,22 @@ interface Options {
   /**
    * The same code is accepted again only after it has been out of view this
    * long — holding a box in front of the camera won't add it twice, but
-   * scanning a second identical box works.
+   * scanning a second identical box works. Tracked per code, so moving the
+   * camera between two barcodes on one box doesn't re-add either of them.
    */
   repeatGapMs?: number;
 }
 
 /**
  * Keeps the camera open and reports every new, confirmed barcode via `onCode`.
+ * Every format must decode the same twice before it counts (see createReadConfirmer) —
+ * that also covers short symbologies ZXing "finds" in blurry frames of other barcodes
+ * (e.g. an EAN-8 read off half of an EAN-13).
  * Call `pause()` while a sheet/dialog is open so stray reads are ignored.
  */
 export function useContinuousScanner(
-  onCode: (result: FoundOrUnrecognized) => void,
-  { repeatGapMs = 900 }: Options = {}
+  onCode: (result: FoundOrUnrecognized, meta: ScanMeta) => void,
+  { repeatGapMs = 2000 }: Options = {}
 ) {
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,19 +62,23 @@ export function useContinuousScanner(
       const reported = new Set<string>();
 
       try {
-        const decoder = await startCameraDecoder(video, ({ text, format }) => {
+        const decoder = await startCameraDecoder(video, (read) => {
+          const { text } = read;
           const now = Date.now();
           const prev = lastSeen.get(text);
           lastSeen.set(text, now);
+          if (lastSeen.size > 50) {
+            for (const [code, at] of lastSeen) if (now - at > repeatGapMs) lastSeen.delete(code);
+          }
           // Out of view long enough → the next sighting is a new scan
           if (prev === undefined || now - prev >= repeatGapMs) reported.delete(text);
           // Whatever is in view while a sheet is open counts as handled
           if (pausedRef.current) reported.add(text);
           if (reported.has(text) || !confirm(text, now)) return;
           reported.add(text);
-          const scan = toScanResult({ text, format });
+          const scan = toScanResult(read);
           if (scan.status === 'found' || scan.status === 'not_recognized') {
-            onCodeRef.current(scan);
+            onCodeRef.current(scan, scanMeta(read));
           }
         });
         if (session !== sessionRef.current) {

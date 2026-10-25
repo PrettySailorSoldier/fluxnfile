@@ -368,6 +368,18 @@ export default function SalesCheck() {
 
   // ── Scanner logic ──────────────────────────────────────────────────────────
 
+  /** Imported orders live on the Order Sheet until a box is scanned — never shown as inventory here. */
+  async function isOnOrderSheet(column: 'amazon_order_id' | 'amazon_asin', value: string): Promise<boolean> {
+    if (!team?.id) return false;
+    const { count } = await supabase
+      .from('items')
+      .select('id', { count: 'exact', head: true })
+      .eq('team_id', team.id)
+      .eq('physical_status', 'unconfirmed')
+      .eq(column, value);
+    return (count ?? 0) > 0;
+  }
+
   async function handleScannedValue(raw: string) {
     const trimmed = raw.trim();
     if (!trimmed || !team?.id) return;
@@ -382,6 +394,7 @@ export default function SalesCheck() {
         .select('*, category:categories(*), storage_location:storage_locations(*)')
         .eq('amazon_order_id', trimmed)
         .eq('team_id', team.id)
+        .neq('physical_status', 'unconfirmed')
         .limit(1)
         .maybeSingle();
 
@@ -392,8 +405,9 @@ export default function SalesCheck() {
         setQuickEditItem(matched);
         setQuickEditOpen(true);
       } else {
-        setLastScanStatus(`No match for order ${trimmed}`);
-        toast.warning(`No item found for order ${trimmed}`);
+        const onOrderSheet = await isOnOrderSheet('amazon_order_id', trimmed);
+        setLastScanStatus(onOrderSheet ? `Order ${trimmed} is on the Order Sheet — not found yet` : `No match for order ${trimmed}`);
+        toast.warning(onOrderSheet ? 'On the Order Sheet — scan the box in a Scan session to add it to inventory' : `No item found for order ${trimmed}`);
       }
 
     } else if (isAsin) {
@@ -402,6 +416,7 @@ export default function SalesCheck() {
         .select('*, category:categories(*), storage_location:storage_locations(*)')
         .eq('amazon_asin', trimmed.toUpperCase())
         .eq('team_id', team.id)
+        .neq('physical_status', 'unconfirmed')
         .limit(1)
         .maybeSingle();
 
@@ -412,8 +427,9 @@ export default function SalesCheck() {
         setQuickEditItem(matched);
         setQuickEditOpen(true);
       } else {
-        setLastScanStatus(`No match for ASIN ${trimmed}`);
-        toast.warning(`No item found for ASIN ${trimmed}`);
+        const onOrderSheet = await isOnOrderSheet('amazon_asin', trimmed.toUpperCase());
+        setLastScanStatus(onOrderSheet ? `ASIN ${trimmed} is on the Order Sheet — not found yet` : `No match for ASIN ${trimmed}`);
+        toast.warning(onOrderSheet ? 'On the Order Sheet — scan the box in a Scan session to add it to inventory' : `No item found for ASIN ${trimmed}`);
       }
 
     } else {

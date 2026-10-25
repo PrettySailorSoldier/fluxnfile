@@ -7,19 +7,36 @@ import {
   type CameraDecoder,
   type RawRead,
 } from '@/lib/cameraDecoder';
+import { captureFrame, type StickerFrame } from '@/lib/stickerOcr';
 
 // Re-exported so existing imports keep working
 export { normalizeUpc };
 export type { ScannedCode };
 
 export type ScanResult =
-  | ({ status: 'found'; rawValue: string } & ScannedCode)
+  /** `frame`: the camera frame of an Amazon X00 sticker, so its printed name can be read */
+  | ({ status: 'found'; rawValue: string; frame?: StickerFrame | null } & ScannedCode)
   | { status: 'not_recognized'; rawValue: string; /** What the code probably is, for the user */ hint: string }
   | { status: 'cancelled' }
   | { status: 'error'; message: string };
 
+export interface ScanMeta {
+  /** The barcode ran up/down the frame (label turned 90°) */
+  vertical: boolean;
+  /** The scan line through the barcode, in video pixels */
+  points: { x: number; y: number }[];
+}
+
+/** Where the barcode lay in the frame. */
+export function scanMeta({ points }: RawRead): ScanMeta {
+  if (points.length < 2) return { vertical: false, points };
+  const first = points[0];
+  const last = points[points.length - 1];
+  return { vertical: Math.abs(last.y - first.y) > Math.abs(last.x - first.x), points };
+}
+
 /** Turn a camera read into a typed scan result. */
-export function toScanResult({ text, format }: RawRead): ScanResult {
+export function toScanResult({ text, format }: Pick<RawRead, 'text' | 'format'>): ScanResult {
   const code = classifyCode(text, format);
   return code
     ? { status: 'found', ...code, rawValue: text }
@@ -33,6 +50,8 @@ export function toScanResult({ text, format }: RawRead): ScanResult {
 export function useBarcodeScanner() {
   const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [torchSupported, setTorchSupported] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
   const decoderRef = useRef<CameraDecoder | null>(null);
   const resolveRef = useRef<((result: ScanResult) => void) | null>(null);
   /** Bumped on every start/stop so a camera that finishes opening after cancel is closed */
@@ -43,6 +62,8 @@ export function useBarcodeScanner() {
     decoderRef.current?.stop();
     decoderRef.current = null;
     setIsScanning(false);
+    setTorchSupported(false);
+    setTorchOn(false);
   }, []);
 
   const scan = useCallback(
@@ -65,11 +86,17 @@ export function useBarcodeScanner() {
           try {
             const decoder = await startCameraDecoder(videoEl, (read) => {
               if (!resolveRef.current || !confirm(read.text)) return;
+              const scanResult = toScanResult(read);
+              // Keep the frame of an X00 sticker before the camera is released
+              if (scanResult.status === 'found' && scanResult.codeType === 'fnsku') {
+                const meta = scanMeta(read);
+                scanResult.frame = captureFrame(videoEl, meta.vertical, meta.points);
+              }
               const done = resolveRef.current;
               resolveRef.current = null;
               stopScanner();
               if ('vibrate' in navigator) navigator.vibrate(100);
-              done(toScanResult(read));
+              done(scanResult);
             });
             if (session !== sessionRef.current) {
               // Cancelled (or resolved) while the camera was opening
@@ -77,6 +104,10 @@ export function useBarcodeScanner() {
               return;
             }
             decoderRef.current = decoder;
+
+            // Flashlight, where the browser allows it
+            const caps = decoder.track?.getCapabilities?.() as (MediaTrackCapabilities & { torch?: boolean }) | undefined;
+            setTorchSupported(!!caps?.torch);
           } catch (err) {
             if (session !== sessionRef.current) return;
             stopScanner();
@@ -97,5 +128,17 @@ export function useBarcodeScanner() {
     resolveRef.current = null;
   }, [stopScanner]);
 
-  return { scan, cancelScan, isScanning, error };
+  const toggleTorch = useCallback(async () => {
+    const track = decoderRef.current?.track;
+    if (!track) return;
+    const next = !torchOn;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: next } as MediaTrackConstraintSet] });
+      setTorchOn(next);
+    } catch {
+      setTorchSupported(false);
+    }
+  }, [torchOn]);
+
+  return { scan, cancelScan, isScanning, error, torchSupported, torchOn, toggleTorch };
 }

@@ -50,6 +50,8 @@ export interface Item {
   review_notes: string | null;
   // Amazon / import fields
   amazon_asin: string | null;
+  /** Amazon X00… sticker scanned on the box (saved once matched) */
+  fnsku?: string | null;
   upc: string | null;
   // Autofilled product details (barcode lookup / list import)
   brand?: string | null;
@@ -65,6 +67,10 @@ export interface Item {
   amazon_refund_date: string | null;
   amazon_tax_amount: number | null;
   delivery_status: string | null;
+  /** Dates from the official order files (20261023000000_order_dates.sql) */
+  ordered_date?: string | null;
+  shipped_date?: string | null;
+  delivered_date?: string | null;
   // Vine fields
   is_vine_order: boolean | null;
   vine_review_status: string | null;
@@ -110,6 +116,24 @@ export interface Platform {
   is_default: boolean;
 }
 
+const PAGE_SIZE = 1000;
+
+/**
+ * Supabase returns at most 1,000 rows per request — page through the rest.
+ * Vine order histories easily run to several thousand items.
+ */
+async function fetchAllPages(
+  page: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: unknown }>
+): Promise<Item[]> {
+  const all: Item[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await page(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    all.push(...((data ?? []) as Item[]));
+    if (!data || data.length < PAGE_SIZE) return all;
+  }
+}
+
 export function useItems() {
   const { team } = useAuth();
 
@@ -118,19 +142,20 @@ export function useItems() {
     queryFn: async () => {
       if (!team?.id) return [];
       
-      const { data, error } = await supabase
-        .from('items')
-        .select(`
-          *,
-          category:categories(*),
-          storage_location:storage_locations(*)
-        `)
-        .eq('team_id', team.id)
-        .neq('physical_status', 'unconfirmed')
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      return data as Item[];
+      return fetchAllPages((from, to) =>
+        supabase
+          .from('items')
+          .select(`
+            *,
+            category:categories(*),
+            storage_location:storage_locations(*)
+          `)
+          .eq('team_id', team.id)
+          .neq('physical_status', 'unconfirmed')
+          .order('created_at', { ascending: false })
+          .order('id')
+          .range(from, to)
+      );
     },
     enabled: !!team?.id,
   });
@@ -142,18 +167,20 @@ export function useOrderSheetItems() {
     queryKey: ['items', 'order-sheet', team?.id],
     queryFn: async () => {
       if (!team?.id) return [];
-      const { data, error } = await supabase
-        .from('items')
-        .select(`
-          *,
-          category:categories(*),
-          storage_location:storage_locations(*)
-        `)
-        .eq('team_id', team.id)
-        .eq('physical_status', 'unconfirmed')
-        .order('acquisition_date', { ascending: false });
-      if (error) throw error;
-      return data as Item[];
+      return fetchAllPages((from, to) =>
+        supabase
+          .from('items')
+          .select(`
+            *,
+            category:categories(*),
+            storage_location:storage_locations(*)
+          `)
+          .eq('team_id', team.id)
+          .eq('physical_status', 'unconfirmed')
+          .order('acquisition_date', { ascending: false })
+          .order('id')
+          .range(from, to)
+      );
     },
     enabled: !!team?.id,
   });

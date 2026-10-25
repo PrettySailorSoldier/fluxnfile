@@ -26,6 +26,106 @@ Goal: **scan → autofill → sort/fill in**, or **upload a list → everything 
    - `OPENWEBNINJA_API_KEY` (already used by fetch-amazon-prices) also enables ASIN autofill.
 4. Build/deploy the frontend as usual (`npm run build`, or `npm run cap:sync` for the app).
 
+## Scanning the outside of shipping boxes (Oct 21)
+
+Boxes usually carry three kinds of barcodes. Here is how each is handled now:
+
+| Barcode | Example | What happens |
+|---|---|---|
+| Product barcode (UPC / EAN-13) | `4262392441427` | Lookup order: UPCitemdb → Open Food/Products/Beauty Facts → **Amazon search** (finds non-US EANs the free databases don't know). If Amazon returns an ASIN that's on the Order Sheet, the item is **received**. |
+| Amazon sticker (FNSKU) | `X0051UTBFP` | Was rejected as "not a product code". The app now reads the product name printed on the sticker and matches it to an order (see "Reading X00 stickers" below). Amazon search doesn't index X00 codes, so they aren't sent to it. |
+| Shipping labels | `1Z…`, `420` + ZIP, bad check digit | Rejected. A shipping label is listed only once, however often the camera passes over it. |
+
+Other scanner fixes:
+- Repeat scans are tracked **per code**, so moving between two barcodes on one box no longer adds the item 2–3 times. A second, different barcode of the same product within 10 s is saved on the same item ("Same box").
+- EAN-8, UPC-E and ITF must read the same twice in a row. These short formats are often misread off part of a bigger barcode.
+- The Amazon API URL was wrong (`/amazon/product` doesn't exist). It's now `/realtime-amazon-data/product-details`. This also fixes `fetch-amazon-prices`.
+
+**Deploy:**
+1. Run `supabase/migrations/20261021000000_catalog_fnsku_asin.sql`.
+2. Run `supabase functions deploy lookup-upc fetch-amazon-prices`.
+3. Run `supabase secrets set OPENWEBNINJA_API_KEY=...` (Real-Time Amazon Data). Amazon search and X00 stickers need it.
+
+Each unknown barcode costs 1 Amazon search call, once. After that the result is cached.
+
+## Importing Vine orders so boxes match (Oct 22)
+
+A scanned box matches an Order Sheet item by **ASIN**. Lattice and the Vine Itemized Report both carry ASINs:
+
+- **Lattice CSV:** rows with a blank Description were skipped. In a real export that was 2,163 of 3,142 rows, mostly the newest orders. They're now imported as `Unknown item (ASIN)`. Re-importing fills in the name once Lattice has it. The duplicate check now pages past 1,000 rows, inserts go in chunks of 500, and updates run 25 at a time.
+- **Vine Itemized Report (.xlsx):** fills in the names of items imported without one. It looks up existing ASINs 200 at a time; a single request listing every ASIN was too long and failed silently, which would have imported duplicates.
+- **Scanning:** when a scan receives an unnamed order, it fills in the title, photos, brand and retail price from the barcode lookup.
+
+Suggested order: import the Lattice CSV, then the Itemized Report for each year.
+
+## Reading X00 stickers + batch imports (Oct 22)
+
+**Why reading the sticker:** an X00 code belongs to the seller's warehouse stock. With the API key set, live tests returned "not found" for X00 stickers. Every sticker does print a short product name ("Golf Target Clot", "Tankless Water Heater ...Protection (Gray)"), so the scan session reads that instead.
+
+- When an X00 is scanned, `src/lib/stickerOcr.ts` copies the camera frame. Using where ZXing found the barcode, it turns the label upright and reads two areas with Tesseract (loaded on demand from the CDN, about 7 MB once): the strip under the barcode, and the whole frame.
+- `rankBySticker` / `findOrderSheetStickerMatch` in `src/lib/scanIntake.ts` match those words against order titles. Cut-off words count ("clot" → "cloth"), and OCR slips of one or two letters count ("protegtio" → "protection").
+- **One clear winner** (at least 3 words, half the sticker matched, ahead of the runner-up): the order is received automatically. The row says "Read “…” on the sticker" and can be undone.
+- **Otherwise:** "Which item is this?" opens with the closest matches on top and shows what the sticker says. Three tankless water heaters on the list is a real case of this.
+- **Either way:** the sticker is saved on the item (`items.fnsku`) once matched.
+- **Tested** in headless Chromium on two real sticker photos at 1280, 960 and 720 px. The golf sticker matched its order outright at every size. The heater tied across the three heater orders, as it should. Each read took 0.3–1.7 s on desktop; expect a few seconds on a phone.
+- **`lookup-upc`** no longer spends an Amazon lookup on X00 codes.
+
+**Batch imports:** the Vine Itemized Report, Lattice and Amazon order-history importers take several files at once.
+- **Vine Itemized Reports**, one per year: merged, with the same order across two years counted once.
+- **Lattice exports:** merged by ASIN, keeping the row that has a name.
+- **Order-history spreadsheets:** rows combined.
+
+## Amazon X00 stickers are remembered (Oct 22)
+
+When a scanned X00 sticker is matched to an item, whether by Amazon lookup or by picking it in "Which item is this?", the sticker is saved in `items.fnsku`. Scanning that sticker again in Add or Find mode, the Order Sheet scanner, or Inventory search finds the item directly, without an Amazon call.
+
+**Deploy checklist.** Merging updates the app on Vercel, but Supabase changes are manual:
+1. In the SQL editor, run `20261021000000_catalog_fnsku_asin.sql` and `20261022000000_items_fnsku.sql`.
+2. Run `supabase functions deploy lookup-upc fetch-amazon-prices`. Until you do, the live function answers X00 stickers with "Invalid barcode".
+3. Optionally run `supabase secrets set OPENWEBNINJA_API_KEY=...` so stickers and unknown barcodes find their ASIN by themselves. Without it, you pick the item once per sticker.
+
+Sticker lookups and saves are skipped quietly until step 1 is done, so scanning keeps working either way.
+
+## Imports stay out of Inventory
+
+Imported orders (Lattice, Vine Itemized Report, Amazon order history) are created as `physical_status = 'unconfirmed'` and only show on the **Order Sheet**. Inventory, Dashboard, Analytics, Facebook tools, Sales Check and the Needs details queue only read found items (`useItems` filters out `unconfirmed`). An item moves to Inventory only when a box is scanned (or confirmed by hand) — that sets it to Sell or Keep at a location. The one import that can skip this is **Import → Any list**, which asks you where its rows should go.
+
+## Sorting a backlog of boxes (Oct 22)
+
+For a pile of untracked boxes whose orders are already imported (Lattice + Itemized Reports):
+
+1. Inventory → **Scan** → **Add** mode. Pick the **location** you're putting boxes in (e.g. "Garage shelf A") and Sell/Keep.
+2. Scan each box (UPC/EAN, or the Amazon X00 sticker).
+   - **Matched** (by ASIN via Amazon, by a barcode linked earlier, or by a confident name match): the order is marked received at that location. Unnamed orders get their name and photo filled in.
+   - **Not matched** → **Which item is this?** opens. It's ranked by the looked-up product name. You can search with words from the box or an ASIN; each row shows the order date and a link to the Amazon page (useful for unnamed orders). Tap the item. The barcode is saved, so the next identical box matches by itself. "Not in my list — add as new item" is there for strays.
+3. When you're done, whatever is still on the **Order Sheet** wasn't found.
+
+You can turn this off in the scan session's ⚙ settings: "When a box doesn't match, ask which item it is". With it off, unmatched barcodes become new items as before.
+
+The Order Sheet and Inventory lists now load all items; Supabase caps one request at 1,000 rows, so they page. The Order Sheet shows 100 at a time.
+
+## Check every guess before it's received (Oct 22)
+
+Brands sell look-alikes. A sticker that read "brizled … lighting … yard" matched a Brizled 4-pack of pathway lights, but the box was a Brizled house-number sign. Now:
+
+- **A name-based guess is never received on its own.** This covers words read off an X00 sticker and a UPC's looked-up product name. **Which item is this?** opens with the closest order's full details already open: title, ETV/FMV, ordered/shipped/delivered dates, order # (links to the Amazon order), ASIN, delivery and review status, and which files it came from.
+  - Tap **This is it** to confirm, or **Not this one** to close it and open another.
+  - When other orders match nearly as well (same brand, similar names), a warning says how many.
+  - The guess is labeled "Best match" when the read clearly points at one order, and "Closest guess — check it" when it doesn't. A brand word ("Brizled") doesn't count toward a clear match, because it matches every order from that brand.
+- **Exact code matches still go straight through:** an ASIN, a UPC linked earlier, or a sticker saved on its item. On the Order Sheet, the confirm sheet now shows the same order details above Keep/Sell. **Not this item** removes the sticker/UPC from that order (so it stops matching) and reopens the picker.
+- **Imports carry only what the files say.** There's no automatic markup any more: `target_price` stays empty until you price an item after receiving it. The Amazon import's "Default Markup" setting is gone.
+- **Order details are kept from the files:**
+  - New columns `ordered_date`, `shipped_date` and `delivered_date` hold the dates as the files print them. Lattice has all three, the Itemized Report has ordered and shipped, and Amazon order history has ordered.
+  - ETV/FMV, review fields and the source files are kept too.
+  - Re-imports still only fill blanks.
+- The Order Sheet search also finds order numbers and stickers.
+
+**Run `supabase/migrations/20261023000000_order_dates.sql`** to keep the dates. Until then, imports work as before and skip the dates. To clear markup prices already set on Order Sheet items:
+
+```sql
+UPDATE items SET target_price = NULL WHERE physical_status = 'unconfirmed';
+```
+
 ## Quick test
 
 - Inventory → **Scan** → type `012345678905` + Enter → a new item appears, autofilled if the lookup finds it. Type it again → the row shows ×2.

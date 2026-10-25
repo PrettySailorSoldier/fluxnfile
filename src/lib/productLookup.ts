@@ -1,10 +1,11 @@
 import { supabase } from '@/integrations/supabase/client';
 import type { Category } from '@/hooks/useInventory';
+import type { CodeType } from '@/lib/barcode';
 
 /** Response from the lookup-upc edge function (mirrors ProductLookup there). */
 export interface ProductLookup {
   code: string;
-  codeType: 'upc' | 'isbn' | 'asin';
+  codeType: 'upc' | 'isbn' | 'asin' | 'fnsku';
   found: boolean;
   title: string | null;
   brand: string | null;
@@ -17,6 +18,10 @@ export interface ProductLookup {
   highestPrice: number | null;
   retailPrice: number | null;
   source: string | null;
+  /** ASIN when an Amazon source answered — how FNSKU stickers resolve */
+  asin: string | null;
+  /** Matched by an Amazon search rather than an exact barcode record */
+  fuzzy: boolean;
   cached: boolean;
   error?: string;
 }
@@ -34,13 +39,15 @@ const EMPTY: Omit<ProductLookup, 'code' | 'codeType'> = {
   highestPrice: null,
   retailPrice: null,
   source: null,
+  asin: null,
+  fuzzy: false,
   cached: false,
 };
 
 /** Look up one barcode. Never throws — a failed lookup returns found:false. */
 export async function lookupProduct(
   code: string,
-  codeType?: 'upc' | 'asin'
+  codeType?: CodeType
 ): Promise<ProductLookup> {
   try {
     const { data, error } = await supabase.functions.invoke('lookup-upc', {

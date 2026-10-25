@@ -1,3 +1,5 @@
+import { isUnknownTitle } from '@/lib/productLookup';
+
 /**
  * Universal deduplication and data-merge engine for Flux&File imports.
  *
@@ -11,6 +13,12 @@
  * - When a duplicate is found, MERGE new data into the existing record.
  * - Never overwrite a field that already has a value with null/empty.
  * - Do overwrite fields that are null/empty with new non-null values.
+ * - A placeholder title ("Unknown item (…)"), a $0 cost and an empty photo list
+ *   count as empty, so a later import can fill them in.
+ * - The existing row must carry every field compared here (see
+ *   EXISTING_ITEM_FIELDS) — a field that wasn't loaded looks empty. The order
+ *   dates are only filled when the row has them (their column exists).
+ * - Prices are never set by an import — only the official order values.
  * - Append the new import source to data_sources array if not already present.
  * - Special always-update fields: vine_review_status, vine_review_quality,
  *   amazon_shipment_status, lattice_review_status — these represent current
@@ -27,6 +35,15 @@ export type DedupeAction =
   | { action: 'create'; data: Record<string, unknown> }
   | { action: 'merge'; existingId: string; mergeData: Record<string, unknown> }
   | { action: 'skip' };
+
+/**
+ * Columns to load for existing items so computeMergeData can tell filled from
+ * empty. All of them: columns added by later migrations (the order dates) are
+ * read when they exist instead of failing the select when they don't.
+ */
+export const EXISTING_ITEM_FIELDS = '*';
+
+const ORDER_DATE_FIELDS = ['ordered_date', 'shipped_date', 'delivered_date'];
 
 export interface ExistingItemIndex {
   id: string;
@@ -159,6 +176,7 @@ export function computeMergeData(
     'retail_price',
     'amazon_asin',
     'amazon_order_id',
+    'amazon_order_number',
     'amazon_order_url',
     'amazon_tracking_url',
     'amazon_invoice_url',
@@ -170,6 +188,8 @@ export function computeMergeData(
     'vine_fmv',
     'is_vine_order',
     'acquisition_date',
+    'delivery_status',
+    ...ORDER_DATE_FIELDS.filter((field) => field in existing),
   ];
 
   for (const field of alwaysUpdate) {
@@ -182,6 +202,22 @@ export function computeMergeData(
     if (incoming[field] != null && (existing[field] == null || existing[field] === '')) {
       mergeData[field] = incoming[field];
     }
+  }
+
+  // Imported without a name (e.g. a Lattice row with a blank Description) → take this one
+  if (typeof incoming.title === 'string' && !isUnknownTitle(incoming.title) && isUnknownTitle(existing.title as string | null)) {
+    mergeData.title = incoming.title;
+  }
+
+  // $0 cost (a Vine order in Amazon's history) → take a real value, e.g. Lattice's ETV
+  const existingCost = Number(existing.original_cost ?? 0);
+  if (typeof incoming.original_cost === 'number' && incoming.original_cost > 0 && !(existingCost > 0)) {
+    mergeData.original_cost = incoming.original_cost;
+  }
+
+  const hasPhotos = Array.isArray(existing.photos) && (existing.photos as unknown[]).length > 0;
+  if (!hasPhotos && Array.isArray(incoming.photos) && incoming.photos.length > 0) {
+    mergeData.photos = incoming.photos;
   }
 
   // Always append new source to data_sources array

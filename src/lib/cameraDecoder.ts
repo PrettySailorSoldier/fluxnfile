@@ -26,6 +26,11 @@ export interface RawRead {
   text: string;
   /** ZXing BarcodeFormat name, e.g. "UPC_A" (native names are mapped to these) */
   format?: string;
+  /**
+   * The scan line through the barcode, in video pixels: first = start, last = end.
+   * The sticker reader uses it to find the printed text next to an X00 barcode.
+   */
+  points: { x: number; y: number }[];
 }
 
 export interface CameraDecoder {
@@ -74,6 +79,22 @@ interface DetectedBarcode {
   rawValue: string;
   format: string;
   boundingBox: DOMRectReadOnly;
+  /** Clockwise from the barcode's own top-left, so they follow its rotation */
+  cornerPoints?: { x: number; y: number }[];
+}
+
+/** Midpoints of the barcode's start and end edges — the same line ZXing reports. */
+function scanLine(code: DetectedBarcode): { x: number; y: number }[] {
+  const c = code.cornerPoints;
+  if (c && c.length === 4) {
+    const mid = (a: { x: number; y: number }, b: { x: number; y: number }) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+    return [mid(c[0], c[3]), mid(c[1], c[2])];
+  }
+  const b = code.boundingBox;
+  return [
+    { x: b.x, y: b.y + b.height / 2 },
+    { x: b.x + b.width, y: b.y + b.height / 2 },
+  ];
 }
 interface NativeDetector {
   detect(source: HTMLVideoElement): Promise<DetectedBarcode[]>;
@@ -112,7 +133,7 @@ function pickBarcode(codes: DetectedBarcode[], video: HTMLVideoElement): RawRead
   let best: { read: RawRead; score: number } | null = null;
   for (const code of codes) {
     if (!code.rawValue) continue;
-    const read = { text: code.rawValue, format: code.format.toUpperCase() };
+    const read = { text: code.rawValue, format: code.format.toUpperCase(), points: scanLine(code) };
     const box = code.boundingBox;
     const distance = Math.hypot(box.x + box.width / 2 - cx, box.y + box.height / 2 - cy);
     // Product codes always beat non-product codes, then nearest the centre
@@ -216,7 +237,11 @@ export async function startCameraDecoder(
     await reader.decodeFromStream(stream, video, (result: Result | null, err?: Error) => {
       if (stopped) return;
       if (result) {
-        onRead({ text: result.getText(), format: BarcodeFormat[result.getBarcodeFormat()] });
+        onRead({
+          text: result.getText(),
+          format: BarcodeFormat[result.getBarcodeFormat()],
+          points: (result.getResultPoints() ?? []).map((p) => ({ x: p.getX(), y: p.getY() })),
+        });
       } else if (
         err &&
         !(err instanceof NotFoundException) &&

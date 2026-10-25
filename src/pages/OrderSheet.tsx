@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useOrderSheetItems, Item } from '@/hooks/useInventory';
+import type { CodeType } from '@/lib/barcode';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { Input } from '@/components/ui/input';
@@ -47,6 +48,9 @@ function formatDate(dateStr: string | null | undefined) {
   });
 }
 
+/** Order Sheet cards rendered per page */
+const PAGE = 100;
+
 export default function OrderSheet() {
   const { team } = useAuth();
   const navigate = useNavigate();
@@ -61,9 +65,12 @@ export default function OrderSheet() {
   const [showVineReport, setShowVineReport] = useState(false);
   const [showLattice, setShowLattice] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
-  const [linkUpc, setLinkUpc] = useState<string | null>(null);
+  /** Unmatched scan waiting for "Which item is this?" (hint = words read off an X00 sticker) */
+  const [linkTarget, setLinkTarget] = useState<{ code: string; codeType: CodeType; hint?: string | null } | null>(null);
   // How the confirm sheet was opened — scan-initiated confirms reopen the scanner
   const [confirmSource, setConfirmSource] = useState<'scan' | 'list'>('list');
+  /** The code behind the open confirm sheet, for "Not this item" */
+  const [lastScan, setLastScan] = useState<{ code: string; codeType: CodeType; hint?: string | null } | null>(null);
 
   // Auto-open the confirm sheet when arriving via /order-sheet?confirm=<id>
   // (used by the Inventory scanner when it finds an unconfirmed item)
@@ -75,13 +82,20 @@ export default function OrderSheet() {
     setSearchParams({}, { replace: true });
   }, [searchParams, items, setSearchParams]);
 
+  // Vine histories run to thousands of items — render a page at a time
+  const [shownCount, setShownCount] = useState(PAGE);
+  useEffect(() => setShownCount(PAGE), [search]);
+
   const filtered = useMemo(() => {
     if (!search) return items;
     const q = search.toLowerCase();
     return items.filter(
       (item) =>
         item.title?.toLowerCase().includes(q) ||
-        item.amazon_asin?.toLowerCase().includes(q)
+        item.amazon_asin?.toLowerCase().includes(q) ||
+        item.amazon_order_number?.toLowerCase().includes(q) ||
+        item.amazon_order_id?.toLowerCase().includes(q) ||
+        item.fnsku?.toLowerCase().includes(q)
     );
   }, [items, search]);
 
@@ -107,13 +121,35 @@ export default function OrderSheet() {
     },
   });
 
-  const handleScanMatch = (item: Item) => {
+  const handleScanMatch = (item: Item, scan: { code: string; codeType: CodeType; hint?: string | null }) => {
     setConfirmSource('scan');
+    setLastScan(scan);
     setConfirmItem(item);
   };
 
-  const handleScanNoMatch = async (code: string, codeType: 'asin' | 'upc') => {
+  /** The box is a different order: unlink the code from this one and pick again. */
+  const handleNotThisItem = async (item: Item) => {
+    const scan = lastScan;
+    setConfirmItem(null);
+    if (!scan) return;
+    // A sticker or UPC saved onto the wrong order would keep matching it
+    if (scan.codeType === 'fnsku' && item.fnsku?.toUpperCase() === scan.code.toUpperCase()) {
+      await supabase.from('items').update({ fnsku: null }).eq('id', item.id);
+    } else if (scan.codeType === 'upc' && item.upc === scan.code) {
+      await supabase.from('items').update({ upc: null }).eq('id', item.id);
+    }
+    queryClient.invalidateQueries({ queryKey: ['items'] });
+    setLinkTarget({ code: scan.code, codeType: scan.codeType, hint: scan.hint });
+  };
+
+  const handleScanNoMatch = async (code: string, codeType: CodeType, hint?: string | null) => {
     if (!team?.id) return;
+
+    // X00 sticker that didn't match outright → pick it, ranked by the sticker's printed name
+    if (codeType === 'fnsku') {
+      setLinkTarget({ code, codeType, hint: hint ?? null });
+      return;
+    }
 
     // Not on the order sheet — check whether it's already confirmed inventory
     const query = supabase
@@ -142,7 +178,7 @@ export default function OrderSheet() {
     if (codeType === 'upc') {
       // Unknown product barcode — let the user link it to an order once;
       // every future scan of this UPC matches instantly
-      setLinkUpc(code);
+      setLinkTarget({ code, codeType });
     } else {
       toast.warning(`No order found for ASIN ${code}. Import your orders first, or add it manually.`);
     }
@@ -187,7 +223,7 @@ export default function OrderSheet() {
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Search items..."
+            placeholder="Search name, ASIN or order #..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
@@ -269,16 +305,23 @@ export default function OrderSheet() {
             </CardContent>
           </Card>
         ) : (
-          filtered.map((item) => (
-            <OrderItemCard
-              key={item.id}
-              item={item}
-              onConfirm={() => {
-                setConfirmSource('list');
-                setConfirmItem(item);
-              }}
-            />
-          ))
+          <>
+            {filtered.slice(0, shownCount).map((item) => (
+              <OrderItemCard
+                key={item.id}
+                item={item}
+                onConfirm={() => {
+                  setConfirmSource('list');
+                  setConfirmItem(item);
+                }}
+              />
+            ))}
+            {filtered.length > shownCount && (
+              <Button variant="outline" className="w-full" onClick={() => setShownCount((n) => n + PAGE)}>
+                Show more ({filtered.length - shownCount} left)
+              </Button>
+            )}
+          </>
         )}
       </div>
 
@@ -287,24 +330,32 @@ export default function OrderSheet() {
         open={!!confirmItem}
         onClose={() => setConfirmItem(null)}
         onConfirmed={handleConfirmed}
+        onNotThisItem={confirmSource === 'scan' && lastScan ? handleNotThisItem : undefined}
       />
 
       <BarcodeScannerModal
         open={showScanner}
         items={items}
-        onMatchFound={handleScanMatch}
+        onMatchFound={(item, code, codeType) => handleScanMatch(item, { code, codeType })}
         onNoMatch={handleScanNoMatch}
         onClose={() => setShowScanner(false)}
       />
 
       <LinkUpcSheet
-        upc={linkUpc}
-        open={!!linkUpc}
+        upc={linkTarget?.code ?? null}
+        codeType={linkTarget?.codeType}
+        hint={linkTarget?.hint}
+        open={!!linkTarget}
         items={items}
-        onClose={() => setLinkUpc(null)}
+        onClose={() => setLinkTarget(null)}
         onLinked={(item) => {
           queryClient.invalidateQueries({ queryKey: ['items'] });
-          handleScanMatch({ ...item, upc: linkUpc });
+          const t = linkTarget;
+          if (!t) return;
+          handleScanMatch(
+            t.codeType === 'fnsku' ? { ...item, fnsku: t.code } : t.codeType === 'upc' ? { ...item, upc: t.code } : item,
+            t
+          );
         }}
       />
 

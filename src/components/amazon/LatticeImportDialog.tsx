@@ -23,7 +23,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { Upload, CheckCircle2, Clock } from 'lucide-react';
-import { useWorkflowSettings } from '@/hooks/useUserPreferences';
+import { isUnknownTitle, unknownItemTitle } from '@/lib/productLookup';
+import { isoFromMDY, writeWithOrderDates } from '@/lib/orderDates';
 
 interface LatticeImportDialogProps {
   open: boolean;
@@ -39,16 +40,6 @@ export function LatticeImportDialog({
   const { team, user } = useAuth();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const workflowSettings = useWorkflowSettings();
-
-  const calcTargetPrice = (cost: number): number | null => {
-    if (cost <= 0) return null;
-    let price = Math.round(cost * (workflowSettings.defaultMarkupPercent / 100) * 100) / 100;
-    if (workflowSettings.roundPricesToNinetyNine && price > 1) {
-      price = Math.floor(price) - 0.01;
-    }
-    return price;
-  };
 
   const [step, setStep] = useState<'upload' | 'preview' | 'done'>('upload');
   const [allItems, setAllItems] = useState<LatticeItem[]>([]);
@@ -69,37 +60,47 @@ export function LatticeImportDialog({
     return matchesFilter && matchesSearch;
   });
 
+  /** One or several Lattice exports at once (e.g. "1-500" and "501-1000") — merged by ASIN. */
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
 
     setIsProcessing(true);
 
     try {
-      const text = await file.text();
+      const byAsin = new Map<string, LatticeItem>();
+      const rejected: string[] = [];
 
-      if (!isLatticeCSV(text)) {
+      for (const file of files) {
+        const text = await file.text();
+        if (!isLatticeCSV(text)) {
+          rejected.push(file.name);
+          continue;
+        }
+        for (const item of parseLatticeCSV(text).items) {
+          const prev = byAsin.get(item.asin);
+          // Same ASIN in two exports: keep the row that has the product name
+          if (!prev || (!prev.description && item.description)) byAsin.set(item.asin, item);
+        }
+      }
+
+      if (rejected.length > 0) {
         toast.error(
-          "This doesn't look like a Lattice export. Export from Lattice using the CSV option."
+          `${rejected.join(', ')} ${rejected.length === 1 ? "doesn't" : "don't"} look like a Lattice export — skipped.`
         );
+      }
+      const items = [...byAsin.values()];
+      if (items.length === 0) {
+        if (rejected.length < files.length) toast.error('No items found in this CSV.');
         return;
       }
 
-      const result = parseLatticeCSV(text);
-
-      if (result.items.length === 0) {
-        toast.error('No items found in this CSV.');
-        return;
-      }
-
-      setAllItems(result.items);
-      setImportStats({
-        alreadyReviewed: result.alreadyReviewed,
-        pendingReview: result.pendingReview,
-      });
+      const alreadyReviewed = items.filter((i) => i.reviewStatus === 'Approved').length;
+      setAllItems(items);
+      setImportStats({ alreadyReviewed, pendingReview: items.length - alreadyReviewed });
       setStep('preview');
       toast.success(
-        `Found ${result.totalFound} Vine items (${result.alreadyReviewed} reviewed, ${result.pendingReview} pending)`
+        `Found ${items.length} Vine items (${alreadyReviewed} reviewed, ${items.length - alreadyReviewed} pending)`
       );
     } catch (err) {
       toast.error('Failed to read CSV. Please try again.');
@@ -134,61 +135,113 @@ export function LatticeImportDialog({
       if (selected.length === 0) throw new Error('No items selected');
 
       // Fetch existing items by amazon_asin to detect duplicates
-      const { data: existing } = await supabase
-        .from('items')
-        .select('amazon_asin')
-        .eq('team_id', team.id)
-        .not('amazon_asin', 'is', null);
+      // (paged — a single select stops at 1,000 rows; '*' so the order-date
+      // columns are read when they exist and skipped when they don't)
+      const existing: Record<string, unknown>[] = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase
+          .from('items')
+          .select('*')
+          .eq('team_id', team.id)
+          .not('amazon_asin', 'is', null)
+          .order('id')
+          .range(from, from + 999);
+        if (error) throw error;
+        existing.push(...((data ?? []) as Record<string, unknown>[]));
+        if (!data || data.length < 1000) break;
+      }
 
-      const existingAsins = new Set(
-        existing?.map(e => e.amazon_asin).filter(Boolean) || []
-      );
+      const existingByAsin = new Map<string, Record<string, unknown>[]>();
+      for (const row of existing) {
+        const asin = row.amazon_asin as string;
+        existingByAsin.set(asin, [...(existingByAsin.get(asin) ?? []), row]);
+      }
 
-      const toInsert = selected.filter(item => !existingAsins.has(item.asin));
-      const toUpdate = selected.filter(item => existingAsins.has(item.asin));
+      const toInsert = selected.filter(item => !existingByAsin.has(item.asin));
+      const toUpdate = selected.filter(item => existingByAsin.has(item.asin));
+
+      // Exactly what the export says — no markup; prices are set after an item is received
+      const officialFields = (item: LatticeItem) => ({
+        vine_etv: item.etv > 0 ? item.etv : null,
+        vine_fmv: item.fmv > 0 ? item.fmv : null,
+        ordered_date: isoFromMDY(item.orderedDate),
+        shipped_date: isoFromMDY(item.shippedDate),
+        delivered_date: isoFromMDY(item.deliveredDate),
+        lattice_review_status: item.reviewStatus || null,
+        lattice_review_score: item.reviewRating,
+        lattice_review_quality: item.reviewQuality || null,
+        lattice_reviewed_date: item.reviewedDate || null,
+      });
 
       if (toInsert.length > 0) {
         const itemsToInsert = toInsert.map(item => ({
           team_id: team.id,
           created_by: user.id,
-          title: item.description.slice(0, 255),
+          title: item.description ? item.description.slice(0, 255) : unknownItemTitle(item.asin),
           original_cost: item.valueToUse,
-          target_price: calcTargetPrice(item.valueToUse),
           amazon_asin: item.asin,
           acquisition_date: getAcquisitionDate(item),
           acquisition_source: 'Vine',
+          is_vine_order: true,
           condition: 'new' as const,
           status: 'acquired' as const,
           amazon_review_status:
             item.reviewStatus === 'Approved' ? 'reviewed_grant' : 'pending',
-          // Cast via unknown — column added by 20260523000002 migration
-          ...({ delivery_status: item.deliveryStatus || null } as unknown as object),
+          delivery_status: item.deliveryStatus || null,
+          data_sources: ['lattice_csv'],
+          ...officialFields(item),
           reviewed_by: [] as string[],
           photos: [] as string[],
         }));
 
-        const { error } = await supabase.from('items').insert(itemsToInsert);
-        if (error) throw error;
+        // Big exports (3,000+ rows) go in chunks so one request doesn't time out
+        for (let i = 0; i < itemsToInsert.length; i += 500) {
+          const { error } = await writeWithOrderDates(itemsToInsert.slice(i, i + 500), rows =>
+            supabase.from('items').insert(rows)
+          );
+          if (error) throw error;
+        }
       }
 
       if (toUpdate.length > 0) {
-        await Promise.all(
-          toUpdate.map(item => {
-            const update: TablesUpdate<'items'> = {};
-            if (item.reviewStatus === 'Approved') {
+        const updates = toUpdate.flatMap(item =>
+          (existingByAsin.get(item.asin) ?? []).map(row => () => {
+            const update: Record<string, unknown> = {};
+            if (item.reviewStatus === 'Approved' && row.amazon_review_status !== 'reviewed_grant') {
               update.amazon_review_status = 'reviewed_grant';
             }
-            if (item.deliveryStatus) {
+            if (item.deliveryStatus && item.deliveryStatus !== row.delivery_status) {
               update.delivery_status = item.deliveryStatus;
             }
+            // Imported first from Amazon's order history, where Vine orders cost $0 — ETV fills it in
+            if (item.valueToUse > 0 && !(Number(row.original_cost ?? 0) > 0)) {
+              update.original_cost = item.valueToUse;
+            }
+            // Imported earlier without a name — a newer export may have it now
+            if (item.description && isUnknownTitle(row.title as string | null)) {
+              update.title = item.description.slice(0, 255);
+            }
+            // Everything else only fills blanks
+            for (const [key, value] of Object.entries(officialFields(item))) {
+              if (value != null && value !== '' && (row[key] == null || row[key] === '')) update[key] = value;
+            }
+            if (!row.is_vine_order) update.is_vine_order = true;
+            const sources = (row.data_sources as string[] | null) ?? [];
+            if (!sources.includes('lattice_csv')) update.data_sources = [...sources, 'lattice_csv'];
+            // A date column that doesn't exist yet reads as undefined → skip it rather than write it
+            for (const key of ['ordered_date', 'shipped_date', 'delivered_date']) {
+              if (!(key in row)) delete update[key];
+            }
             if (Object.keys(update).length === 0) return Promise.resolve({ error: null });
-            return supabase
-              .from('items')
-              .update(update)
-              .eq('team_id', team.id)
-              .eq('amazon_asin', item.asin);
+            return supabase.from('items').update(update as TablesUpdate<'items'>).eq('id', row.id as string);
           })
         );
+        // 25 at a time — thousands of parallel requests get rate-limited
+        for (let k = 0; k < updates.length; k += 25) {
+          const results = await Promise.all(updates.slice(k, k + 25).map(run => run()));
+          const failed = results.find(r => r.error);
+          if (failed?.error) throw failed.error;
+        }
       }
 
       return { inserted: toInsert.length, updated: toUpdate.length };
@@ -248,14 +301,15 @@ export function LatticeImportDialog({
               >
                 <Upload className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
                 <p className="font-medium text-foreground mb-1">
-                  Click to upload Lattice CSV
+                  Click to upload Lattice CSV files
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  Export from Lattice → top right menu → Export CSV
+                  Select one or several exports at once. Export from Lattice → top right menu → Export CSV
                 </p>
                 <input
                   ref={fileInputRef}
                   type="file"
+                  multiple
                   accept=".csv"
                   className="hidden"
                   onChange={handleFileUpload}
@@ -349,7 +403,9 @@ export function LatticeImportDialog({
                     />
                     <div className="flex-1 min-w-0 space-y-1">
                       <p className="text-sm font-medium line-clamp-2">
-                        {item.description}
+                        {item.description || (
+                          <span className="text-muted-foreground italic">No name in export — scan the box to fill it in</span>
+                        )}
                       </p>
                       <div className="flex items-center gap-2 flex-wrap">
                         <Badge variant="outline" className="text-xs font-mono">

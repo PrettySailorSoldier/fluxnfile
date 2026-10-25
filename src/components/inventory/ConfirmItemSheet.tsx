@@ -4,11 +4,11 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Package } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { Item, useStorageLocations } from '@/hooks/useInventory';
+import { OrderDetails } from '@/components/inventory/OrderDetails';
 
 const LAST_LOCATION_KEY = 'confirm-last-storage-location';
 
@@ -18,9 +18,11 @@ interface ConfirmItemSheetProps {
   onClose: () => void;
   /** Called after a successful confirm (in addition to onClose). */
   onConfirmed?: (item: Item) => void;
+  /** Shows "Not this item" — the scanned box turned out to be a different order */
+  onNotThisItem?: (item: Item) => void;
 }
 
-export function ConfirmItemSheet({ item, open, onClose, onConfirmed }: ConfirmItemSheetProps) {
+export function ConfirmItemSheet({ item, open, onClose, onConfirmed, onNotThisItem }: ConfirmItemSheetProps) {
   const queryClient = useQueryClient();
   const { user, team } = useAuth();
   const { data: storageLocations = [] } = useStorageLocations();
@@ -90,25 +92,27 @@ export function ConfirmItemSheet({ item, open, onClose, onConfirmed }: ConfirmIt
     },
   });
 
-  const photo = item?.photos?.[0];
-
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto rounded-t-2xl">
         <SheetHeader className="pb-4 text-left">
-          <SheetTitle>{item?.title || 'Untitled Item'}</SheetTitle>
-          {photo ? (
-            <div className="mt-2">
-              <img src={photo} alt="" className="h-24 w-auto rounded-md object-cover" />
-            </div>
-          ) : (
-            <div className="mt-2 w-16 h-16 rounded-md bg-muted flex items-center justify-center">
-              <Package className="w-7 h-7 text-muted-foreground" />
-            </div>
-          )}
+          <SheetTitle>Is this the box?</SheetTitle>
+          <p className="text-sm text-muted-foreground">Check the order details against the box before confirming.</p>
         </SheetHeader>
 
         <div className="space-y-5 pb-6">
+          {item && (
+            <div className="rounded-lg border border-border p-3">
+              <OrderDetails item={item} />
+            </div>
+          )}
+
+          {item && onNotThisItem && (
+            <Button variant="outline" className="w-full" onClick={() => onNotThisItem(item)}>
+              Not this item — pick the right one
+            </Button>
+          )}
+
           <div className="space-y-2">
             <Label>What are you doing with this?</Label>
             <div className="flex flex-col gap-2">

@@ -4,13 +4,15 @@
  * Code types:
  *  - asin: Amazon ASIN (B0…) or ISBN-10 printed on Amazon labels / older books
  *  - upc:  UPC-A / UPC-E / EAN-13 / EAN-8 / ITF-14 product barcodes (incl. ISBN-13)
+ *  - fnsku: Amazon fulfillment sticker (X00…). Saved on items (items.fnsku) once
+ *           matched; the lookup can also resolve it to an ASIN.
  *
  * Every numeric code is check-digit validated, so misreads, typos and
  * look-alike numbers (tracking numbers, order numbers) are rejected instead
  * of becoming "Unknown item" rows.
  */
 
-export type CodeType = 'asin' | 'upc';
+export type CodeType = 'asin' | 'upc' | 'fnsku';
 
 export interface ScannedCode {
   codeType: CodeType;
@@ -90,6 +92,27 @@ export function upcEToUpcA(upcE: string): string | null {
   return `${ns}${body}${check}`;
 }
 
+/** GS1 check digit (UPC / EAN / GTIN-14). 11-digit UPC-As missing the leading zero are padded. */
+export function hasValidCheckDigit(code: string): boolean {
+  const d = code.replace(/\D/g, '');
+  return isValidGtin(d.length === 11 ? `0${d}` : d);
+}
+
+/** Amazon FNSKU sticker code (e.g. X0051UTBFP). */
+export function isFnsku(code: string): boolean {
+  return /^X0[A-Z0-9]{8}$/i.test(code.trim());
+}
+
+/**
+ * Shipping-label barcodes that happen to be all digits: GS1-128 "420" + ZIP
+ * (USPS/UPS/FedEx ship-to postal code), e.g. 42096080 or 420960808930.
+ */
+function isPostalRoutingCode(digits: string, format?: string): boolean {
+  // Typed codes and retail symbologies are trusted — real UPC-As can start with 420
+  if (!format || ['UPC_A', 'UPC_E', 'EAN_13', 'EAN_8'].includes(format)) return false;
+  return /^420\d{5}(\d{4})?$/.test(digits);
+}
+
 /** True when a digits-only code is an ISBN-13 (books). */
 export function isIsbn13(code: string): boolean {
   const d = code.replace(/\D/g, '');
@@ -140,6 +163,9 @@ export function classifyCode(raw: string, format?: string): ScannedCode | null {
     if (/^B[A-Z0-9]{9}$/.test(id) || isValidIsbn10(id)) return { codeType: 'asin', value: id };
   }
 
+  // Amazon FNSKU sticker (X00…) — resolved to an ASIN by the lookup
+  if (isFnsku(text)) return { codeType: 'fnsku', value: text.toUpperCase() };
+
   // The whole code is an ASIN (Amazon labels encode it as Code 128; typed codes)
   // (typed "BO7…" with the letter O is a common slip for "B07…")
   const upper = text.toUpperCase().replace(/^BO(?=[A-Z0-9]{8}$)/, 'B0');
@@ -155,6 +181,7 @@ export function classifyCode(raw: string, format?: string): ScannedCode | null {
 
   const digitsOnly = text.replace(/[\s-]/g, '');
   if (!/^\d+$/.test(digitsOnly)) return null;
+  if (isPostalRoutingCode(digitsOnly, format)) return null;
 
   // Digits printed as Code 128 / Code 39 / plain QR are tracking, order or serial
   // numbers — real product numbers come as UPC/EAN/ITF or GS1 (handled above)
@@ -198,9 +225,6 @@ export function explainUnrecognized(raw: string, format?: string): string {
   const text = (raw ?? '').trim().replace(/^\][A-Za-z]\d/, '');
   const upper = text.toUpperCase().replace(/[\s-]/g, '');
   const tracking = 'Shipping/tracking label — scan the product barcode or the Amazon label instead.';
-  if (/^X0[0-9A-Z]{8}$/.test(upper)) {
-    return 'Amazon FNSKU sticker (X0…) — it isn’t linked to a product. Scan the product’s own UPC (often under the sticker) or the ASIN.';
-  }
   if (/^LPN[0-9A-Z]{6,}$/.test(upper)) {
     return 'Amazon returns (LPN) label — scan the product’s own UPC or the ASIN instead.';
   }

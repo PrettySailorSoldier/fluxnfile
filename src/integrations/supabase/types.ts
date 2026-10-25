@@ -102,6 +102,7 @@ export type Database = {
           brand: string | null
           retail_price: number | null
           amazon_asin: string | null
+          fnsku: string | null
           amazon_order_id: string | null
           amazon_order_number: string | null
           amazon_order_url: string | null
@@ -122,6 +123,9 @@ export type Database = {
           data_sources: string[] | null
           default_pickup_location: string | null
           delivery_status: string | null
+          delivered_date: string | null
+          ordered_date: string | null
+          shipped_date: string | null
           description: string | null
           fb_conversation_notes: string | null
           fb_listed_date: string | null
@@ -168,6 +172,7 @@ export type Database = {
           brand?: string | null
           retail_price?: number | null
           amazon_asin?: string | null
+          fnsku?: string | null
           amazon_order_id?: string | null
           amazon_order_number?: string | null
           amazon_order_url?: string | null
@@ -188,6 +193,9 @@ export type Database = {
           data_sources?: string[] | null
           default_pickup_location?: string | null
           delivery_status?: string | null
+          delivered_date?: string | null
+          ordered_date?: string | null
+          shipped_date?: string | null
           description?: string | null
           fb_conversation_notes?: string | null
           fb_listed_date?: string | null
@@ -234,6 +242,7 @@ export type Database = {
           brand?: string | null
           retail_price?: number | null
           amazon_asin?: string | null
+          fnsku?: string | null
           amazon_order_id?: string | null
           amazon_order_number?: string | null
           amazon_order_url?: string | null
@@ -254,6 +263,9 @@ export type Database = {
           data_sources?: string[] | null
           default_pickup_location?: string | null
           delivery_status?: string | null
+          delivered_date?: string | null
+          ordered_date?: string | null
+          shipped_date?: string | null
           description?: string | null
           fb_conversation_notes?: string | null
           fb_listed_date?: string | null
@@ -662,6 +674,7 @@ export type Database = {
       }
       product_catalog: {
         Row: {
+          asin: string | null
           brand: string | null
           category: string | null
           code: string
@@ -680,6 +693,7 @@ export type Database = {
           title: string | null
         }
         Insert: {
+          asin?: string | null
           brand?: string | null
           category?: string | null
           code: string
@@ -698,6 +712,7 @@ export type Database = {
           title?: string | null
         }
         Update: {
+          asin?: string | null
           brand?: string | null
           category?: string | null
           code?: string
