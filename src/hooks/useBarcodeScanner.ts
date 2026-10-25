@@ -1,12 +1,12 @@
 import { useState, useCallback, useRef } from 'react';
+import { classifyCode, explainUnrecognized, normalizeUpc, type ScannedCode } from '@/lib/barcode';
 import {
-  BarcodeFormat,
-  BrowserMultiFormatReader,
-  DecodeHintType,
-  NotFoundException,
-  Result,
-} from '@zxing/library';
-import { classifyCode, normalizeUpc, type ScannedCode } from '@/lib/barcode';
+  cameraErrorMessage,
+  createReadConfirmer,
+  startCameraDecoder,
+  type CameraDecoder,
+  type RawRead,
+} from '@/lib/cameraDecoder';
 
 // Re-exported so existing imports keep working
 export { normalizeUpc };
@@ -14,60 +14,34 @@ export type { ScannedCode };
 
 export type ScanResult =
   | ({ status: 'found'; rawValue: string } & ScannedCode)
-  | { status: 'not_recognized'; rawValue: string }
+  | { status: 'not_recognized'; rawValue: string; /** What the code probably is, for the user */ hint: string }
   | { status: 'cancelled' }
   | { status: 'error'; message: string };
 
-/** Formats found on retail products, Amazon labels and books. */
-const PRODUCT_FORMATS = [
-  BarcodeFormat.UPC_A,
-  BarcodeFormat.UPC_E,
-  BarcodeFormat.EAN_13,
-  BarcodeFormat.EAN_8,
-  BarcodeFormat.CODE_128,
-  BarcodeFormat.CODE_39,
-  BarcodeFormat.ITF,
-  BarcodeFormat.QR_CODE,
-];
-
-export function createProductReader(timeBetweenScansMillis = 150): BrowserMultiFormatReader {
-  const hints = new Map<DecodeHintType, unknown>();
-  hints.set(DecodeHintType.POSSIBLE_FORMATS, PRODUCT_FORMATS);
-  hints.set(DecodeHintType.TRY_HARDER, true);
-  return new BrowserMultiFormatReader(hints, timeBetweenScansMillis);
-}
-
-export const REAR_CAMERA_CONSTRAINTS: MediaStreamConstraints = {
-  video: {
-    facingMode: { ideal: 'environment' },
-    width: { ideal: 1280 },
-    height: { ideal: 720 },
-  },
-};
-
-/** Turn a ZXing result into a typed scan result. */
-export function toScanResult(result: Result): ScanResult {
-  const rawValue = result.getText();
-  const format = BarcodeFormat[result.getBarcodeFormat()];
-  const code = classifyCode(rawValue, format);
-  return code ? { status: 'found', ...code, rawValue } : { status: 'not_recognized', rawValue };
+/** Turn a camera read into a typed scan result. */
+export function toScanResult({ text, format }: RawRead): ScanResult {
+  const code = classifyCode(text, format);
+  return code
+    ? { status: 'found', ...code, rawValue: text }
+    : { status: 'not_recognized', rawValue: text, hint: explainUnrecognized(text, format) };
 }
 
 /**
- * One-shot scanner: resolves with the first barcode seen, then releases the camera.
+ * One-shot scanner: resolves with the first confirmed barcode, then releases the camera.
  * For scanning many items in a row, use useContinuousScanner instead.
  */
 export function useBarcodeScanner() {
   const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const readerRef = useRef<BrowserMultiFormatReader | null>(null);
+  const decoderRef = useRef<CameraDecoder | null>(null);
   const resolveRef = useRef<((result: ScanResult) => void) | null>(null);
+  /** Bumped on every start/stop so a camera that finishes opening after cancel is closed */
+  const sessionRef = useRef(0);
 
   const stopScanner = useCallback(() => {
-    if (readerRef.current) {
-      readerRef.current.reset();
-      readerRef.current = null;
-    }
+    sessionRef.current += 1;
+    decoderRef.current?.stop();
+    decoderRef.current = null;
     setIsScanning(false);
   }, []);
 
@@ -78,42 +52,37 @@ export function useBarcodeScanner() {
           resolveRef.current = resolve;
           setError(null);
           setIsScanning(true);
+          const session = ++sessionRef.current;
 
+          const videoEl = document.getElementById(videoElementId) as HTMLVideoElement | null;
+          if (!videoEl) {
+            stopScanner();
+            resolve({ status: 'error', message: 'Video element not found' });
+            return;
+          }
+
+          const confirm = createReadConfirmer();
           try {
-            const videoEl = document.getElementById(videoElementId) as HTMLVideoElement | null;
-            if (!videoEl) {
+            const decoder = await startCameraDecoder(videoEl, (read) => {
+              if (!resolveRef.current || !confirm(read.text)) return;
+              const done = resolveRef.current;
+              resolveRef.current = null;
               stopScanner();
-              resolve({ status: 'error', message: 'Video element not found' });
+              if ('vibrate' in navigator) navigator.vibrate(100);
+              done(toScanResult(read));
+            });
+            if (session !== sessionRef.current) {
+              // Cancelled (or resolved) while the camera was opening
+              decoder.stop();
               return;
             }
-
-            const reader = createProductReader();
-            readerRef.current = reader;
-
-            // decodeFromConstraints requests permission itself (works in Safari PWAs)
-            // and asks for the rear camera explicitly
-            await reader.decodeFromConstraints(
-              REAR_CAMERA_CONSTRAINTS,
-              videoEl,
-              (result: Result | null, err?: Error) => {
-                if (result && resolveRef.current) {
-                  const scanResult = toScanResult(result);
-                  const done = resolveRef.current;
-                  resolveRef.current = null;
-                  stopScanner();
-                  if ('vibrate' in navigator) navigator.vibrate(100);
-                  done(scanResult);
-                }
-                // NotFoundException fires continuously when no barcode is in frame — not an error
-                if (err && !(err instanceof NotFoundException)) {
-                  console.error('Scanner error:', err);
-                }
-              }
-            );
+            decoderRef.current = decoder;
           } catch (err) {
+            if (session !== sessionRef.current) return;
             stopScanner();
-            const message = err instanceof Error ? err.message : 'Camera error';
+            const message = cameraErrorMessage(err);
             setError(message);
+            resolveRef.current = null;
             resolve({ status: 'error', message });
           }
         })();

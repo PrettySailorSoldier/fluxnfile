@@ -44,7 +44,7 @@ import { notifyTeammates } from '@/hooks/useTeam';
 import { useContinuousScanner } from '@/hooks/useContinuousScanner';
 import { QuickEditSheet } from '@/components/inventory/QuickEditSheet';
 import { LinkUpcSheet } from '@/components/inventory/LinkUpcSheet';
-import { classifyCode, type CodeType } from '@/lib/barcode';
+import { classifyCode, explainUnrecognized, type CodeType } from '@/lib/barcode';
 import { lookupProduct } from '@/lib/productLookup';
 import { playSynthesizedTone } from '@/utils/audioGenerator';
 import {
@@ -402,7 +402,7 @@ export default function ScanSession() {
     } else {
       pushRow({
         code: result.rawValue, codeType: null, kind: 'unrecognized', title: result.rawValue.slice(0, 40),
-        photo: null, itemIds: [], message: 'Shipping/tracking label? Scan the product barcode or Amazon label instead.',
+        photo: null, itemIds: [], message: result.hint,
       });
       signal('unrecognized', 'Not a product barcode');
     }
@@ -434,7 +434,7 @@ export default function ScanSession() {
   const submitManual = () => {
     const parsed = classifyCode(manualCode);
     if (!parsed) {
-      toast.error('That doesn’t look like a UPC, EAN, ISBN or ASIN');
+      toast.error(explainUnrecognized(manualCode));
       return;
     }
     enqueue(parsed.value, parsed.codeType);

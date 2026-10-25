@@ -53,9 +53,7 @@ export function BarcodeScannerModal({
           break;
         }
         case 'not_recognized':
-          toast.warning(
-            'That looks like a tracking/shipment code. Scan the Amazon label barcode or the product’s own UPC barcode.'
-          );
+          toast.warning(result.hint);
           onClose();
           break;
         case 'cancelled':

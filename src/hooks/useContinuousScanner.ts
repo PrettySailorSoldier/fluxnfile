@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BrowserMultiFormatReader, NotFoundException, Result } from '@zxing/library';
+import { toScanResult, type ScanResult } from '@/hooks/useBarcodeScanner';
 import {
-  createProductReader,
-  REAR_CAMERA_CONSTRAINTS,
-  toScanResult,
-  type ScanResult,
-} from '@/hooks/useBarcodeScanner';
+  cameraErrorMessage,
+  createReadConfirmer,
+  startCameraDecoder,
+  type CameraDecoder,
+} from '@/lib/cameraDecoder';
 
 type FoundOrUnrecognized = Extract<ScanResult, { status: 'found' | 'not_recognized' }>;
 
@@ -19,7 +19,7 @@ interface Options {
 }
 
 /**
- * Keeps the camera open and reports every new barcode via `onCode`.
+ * Keeps the camera open and reports every new, confirmed barcode via `onCode`.
  * Call `pause()` while a sheet/dialog is open so stray reads are ignored.
  */
 export function useContinuousScanner(
@@ -31,21 +31,17 @@ export function useContinuousScanner(
   const [torchSupported, setTorchSupported] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
 
-  const readerRef = useRef<BrowserMultiFormatReader | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const decoderRef = useRef<CameraDecoder | null>(null);
+  /** Bumped on every start/stop so a camera that finishes opening after stop is closed */
+  const sessionRef = useRef(0);
   const pausedRef = useRef(false);
-  const lastRef = useRef<{ text: string; seenAt: number } | null>(null);
   const onCodeRef = useRef(onCode);
   onCodeRef.current = onCode;
 
-  const getTrack = (): MediaStreamTrack | null => {
-    const stream = videoRef.current?.srcObject;
-    return stream instanceof MediaStream ? stream.getVideoTracks()[0] ?? null : null;
-  };
-
   const stop = useCallback(() => {
-    readerRef.current?.reset();
-    readerRef.current = null;
+    sessionRef.current += 1;
+    decoderRef.current?.stop();
+    decoderRef.current = null;
     setIsRunning(false);
     setTorchOn(false);
   }, []);
@@ -54,53 +50,50 @@ export function useContinuousScanner(
     async (video: HTMLVideoElement) => {
       stop();
       setError(null);
-      videoRef.current = video;
-      const reader = createProductReader(120);
-      readerRef.current = reader;
+      const session = sessionRef.current;
+      const confirm = createReadConfirmer();
+      /** Last time each code was seen (any raw read) — drives the repeat gap */
+      const lastSeen = new Map<string, number>();
+      /** Codes already reported that haven't left the frame since */
+      const reported = new Set<string>();
 
       try {
-        await reader.decodeFromConstraints(
-          REAR_CAMERA_CONSTRAINTS,
-          video,
-          (result: Result | null, err?: Error) => {
-            if (result) {
-              const text = result.getText();
-              const now = Date.now();
-              const last = lastRef.current;
-              const isRepeat = last && last.text === text && now - last.seenAt < repeatGapMs;
-              lastRef.current = { text, seenAt: now };
-              if (isRepeat || pausedRef.current) return;
-              const scan = toScanResult(result);
-              if (scan.status === 'found' || scan.status === 'not_recognized') {
-                onCodeRef.current(scan);
-              }
-            } else if (err && !(err instanceof NotFoundException)) {
-              console.error('Scanner error:', err);
-            }
+        const decoder = await startCameraDecoder(video, ({ text, format }) => {
+          const now = Date.now();
+          const prev = lastSeen.get(text);
+          lastSeen.set(text, now);
+          // Out of view long enough → the next sighting is a new scan
+          if (prev === undefined || now - prev >= repeatGapMs) reported.delete(text);
+          // Whatever is in view while a sheet is open counts as handled
+          if (pausedRef.current) reported.add(text);
+          if (reported.has(text) || !confirm(text, now)) return;
+          reported.add(text);
+          const scan = toScanResult({ text, format });
+          if (scan.status === 'found' || scan.status === 'not_recognized') {
+            onCodeRef.current(scan);
           }
-        );
+        });
+        if (session !== sessionRef.current) {
+          decoder.stop();
+          return;
+        }
+        decoderRef.current = decoder;
         setIsRunning(true);
 
         // Torch (flashlight) — Chrome/Android only
-        const track = getTrack();
-        const caps = track?.getCapabilities?.() as (MediaTrackCapabilities & { torch?: boolean }) | undefined;
+        const caps = decoder.track?.getCapabilities?.() as (MediaTrackCapabilities & { torch?: boolean }) | undefined;
         setTorchSupported(!!caps?.torch);
       } catch (e) {
+        if (session !== sessionRef.current) return;
         stop();
-        const message =
-          e instanceof Error
-            ? e.name === 'NotAllowedError'
-              ? 'Camera permission was denied. Allow camera access and try again.'
-              : e.message
-            : 'Camera error';
-        setError(message);
+        setError(cameraErrorMessage(e));
       }
     },
     [stop, repeatGapMs]
   );
 
   const toggleTorch = useCallback(async () => {
-    const track = getTrack();
+    const track = decoderRef.current?.track;
     if (!track) return;
     const next = !torchOn;
     try {
@@ -117,8 +110,6 @@ export function useContinuousScanner(
 
   const resume = useCallback(() => {
     pausedRef.current = false;
-    // Don't immediately re-read whatever is still in front of the camera
-    if (lastRef.current) lastRef.current.seenAt = Date.now();
   }, []);
 
   // Always release the camera on unmount

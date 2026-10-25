@@ -5,13 +5,16 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 /**
  * Barcode → product lookup with a shared cache.
  *
- * Body (single):  { code: "012345678905", codeType?: "upc" | "isbn" | "asin" }
- *                 (legacy { upc: "..." } still works)
+ * Body (single):  { code: "012345678905" }   (codeType is accepted but ignored —
+ *                 the code itself decides; legacy { upc: "..." } still works)
  * Body (batch):   { codes: ["...", "..."] }   — up to 25, used by list import
+ *
+ * Codes are check-digit validated first (invalid → "Invalid barcode", no API call)
+ * and canonicalised (11-digit → UPC-A, GTIN-14/EAN-13 padding zeros dropped).
  *
  * Lookup order (first hit wins):
  *   0. product_catalog cache (found rows forever, misses retried after 14 days)
- *   ISBN  → Open Library → UPCitemdb
+ *   ISBN  → Open Library → UPCitemdb → OpenWeb Ninja (ISBN-10 = book ASIN, if key set)
  *   UPC   → UPCitemdb → Open Food Facts
  *   ASIN  → OpenWeb Ninja (only if OPENWEBNINJA_API_KEY is set)
  *
@@ -63,21 +66,76 @@ type SourceResult =
 
 // ── Code helpers ─────────────────────────────────────────────────────────────
 
-function classify(raw: string, hint?: CodeType): { codeType: CodeType; digits: string; key: string } | null {
+// Mirrors src/lib/barcode.ts — keep the two in step.
+
+/** GS1 mod-10 check digit for the digits before it. */
+function gtinCheckDigit(body: string): number {
+  let sum = 0;
+  for (let i = 0; i < body.length; i++) {
+    sum += Number(body[body.length - 1 - i]) * (i % 2 === 0 ? 3 : 1);
+  }
+  return (10 - (sum % 10)) % 10;
+}
+
+function isValidGtin(digits: string): boolean {
+  if (!/^(\d{8}|\d{12,14})$/.test(digits)) return false;
+  return gtinCheckDigit(digits.slice(0, -1)) === Number(digits[digits.length - 1]);
+}
+
+function isValidIsbn10(code: string): boolean {
+  if (!/^\d{9}[\dX]$/.test(code)) return false;
+  let sum = 0;
+  for (let i = 0; i < 10; i++) sum += (code[i] === 'X' ? 10 : Number(code[i])) * (10 - i);
+  return sum % 11 === 0;
+}
+
+function isbn10To13(isbn10: string): string {
+  const body = `978${isbn10.slice(0, 9)}`;
+  return `${body}${gtinCheckDigit(body)}`;
+}
+
+/** 8-digit UPC-E → 12-digit UPC-A, or null when it isn't a valid UPC-E. */
+function upcEToUpcA(d: string): string | null {
+  if (!/^[01]\d{7}$/.test(d)) return null;
+  const [d1, d2, d3, d4, d5, d6] = d.slice(1, 7).split('');
+  const body =
+    d6 <= '2' ? `${d1}${d2}${d6}0000${d3}${d4}${d5}`
+    : d6 === '3' ? `${d1}${d2}${d3}00000${d4}${d5}`
+    : d6 === '4' ? `${d1}${d2}${d3}${d4}00000${d5}`
+    : `${d1}${d2}${d3}${d4}${d5}0000${d6}`;
+  const upcA = `${d[0]}${body}`;
+  return String(gtinCheckDigit(upcA)) === d[7] ? `${upcA}${d[7]}` : null;
+}
+
+/**
+ * Validate (check digit) and canonicalise a code, so typos never cost an API
+ * call and every spelling of one product shares a cache row.
+ */
+function classify(raw: string): { codeType: CodeType; digits: string; key: string } | null {
   const trimmed = (raw ?? '').trim().toUpperCase();
   if (!trimmed) return null;
 
-  // ASIN (B0…) or ISBN-10 (9 digits + digit/X)
+  // ASIN (B0…)
   if (/^B[A-Z0-9]{9}$/.test(trimmed)) {
     return { codeType: 'asin', digits: trimmed, key: trimmed };
   }
-  if (/^\d{9}[\dX]$/.test(trimmed)) {
-    // Book ASINs are ISBN-10s — try book sources
-    return { codeType: hint === 'asin' ? 'asin' : 'isbn', digits: trimmed, key: trimmed };
+  // ISBN-10 — also how Amazon numbers books, so a numeric "ASIN" goes to book sources
+  const compact = trimmed.replace(/[\s-]/g, '');
+  if (/^\d{9}[\dX]$/.test(compact)) {
+    return isValidIsbn10(compact) ? { codeType: 'isbn', digits: compact, key: compact } : null;
   }
 
-  const digits = trimmed.replace(/\D/g, '');
-  if (digits.length < 8 || digits.length > 14) return null;
+  // Spreadsheets: "012345678905.0", "UPC 0123-4567-8905"
+  let digits = trimmed.replace(/\.0+$/, '').replace(/\D/g, '');
+  if (digits.length === 11) digits = `0${digits}`; // UPC-A that lost its leading zero
+  if (digits.length === 8) {
+    // UPC-E typed into a list; wins over EAN-8 (EAN-8s starting 0/1 are in-store codes)
+    digits = upcEToUpcA(digits) ?? digits;
+  }
+  if (!isValidGtin(digits)) return null;
+  // GTIN-14 / EAN-13 padding zeros → UPC-A (case codes with indicator 1–8 stay 14 digits)
+  while (digits.length > 12 && digits[0] === '0') digits = digits.slice(1);
+
   const key = digits.replace(/^0+/, '') || digits;
   const isIsbn13 = digits.length === 13 && (digits.startsWith('978') || digits.startsWith('979'));
   return { codeType: isIsbn13 ? 'isbn' : 'upc', digits, key };
@@ -287,9 +345,8 @@ function rowToResult(row: Record<string, any>, digits: string): ProductLookup {
 async function lookupOne(
   db: ReturnType<typeof createClient> | null,
   rawCode: string,
-  hint?: CodeType,
 ): Promise<{ result: ProductLookup; calledExternal: boolean }> {
-  const parsed = classify(rawCode, hint);
+  const parsed = classify(rawCode);
   if (!parsed) {
     return { result: emptyResult(String(rawCode ?? ''), 'upc', { error: 'Invalid barcode' }), calledExternal: false };
   }
@@ -311,7 +368,12 @@ async function lookupOne(
     codeType === 'asin'
       ? [() => fromOpenWebNinja(digits)]
       : codeType === 'isbn'
-        ? [() => fromOpenLibrary(digits), () => fromUpcItemDb(digits)]
+        ? [
+            () => fromOpenLibrary(digits),
+            () => fromUpcItemDb(digits.length === 10 ? isbn10To13(digits) : digits),
+            // A numeric book ASIN is its ISBN-10 — Amazon knows books Open Library doesn't
+            ...(digits.length === 10 && Deno.env.get('OPENWEBNINJA_API_KEY') ? [() => fromOpenWebNinja(digits)] : []),
+          ]
         : [() => fromUpcItemDb(digits), () => fromOpenFoodFacts(digits)];
 
   let hit: (Partial<ProductLookup> & { raw?: unknown }) | null = null;
@@ -395,7 +457,7 @@ serve(async (req) => {
 
     const code = body.code ?? body.upc;
     if (!code) return json({ error: 'Missing code' }, 400);
-    const { result } = await lookupOne(db, code, body.codeType);
+    const { result } = await lookupOne(db, code);
     if (result.error === 'Invalid barcode') return json({ ...result }, 400);
     return json(result);
   } catch (error: unknown) {

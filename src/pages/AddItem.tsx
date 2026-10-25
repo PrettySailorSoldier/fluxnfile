@@ -16,7 +16,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { toast } from 'sonner';
 import { Camera, X, Loader2, Plus, ImagePlus, ArrowRight, StickyNote, ScanLine, Sparkles } from 'lucide-react';
 import { BarcodeScannerModal } from '@/components/inventory/BarcodeScannerModal';
-import { classifyCode } from '@/lib/barcode';
+import { classifyCode, explainUnrecognized } from '@/lib/barcode';
 import { lookupProduct, matchCategory, suggestPrice, type ProductLookup } from '@/lib/productLookup';
 import { useWorkflowSettings } from '@/hooks/useUserPreferences';
 import { z } from 'zod';
@@ -71,7 +71,7 @@ export default function AddItem() {
   const runLookup = async (raw: string) => {
     const parsed = classifyCode(raw);
     if (!parsed) {
-      toast.error('That doesn’t look like a UPC, EAN, ISBN or ASIN');
+      toast.error(explainUnrecognized(raw));
       return;
     }
     setBarcode(parsed.value);
