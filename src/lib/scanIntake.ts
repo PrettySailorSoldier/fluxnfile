@@ -19,7 +19,7 @@ import {
   unknownItemTitle,
   type ProductLookup,
 } from '@/lib/productLookup';
-import { jaccardSimilarity, normalizeTitle } from '@/utils/import-dedup-engine';
+import { guessStickerMatch, guessTitleMatch, rankBySticker, rankByTitle } from '@/lib/orderMatch';
 
 export interface IntakeDefaults {
   decision: 'sell' | 'keep';
@@ -277,116 +277,9 @@ export async function deleteItem(id: string): Promise<void> {
   if (error) throw error;
 }
 
-/** Rank order-list items by how closely their title matches a product name. Best first. */
-export function rankByTitle<T extends { title: string | null }>(
-  candidates: T[],
-  productTitle: string | null
-): { item: T; score: number }[] {
-  const target = productTitle && !isUnknownTitle(productTitle) ? normalizeTitle(productTitle) : null;
-  const scored = candidates.map((item) => ({
-    item,
-    score: target && item.title && !isUnknownTitle(item.title) ? jaccardSimilarity(target, normalizeTitle(item.title)) : 0,
-  }));
-  return scored.sort((a, b) => b.score - a.score);
-}
-
-function titleWords(s: string): string[] {
-  return s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
-}
-
-/**
- * How well a title covers the words read off an X00 sticker: the share of
- * sticker words found in the title. Stickers cut names off mid-word
- * ("Golf Target Clot"), so a title word only has to start with it.
- */
-export function stickerScore(stickerText: string, title: string | null): { score: number; hits: number } {
-  const words = [...new Set(titleWords(stickerText))];
-  if (!title || isUnknownTitle(title) || words.length === 0) return { score: 0, hits: 0 };
-  const inTitle = titleWords(title);
-  const hits = words.filter((w) => inTitle.some((t) => wordMatches(w, t))).length;
-  return { score: hits / words.length, hits };
-}
-
-/** Edit distance, for OCR slips like "protectjy" → "protection". */
-function editDistance(a: string, b: string): number {
-  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    let prev = row[0];
-    row[0] = i;
-    for (let j = 1; j <= b.length; j++) {
-      const cur = row[j];
-      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
-      prev = cur;
-    }
-  }
-  return row[b.length];
-}
-
-/** A sticker word matches a title word it starts (cut-off names), allowing a misread letter or two. */
-function wordMatches(stickerWord: string, titleWord: string): boolean {
-  if (titleWord.startsWith(stickerWord)) return true;
-  if (stickerWord.length < 5) return false;
-  const allowed = stickerWord.length >= 8 ? 2 : 1;
-  return editDistance(stickerWord, titleWord.slice(0, stickerWord.length)) <= allowed;
-}
-
-/** Rank items by how well they match a sticker's printed words. Best first. */
-export function rankBySticker<T extends { title: string | null }>(
-  candidates: T[],
-  stickerText: string | null
-): { item: T; score: number; hits: number }[] {
-  const scored = candidates.map((item) => ({ item, ...(stickerText ? stickerScore(stickerText, item.title) : { score: 0, hits: 0 }) }));
-  // Most matched words first — a busy background adds stray words that lower every score alike
-  return scored.sort((a, b) => b.hits - a.hits || b.score - a.score);
-}
-
-/** Sticker words a title matches that another title doesn't. */
-function distinctHits(stickerText: string, title: string | null, other: string | null): number {
-  if (!title) return 0;
-  const inTitle = titleWords(title);
-  const inOther = other ? titleWords(other) : [];
-  return [...new Set(titleWords(stickerText))].filter(
-    (w) => inTitle.some((t) => wordMatches(w, t)) && !inOther.some((t) => wordMatches(w, t))
-  ).length;
-}
-
-export interface StickerGuess<T> {
-  item: T;
-  /**
-   * The read clearly points at this item. Even then it's only a guess —
-   * it's shown for checking, never received without the user confirming.
-   */
-  sure: boolean;
-  /** Other items that match nearly as well (same brand, similar names) */
-  lookalikes: number;
-}
-
-/**
- * The item an X00 sticker's printed words point to best (at least 2 words
- * matched). It's "sure" when either:
- *  - at least 3 words matched, half the sticker covered and clearly ahead of
- *    the runner-up (short, clean reads like "golf target clot"), or
- *  - at least 4 words matched and 3 more than the runner-up (long reads with
- *    stray words from a patterned box, where the share covered stays low),
- * and at least 2 of the matched words aren't in the runner-up's name — a
- * brand ("Brizled") matches every order from that brand, so it can't tell a
- * pathway-light 4-pack from a house-number sign.
- */
-export function guessStickerMatch<T extends { title: string | null }>(
-  candidates: T[],
-  stickerText: string | null
-): StickerGuess<T> | null {
-  if (!stickerText) return null;
-  const ranked = rankBySticker(candidates, stickerText);
-  const [best, second] = ranked;
-  if (!best || best.hits < 2) return null;
-  const runnerUp = second ?? { score: 0, hits: 0, item: null };
-  const clean = best.hits >= 3 && best.score >= 0.5 && best.hits > runnerUp.hits && best.score - runnerUp.score >= 0.2 - 1e-9;
-  const noisy = best.hits >= 4 && best.hits - runnerUp.hits >= 3;
-  const distinct = distinctHits(stickerText, best.item.title, runnerUp.item?.title ?? null);
-  const lookalikes = ranked.filter((r) => r !== best && r.hits >= 2 && r.hits >= best.hits - 1).length;
-  return { item: best.item, sure: (clean || noisy) && distinct >= 2, lookalikes };
-}
+// Name matching lives in orderMatch; re-exported for existing imports
+export { guessStickerMatch, guessTitleMatch, rankBySticker, rankByTitle };
+export type { NameGuess as StickerGuess } from '@/lib/orderMatch';
 
 /**
  * Product barcodes aren't on Amazon order exports, so an unknown UPC might
@@ -401,9 +294,9 @@ export async function findOrderSheetNameMatch(
 ): Promise<MatchRow | null> {
   if (!lookupTitle) return null;
   const pool = candidates.filter((c) => c.physical_status === 'unconfirmed' && !c.upc);
-  const [best, second] = rankByTitle(pool, lookupTitle);
+  const best = guessTitleMatch(pool, lookupTitle);
   // Confident and unambiguous only
-  if (!best || best.score < 0.5 || best.score - (second?.score ?? 0) < 0.15) return null;
+  if (!best?.sure) return null;
   const { data, error } = await supabase.from('items').select(MATCH_FIELDS).eq('id', best.item.id).single();
   if (error) return null;
   const row = data as unknown as MatchRow;

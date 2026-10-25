@@ -10,10 +10,9 @@ import { supabase } from '@/integrations/supabase/client';
 import { Item } from '@/hooks/useInventory';
 import type { CodeType } from '@/lib/barcode';
 import { isUnknownTitle, lookupProduct } from '@/lib/productLookup';
-import { guessStickerMatch, rankBySticker, rankByTitle } from '@/lib/scanIntake';
+import { guessStickerMatch, guessTitleMatch, rankBySticker, rankByTitle } from '@/lib/scanIntake';
 import { OrderDetails } from '@/components/inventory/OrderDetails';
 
-const SUGGEST_THRESHOLD = 0.25;
 /** Rendering thousands of order rows on a phone is slow — search narrows it */
 const MAX_SHOWN = 50;
 
@@ -92,12 +91,7 @@ export function LinkUpcSheet({
   // The best guess over the whole list (not the search), and how sure it is
   const guess = useMemo(() => {
     if (!productName) return null;
-    if (codeType === 'fnsku') return guessStickerMatch(items, productName);
-    const byTitle = rankByTitle(items, productName);
-    const [best, second] = byTitle;
-    if (!best || best.score < SUGGEST_THRESHOLD) return null;
-    const lookalikes = byTitle.filter((r) => r !== best && r.score >= best.score - 0.1).length;
-    return { item: best.item, sure: best.score >= 0.5 && best.score - (second?.score ?? 0) >= 0.15, lookalikes };
+    return codeType === 'fnsku' ? guessStickerMatch(items, productName) : guessTitleMatch(items, productName);
   }, [items, productName, codeType]);
 
   // Open the best guess's details straight away — checking it is one look

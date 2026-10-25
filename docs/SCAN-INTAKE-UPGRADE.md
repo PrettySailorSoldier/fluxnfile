@@ -126,6 +126,28 @@ Brands sell look-alikes. A sticker that read "brizled … lighting … yard" mat
 UPDATE items SET target_price = NULL WHERE physical_status = 'unconfirmed';
 ```
 
+## Better name matching for stickers and unknown UPCs (Oct 25)
+
+When no code on a box is on the list, the box is matched by name: the words read off an X00 sticker, or the product name a UPC lookup returns. That matching moved to `src/lib/orderMatch.ts` (`scanIntake` re-exports it) and was rebuilt:
+
+- **Rare words count more.** "Tankless", "pathway" or "18kw" pick out an order; a brand or "lights" matches dozens. A word that's in no order title at all is ignored when it's likely print on the box. When it sits between matched words ("brizled solar **fence** lights"), it counts against the match, because it means a different product.
+- **Word order counts.** A sticker prints the start of the title (and often "…" and its end). Words in the title's own order count extra, even more when they sit side by side, and so does matching the title's first words.
+- **More misreads are tolerated:** words cut off at the start ("ghting" → lighting), words run together ("tanklesswater"), `0/1/5` read for `o/l/s`, `rn` for `m`, `vv` for `w`. The bar-code fragment "iii" is no longer read as a word.
+- **Looked-up names** treat "Light"/"Lights", "4pk"/"4-Pack"/"Pack of 4", "32 oz"/"32oz" and similar as equal. The picker (`LinkUpcSheet`) and the scan session's name match (`findOrderSheetNameMatch`) now use the same `guessTitleMatch`.
+- About 3× faster per scan: each title's words are worked out once, not once per scan.
+
+**Bench:** run `npm run bench:match` (options: `--seed N --size N --misses N`, or `--query "words" [--sticker]` to inspect one input). It builds a synthetic Vine-style order list (1,800 orders, look-alike clusters, unnamed rows), simulates sticker reads with OCR noise and UPC-database names, adds boxes that aren't on the list, and compares the new matcher against a frozen copy of the old one (`scripts/match-bench/baseline.ts`). Seed 1:
+
+| | Sticker old | Sticker new | UPC name old | UPC name new |
+|---|---|---|---|---|
+| Right order ranked 1st | 72% | 85% | 77% | 93% |
+| … in the top 3 | 84% | 95% | 88% | 98% |
+| "Best match" and right | 18% | 46% | 25% | 39% |
+| "Best match" but wrong (incl. boxes not on the list) | 0 | 0 | 7 | 0 |
+| Time per scan | 62 ms | 22 ms | 12 ms | 3.5 ms |
+
+Seeds 2 and 3 look similar: the new matcher had one confident wrong guess per path, against five for the old one on UPC names. The cases still missed are mostly true look-alikes, such as colour or size variants the sticker or lookup doesn't mention. "Best match" is still only a label; nothing is received without "This is it".
+
 ## Quick test
 
 - Inventory → **Scan** → type `012345678905` + Enter → a new item appears, autofilled if the lookup finds it. Type it again → the row shows ×2.
