@@ -135,6 +135,7 @@ export function stickerWords(text: string, sticker: string): string[] {
       (w) =>
         w.length >= 3 &&
         /[aeiouy]/.test(w) && // bars and code fragments read as "lll", "tgg", "tsh"…
+        !/^[il1]+$/.test(w) && // …and "iii", which would match "Powerline III"
         !/^x0\d/.test(w) &&
         !NOISE_WORDS.has(w)
     );
