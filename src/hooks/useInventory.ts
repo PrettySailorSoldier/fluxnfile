@@ -88,6 +88,14 @@ export interface Item {
   // Joined relations
   category?: Category | null;
   storage_location?: StorageLocation | null;
+  /** Who made offers on / met up for this item — loaded with confirmed inventory, for search */
+  offers?: BuyerRef[] | null;
+  meetups?: BuyerRef[] | null;
+}
+
+export interface BuyerRef {
+  buyer_name: string | null;
+  buyer_contact: string | null;
 }
 
 export interface Category {
@@ -134,7 +142,8 @@ async function fetchAllPages(
   }
 }
 
-export function useItems() {
+/** Confirmed inventory. `enabled: false` skips the fetch (e.g. until a search needs it). */
+export function useItems(options?: { enabled?: boolean }) {
   const { team } = useAuth();
 
   return useQuery({
@@ -148,7 +157,9 @@ export function useItems() {
           .select(`
             *,
             category:categories(*),
-            storage_location:storage_locations(*)
+            storage_location:storage_locations(*),
+            offers(buyer_name, buyer_contact),
+            meetups(buyer_name, buyer_contact)
           `)
           .eq('team_id', team.id)
           .neq('physical_status', 'unconfirmed')
@@ -157,7 +168,7 @@ export function useItems() {
           .range(from, to)
       );
     },
-    enabled: !!team?.id,
+    enabled: !!team?.id && (options?.enabled ?? true),
   });
 }
 

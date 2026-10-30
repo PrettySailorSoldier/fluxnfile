@@ -1,7 +1,8 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useOrderSheetItems, Item } from '@/hooks/useInventory';
+import { useOrderSheetItems, useItems, Item, statusConfig } from '@/hooks/useInventory';
+import { parseQuery, searchItems, matchNote, type SearchHit } from '@/lib/itemSearch';
 import type { CodeType } from '@/lib/barcode';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -19,7 +20,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Package, Search, CheckCircle2, Loader2, Trash2, ShoppingCart, FileSpreadsheet, Upload, ChevronDown, ScanLine, Table2, Layers } from 'lucide-react';
+import { Package, Search, CheckCircle2, Loader2, Trash2, ShoppingCart, FileSpreadsheet, Upload, ChevronDown, ScanLine, Table2, Layers, MapPin, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   DropdownMenu,
@@ -50,6 +51,8 @@ function formatDate(dateStr: string | null | undefined) {
 
 /** Order Sheet cards rendered per page */
 const PAGE = 100;
+/** Already-confirmed search matches shown before "See all in Inventory" */
+const STORED_SHOWN = 10;
 
 export default function OrderSheet() {
   const { team } = useAuth();
@@ -86,18 +89,20 @@ export default function OrderSheet() {
   const [shownCount, setShownCount] = useState(PAGE);
   useEffect(() => setShownCount(PAGE), [search]);
 
-  const filtered = useMemo(() => {
-    if (!search) return items;
-    const q = search.toLowerCase();
-    return items.filter(
-      (item) =>
-        item.title?.toLowerCase().includes(q) ||
-        item.amazon_asin?.toLowerCase().includes(q) ||
-        item.amazon_order_number?.toLowerCase().includes(q) ||
-        item.amazon_order_id?.toLowerCase().includes(q) ||
-        item.fnsku?.toLowerCase().includes(q)
-    );
-  }, [items, search]);
+  const terms = useMemo(() => parseQuery(search), [search]);
+  const searching = terms.length > 0;
+
+  const filtered = useMemo<SearchHit<Item>[]>(
+    () => (searching ? searchItems(items, terms) : items.map((item) => ({ item, score: 0, fields: [] }))),
+    [items, terms, searching]
+  );
+
+  // Confirmed items leave the order sheet — a search still finds them, in Inventory
+  const { data: storedItems = [], isLoading: storedLoading } = useItems({ enabled: searching });
+  const storedHits = useMemo(
+    () => (searching ? searchItems(storedItems, terms) : []),
+    [storedItems, terms, searching]
+  );
 
   const clearAllMutation = useMutation({
     mutationFn: async () => {
@@ -223,7 +228,7 @@ export default function OrderSheet() {
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Search name, ASIN or order #..."
+            placeholder="Search any words — name, brand, notes, ASIN, order #..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
@@ -290,7 +295,7 @@ export default function OrderSheet() {
         </DropdownMenu>
         </div>
 
-        {filtered.length === 0 ? (
+        {filtered.length === 0 && !(searching && (storedHits.length > 0 || storedLoading)) ? (
           <Card className="bg-secondary/30 border-dashed mt-8">
             <CardContent className="py-16 text-center">
               <CheckCircle2 className="w-12 h-12 mx-auto text-green-500 mb-3" />
@@ -300,19 +305,23 @@ export default function OrderSheet() {
               <p className="text-sm text-muted-foreground">
                 {items.length === 0
                   ? 'Every item has been physically confirmed'
-                  : 'Try a different search term'}
+                  : 'Nothing on the order sheet or in inventory has all of those words'}
               </p>
             </CardContent>
           </Card>
         ) : (
           <>
-            {filtered.slice(0, shownCount).map((item) => (
+            {searching && filtered.length === 0 && (
+              <p className="text-sm text-muted-foreground px-1">Nothing waiting on the order sheet matches.</p>
+            )}
+            {filtered.slice(0, shownCount).map((hit) => (
               <OrderItemCard
-                key={item.id}
-                item={item}
+                key={hit.item.id}
+                item={hit.item}
+                note={searching ? matchNote(hit) : null}
                 onConfirm={() => {
                   setConfirmSource('list');
-                  setConfirmItem(item);
+                  setConfirmItem(hit.item);
                 }}
               />
             ))}
@@ -322,6 +331,36 @@ export default function OrderSheet() {
               </Button>
             )}
           </>
+        )}
+
+        {searching && (storedLoading || storedHits.length > 0) && (
+          <div className="space-y-2 pt-3">
+            <div className="flex items-center gap-2 px-1">
+              <h2 className="text-sm font-semibold text-foreground">Already confirmed</h2>
+              {storedLoading ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+              ) : (
+                <Badge variant="secondary">{storedHits.length}</Badge>
+              )}
+            </div>
+            {storedHits.slice(0, STORED_SHOWN).map((hit) => (
+              <StoredItemCard
+                key={hit.item.id}
+                item={hit.item}
+                note={matchNote(hit)}
+                onOpen={() => navigate(`/item/${hit.item.id}`)}
+              />
+            ))}
+            {storedHits.length > STORED_SHOWN && (
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => navigate(`/inventory?q=${encodeURIComponent(search.trim())}`)}
+              >
+                See all {storedHits.length} in Inventory
+              </Button>
+            )}
+          </div>
         )}
       </div>
 
@@ -393,7 +432,7 @@ export default function OrderSheet() {
   );
 }
 
-function OrderItemCard({ item, onConfirm }: { item: Item; onConfirm: () => void }) {
+function OrderItemCard({ item, note, onConfirm }: { item: Item; note?: string | null; onConfirm: () => void }) {
   const photo = item.photos?.[0];
   const isVine =
     item.acquisition_source === 'Vine' || item.acquisition_source === 'Amazon';
@@ -418,6 +457,7 @@ function OrderItemCard({ item, onConfirm }: { item: Item; onConfirm: () => void 
             <p className="text-xs text-muted-foreground mt-0.5">
               {formatDate(item.acquisition_date)} · ${item.original_cost.toFixed(2)} ETV
             </p>
+            {note && <p className="text-xs text-primary mt-0.5">{note}</p>}
             <div className="flex flex-wrap gap-1 mt-1.5">
               {item.category && (
                 <Badge variant="outline" className="text-xs h-5">
@@ -443,6 +483,51 @@ function OrderItemCard({ item, onConfirm }: { item: Item; onConfirm: () => void 
               Confirm
             </Button>
           </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** A search match that has already left the order sheet — tap through to its page. */
+function StoredItemCard({ item, note, onOpen }: { item: Item; note?: string | null; onOpen: () => void }) {
+  const photo = item.photos?.[0];
+  const status = statusConfig[item.status];
+
+  return (
+    <Card className="overflow-hidden cursor-pointer hover:bg-secondary/40 transition-colors" onClick={onOpen}>
+      <CardContent className="p-3">
+        <div className="flex gap-3 items-center">
+          <div className="flex-shrink-0 w-12 h-12 rounded-md overflow-hidden bg-muted flex items-center justify-center">
+            {photo ? (
+              <img src={photo} alt="" className="w-full h-full object-cover" />
+            ) : (
+              <Package className="w-6 h-6 text-muted-foreground" />
+            )}
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <p className="font-medium text-sm leading-snug line-clamp-2 text-foreground">
+              {item.title || 'Untitled Item'}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
+              {status && (
+                <Badge variant="secondary" className={`text-xs h-5 ${status.className}`}>
+                  {status.label}
+                </Badge>
+              )}
+              {item.storage_location?.name && (
+                <span className="inline-flex items-center gap-0.5">
+                  <MapPin className="w-3 h-3" />
+                  {item.storage_location.name}
+                </span>
+              )}
+              <span>{formatDate(item.acquisition_date)}</span>
+            </p>
+            {note && <p className="text-xs text-primary mt-0.5">{note}</p>}
+          </div>
+
+          <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
         </div>
       </CardContent>
     </Card>

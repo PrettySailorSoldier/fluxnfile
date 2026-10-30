@@ -45,7 +45,7 @@ type Mode = 'sticker' | 'name';
 const STOP = new Set(['for', 'and', 'with', 'the', 'of', 'to', 'in', 'on', 'by', 'an', 'or', 'at', 'from']);
 
 /** Same spelling for sizes and pack counts on both sides: "4-Pack", "4 pk", "Pack of 4" → "4pack". */
-function normalizeText(s: string): string {
+export function normalizeText(s: string): string {
   return s
     .toLowerCase()
     .replace(/(\d)\.(\d)/g, '$1$2')
