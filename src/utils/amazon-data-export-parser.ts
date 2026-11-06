@@ -50,18 +50,18 @@ export interface AmazonExportParseResult {
 
 const REQUIRED_HEADERS = ['asin', 'order id', 'order date', 'product name', 'unit price', 'order status'];
 
-const norm = (s: string) => s.replace(/^﻿/, '').trim().toLowerCase();
+const norm = (s: string) => s.replace(/^\uFEFF/, '').trim().toLowerCase();
 
 /** True when the first line looks like Amazon's data-export Order History.csv. */
 export function isAmazonDataExportCSV(text: string): boolean {
-  const firstLine = (text.replace(/^﻿/, '').split(/\r?\n/, 1)[0] ?? '').replace(/"/g, '');
+  const firstLine = (text.replace(/^\uFEFF/, '').split(/\r?\n/, 1)[0] ?? '').replace(/"/g, '');
   const headers = firstLine.split(',').map(norm);
   return REQUIRED_HEADERS.every((h) => headers.includes(h));
 }
 
 /** True when the first line looks like the data-export Refund Details.csv. */
 export function isAmazonRefundDetailsCSV(text: string): boolean {
-  const firstLine = (text.replace(/^﻿/, '').split(/\r?\n/, 1)[0] ?? '').replace(/"/g, '');
+  const firstLine = (text.replace(/^\uFEFF/, '').split(/\r?\n/, 1)[0] ?? '').replace(/"/g, '');
   const headers = firstLine.split(',').map(norm);
   return ['order id', 'refund amount', 'refund date', 'payment status'].every((h) => headers.includes(h));
 }
@@ -88,7 +88,7 @@ function isoDate(raw: string | undefined): string | null {
 }
 
 function readRows(csv: string): Record<string, string>[] {
-  const parsed = Papa.parse<Record<string, string>>(csv.replace(/^﻿/, ''), {
+  const parsed = Papa.parse<Record<string, string>>(csv.replace(/^\uFEFF/, ''), {
     header: true,
     skipEmptyLines: true,
     transformHeader: norm,

@@ -62,6 +62,13 @@ import { getAcquisitionDate } from '@/utils/lattice-csv-parser';
 import type { OrderHistoryItem } from '@/utils/order-history-extension-parser';
 import { isAmazonDataExportCSV, isAmazonRefundDetailsCSV, type AmazonExportItem } from '@/utils/amazon-data-export-parser';
 import type { LatticeItem } from '@/utils/lattice-csv-parser';
+import {
+  parseAnyCatalogWorkbook,
+  mergeCatalogInto,
+  catalogToItemFields,
+  type CatalogEntry,
+  type CatalogMap,
+} from '@/utils/amazon-catalog-parser';
 import { ImportMethodTabs, type ImportMethod } from '@/components/amazon/ImportMethodTabs';
 
 // ============================================================================
@@ -82,6 +89,8 @@ interface PipelineItem extends ParsedAmazonItem {
   _orderHistoryData?: OrderHistoryItem;
   _latticeData?: LatticeItem;
   _exportData?: AmazonExportItem;
+  /** Scraped product details (description, photos, brand, UPC, price), matched by ASIN */
+  _catalog?: CatalogEntry;
   _isDuplicate?: boolean;
   _duplicateItemId?: string;
   _isVine?: boolean;
@@ -294,6 +303,11 @@ function ItemPreviewCard({
               {item.asin}
             </Badge>
           )}
+          {item._catalog && (
+            <Badge variant="outline" className="text-xs bg-emerald-500/20 text-emerald-600 border-emerald-500/30">
+              Details · {item._catalog.photos.length} photo{item._catalog.photos.length === 1 ? '' : 's'}
+            </Badge>
+          )}
         </div>
 
         {/* Price row */}
@@ -367,28 +381,50 @@ async function fetchExistingIndex(teamId: string): Promise<ExistingItemIndex[]> 
 // FILE PARSER (XLSX)
 // ============================================================================
 
-const parseFile = (file: File): Promise<Record<string, string>[]> => {
+interface SpreadsheetRead {
+  rows: Record<string, string>[];
+  /** Set when the workbook is a scraped product catalog rather than an order report */
+  catalog: CatalogMap | null;
+}
+
+const readSpreadsheet = (file: File): Promise<SpreadsheetRead> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
-      try {
-        const data = e.target?.result;
-        const workbook = XLSX.read(data, { type: 'array' });
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        const rows = XLSX.utils.sheet_to_json<Record<string, string>>(
-          worksheet,
-          { defval: '' }
-        );
-        resolve(rows);
-      } catch {
-        reject(new Error('Could not read file. Please upload a valid Excel or CSV file.'));
-      }
+      // Let the "Reading…" toast paint before the (potentially long) synchronous parse
+      setTimeout(() => {
+        try {
+          const data = e.target?.result;
+          const workbook = XLSX.read(data, { type: 'array' });
+          const catalog = parseAnyCatalogWorkbook(workbook);
+          if (catalog) {
+            resolve({ rows: [], catalog });
+            return;
+          }
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          const rows = XLSX.utils.sheet_to_json<Record<string, string>>(worksheet, { defval: '' });
+          resolve({ rows, catalog: null });
+        } catch {
+          reject(new Error('Could not read file. Please upload a valid Excel or CSV file.'));
+        }
+      }, 30);
     };
     reader.onerror = () => reject(new Error('File read failed.'));
     reader.readAsArrayBuffer(file);
   });
 };
+
+interface EnrichPlan {
+  updates: { id: string; mergeData: TablesUpdate<'items'> }[];
+  /** Existing items whose ASIN is in the catalog */
+  matched: number;
+  /** ...of which already have everything the catalog could add */
+  nothingNew: number;
+  catalogSize: number;
+  existingCount: number;
+  fieldCounts: Record<'description' | 'photos' | 'brand' | 'upc' | 'retail_price', number>;
+}
 
 // ============================================================================
 // MAIN COMPONENT
@@ -414,6 +450,9 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
   const [vineETV, setVineETV] = useState<string>('');
   const [isFetchingPrices, setIsFetchingPrices] = useState(false);
   const [detectedFormat, setDetectedFormat] = useState<DetectedCSVFormat>('unknown');
+  const [enrichPlan, setEnrichPlan] = useState<EnrichPlan | null>(null);
+  const [catalogSize, setCatalogSize] = useState(0);
+  const catalogRef = useRef<CatalogMap>(new Map());
 
   // Fetch existing items for duplicate detection (includes new dedup fields)
   const { data: existingItems = [] } = useQuery({
@@ -455,6 +494,9 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
       setVineETV('');
       setIsFetchingPrices(false);
       setDetectedFormat('unknown');
+      setEnrichPlan(null);
+      setCatalogSize(0);
+      catalogRef.current = new Map();
     }
   }, [open]);
 
@@ -470,8 +512,11 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
         },
         existingItems
       );
+      const catalog = item.asin ? catalogRef.current.get(item.asin.toUpperCase()) : undefined;
       return {
         ...item,
+        imageUrl: item.imageUrl ?? catalog?.photos[0] ?? null,
+        _catalog: catalog,
         _isDuplicate: !!match,
         _duplicateItemId: match?.id,
       };
@@ -813,15 +858,8 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
         reader.onerror = () => toast.error('Failed to read file');
         reader.readAsText(file);
       } else {
-        // XLSX path
-        try {
-          const rows = await parseFile(file);
-          processRowsAsCsv(rows);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : 'Could not read file.';
-          setCsvFileError(msg);
-          toast.error(msg);
-        }
+        // XLSX path (order report, or a scraped product catalog)
+        await handleSpreadsheetBatch([file]);
       }
     } else {
       const reader = new FileReader();
@@ -834,30 +872,125 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     }
   }
 
-  /** Several order-history exports at once (e.g. one per year) — their rows are combined. */
+  /**
+   * Any mix of dropped spreadsheets:
+   *  - scraped product catalogs (.xlsx) are loaded into the ASIN lookup,
+   *  - an Amazon data-export Order History.csv (+ Refund Details.csv) or other order
+   *    reports go through the normal preview, with catalog details attached by ASIN,
+   *  - a catalog on its own enriches the items already in the inventory.
+   */
   async function handleSpreadsheetBatch(files: File[]) {
+    const toastId = files.some((f) => !/\.csv$/i.test(f.name)) ? toast.loading('Reading spreadsheet…') : undefined;
     try {
-      // Amazon data-export folder: Order History.csv plus (optionally) Refund Details.csv
-      const csvFiles = files.filter((f) => /\.csv$/i.test(f.name));
-      if (csvFiles.length === files.length) {
-        const texts = await Promise.all(csvFiles.map((f) => f.text()));
-        const orderIdx = texts.findIndex(isAmazonDataExportCSV);
-        if (orderIdx >= 0) {
-          const refundIdx = texts.findIndex(isAmazonRefundDetailsCSV);
-          processCsvText(texts[orderIdx], refundIdx >= 0 ? texts[refundIdx] : undefined);
-          return;
+      const orderRows: Record<string, string>[] = [];
+      let catalogsLoaded = 0;
+      const csvTexts: { file: File; text: string }[] = [];
+
+      for (const file of files) {
+        if (/\.csv$/i.test(file.name) || file.type === 'text/csv') {
+          csvTexts.push({ file, text: await file.text() });
+          continue;
+        }
+        const read = await readSpreadsheet(file);
+        if (read.catalog) {
+          mergeCatalogInto(catalogRef.current, read.catalog);
+          catalogsLoaded++;
+        } else {
+          orderRows.push(...read.rows);
         }
       }
-      const rows: Record<string, string>[] = [];
-      for (const file of files) rows.push(...(await parseFile(file)));
-      processRowsAsCsv(rows);
-      if (rows.length > 0) toast.success(`Read ${rows.length} rows from ${files.length} files`);
+      if (catalogsLoaded > 0) {
+        setCatalogSize(new Set([...catalogRef.current.values()].map((c) => c.asin)).size);
+      }
+
+      const texts = csvTexts.map((c) => c.text);
+      const exportIdx = texts.findIndex(isAmazonDataExportCSV);
+      if (exportIdx >= 0) {
+        const refundIdx = texts.findIndex(isAmazonRefundDetailsCSV);
+        processCsvText(texts[exportIdx], refundIdx >= 0 ? texts[refundIdx] : undefined);
+      } else if (texts.length === 1 && orderRows.length === 0) {
+        processCsvText(texts[0]); // auto-detects Lattice / Order History Extension / Amazon report
+      } else if (texts.length > 0 || orderRows.length > 0) {
+        for (const { file } of csvTexts) orderRows.push(...(await readSpreadsheet(file)).rows);
+        processRowsAsCsv(orderRows);
+        if (orderRows.length > 0) toast.success(`Read ${orderRows.length} rows from ${files.length} files`);
+      } else if (catalogsLoaded > 0) {
+        await startEnrichment();
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Could not read file.';
       setCsvFileError(msg);
       toast.error(msg);
+    } finally {
+      if (toastId !== undefined) toast.dismiss(toastId);
     }
   }
+
+  // ── Catalog-only enrichment of items already in the inventory ─────────────
+
+  async function startEnrichment() {
+    if (!team?.id) return;
+    const catalog = catalogRef.current;
+    const existing = await fetchExistingIndex(team.id);
+
+    const updates: EnrichPlan['updates'] = [];
+    const fieldCounts: EnrichPlan['fieldCounts'] = { description: 0, photos: 0, brand: 0, upc: 0, retail_price: 0 };
+    let matched = 0;
+    let nothingNew = 0;
+
+    for (const item of existing) {
+      const entry = item.amazon_asin ? catalog.get(item.amazon_asin.toUpperCase()) : undefined;
+      if (!entry) continue;
+      matched++;
+      const mergeData = computeMergeData(
+        item as ExistingItemIndex & Record<string, unknown>,
+        { ...catalogToItemFields(entry), title: entry.title },
+        'amazon_catalog'
+      );
+      // A data_sources-only change isn't worth a write
+      const changed = mergeData ? Object.keys(mergeData).filter((k) => k !== 'data_sources') : [];
+      if (!mergeData || changed.length === 0) {
+        nothingNew++;
+        continue;
+      }
+      for (const k of changed) if (k in fieldCounts) fieldCounts[k as keyof typeof fieldCounts]++;
+      updates.push({ id: item.id, mergeData: mergeData as TablesUpdate<'items'> });
+    }
+
+    setEnrichPlan({
+      updates,
+      matched,
+      nothingNew,
+      catalogSize: new Set([...catalog.values()].map((c) => c.asin)).size,
+      existingCount: existing.length,
+      fieldCounts,
+    });
+    setParsedItems([]);
+    setStep('preview');
+  }
+
+  const applyEnrichment = useMutation({
+    mutationFn: async () => {
+      if (!enrichPlan) return 0;
+      for (let i = 0; i < enrichPlan.updates.length; i += 25) {
+        const results = await Promise.all(
+          enrichPlan.updates
+            .slice(i, i + 25)
+            .map(({ id, mergeData }) => supabase.from('items').update(mergeData).eq('id', id))
+        );
+        const failed = results.find((r) => r.error);
+        if (failed?.error) throw failed.error;
+      }
+      return enrichPlan.updates.length;
+    },
+    onSuccess: (count) => {
+      queryClient.invalidateQueries({ queryKey: ['items'] });
+      queryClient.invalidateQueries({ queryKey: ['existing-amazon-items'] });
+      toast.success(`Added product details to ${count} item${count !== 1 ? 's' : ''}`);
+      onOpenChange(false);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>, type: 'csv' | 'html') {
     const files = Array.from(e.target.files ?? []);
@@ -1114,6 +1247,20 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
           };
         }
 
+        // Scraped product details (description, photos, brand, UPC, retail price) by ASIN
+        if (item._catalog) {
+          const base = itemData as Record<string, unknown>;
+          const withCatalog: Record<string, unknown> = { ...base };
+          for (const [key, value] of Object.entries(catalogToItemFields(item._catalog))) {
+            if (value == null) continue;
+            const current = withCatalog[key];
+            // The catalog's full photo set replaces a lone page thumbnail
+            if (key === 'photos' || current == null || current === '') withCatalog[key] = value;
+          }
+          withCatalog.data_sources = [...((base.data_sources as string[] | undefined) ?? []), 'amazon_catalog'];
+          itemData = withCatalog as typeof itemData;
+        }
+
         // Run dedup
         const duplicate = findDuplicate(
           {
@@ -1202,7 +1349,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
             Import from Amazon Orders
           </DialogTitle>
           <DialogDescription>
-            {step === 'paste' && importMethod === 'csv' && 'Upload your Amazon order file (.xlsx, .csv) or Lattice/Order History Extension CSV'}
+            {step === 'paste' && importMethod === 'csv' && 'Upload your Amazon order files (.csv, .xlsx) and/or scraped product catalogs'}
             {step === 'paste' && importMethod === 'file' && 'Upload a saved Amazon orders HTML file'}
             {step === 'paste' && importMethod === 'paste' && 'Paste your Amazon orders page HTML to get started'}
             {step === 'preview' && 'Review and adjust items before importing'}
@@ -1282,8 +1429,10 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                     <p className="font-medium text-sm">Drop any Amazon or Lattice CSV here</p>
                     <p className="text-xs text-muted-foreground mt-1">or click to browse</p>
                     <p className="text-xs text-muted-foreground mt-3 max-w-xs mx-auto leading-relaxed">
-                      Accepts: <strong>Lattice CSV</strong>, <strong>Order History Extension CSV</strong>,
-                      or <strong>Amazon Order History Reports CSV</strong> — format is detected automatically
+                      Accepts: <strong>Amazon data export</strong> (Order History.csv, Refund Details.csv),{' '}
+                      <strong>Lattice CSV</strong>, <strong>Order History Extension CSV</strong>,{' '}
+                      <strong>Amazon Order History Reports</strong>, and <strong>scraped product catalogs</strong> (.xlsx)
+                      — format is detected automatically. Select several files at once to combine them.
                     </p>
                     <button
                       type="button"
@@ -1301,8 +1450,13 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                     </div>
                   )}
 
+                  {catalogSize > 0 && (
+                    <p className="text-xs text-emerald-600 text-center">
+                      Product catalog loaded ({catalogSize} products) — it will be attached to matching items by ASIN.
+                    </p>
+                  )}
                   <p className="text-xs text-muted-foreground text-center">
-                    Supports: Amazon Order History (.xlsx), Lattice CSV, Order History Extension CSV
+                    Supports: Amazon data export, Amazon Order History (.xlsx), Lattice CSV, Order History Extension CSV, product catalog (.xlsx)
                   </p>
                 </div>
               )}
@@ -1384,7 +1538,65 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
             </div>
           )}
 
-          {step === 'preview' && (
+          {step === 'preview' && enrichPlan && (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
+                <p className="font-medium text-sm">Product catalog loaded</p>
+                <p className="text-xs text-muted-foreground">
+                  {enrichPlan.catalogSize} products in the file · {enrichPlan.matched} of your {enrichPlan.existingCount} items
+                  have a matching ASIN
+                </p>
+                {enrichPlan.updates.length > 0 ? (
+                  <ul className="text-sm space-y-1">
+                    <li><strong>{enrichPlan.updates.length}</strong> items will be updated:</li>
+                    {([
+                      ['description', 'descriptions'],
+                      ['photos', 'photo sets'],
+                      ['brand', 'brands'],
+                      ['upc', 'UPCs'],
+                      ['retail_price', 'retail prices'],
+                    ] as const).map(([key, label]) =>
+                      enrichPlan.fieldCounts[key] > 0 ? (
+                        <li key={key} className="text-xs text-muted-foreground ml-4">
+                          • {enrichPlan.fieldCounts[key]} {label}
+                        </li>
+                      ) : null
+                    )}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Nothing to add —{' '}
+                    {enrichPlan.matched === 0
+                      ? 'none of your items share an ASIN with this file.'
+                      : 'the matching items already have these details.'}
+                  </p>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Only empty fields are filled; existing descriptions, photos and prices are never overwritten.
+                  To attach details to new items as they're imported, add your order file now instead.
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => { setEnrichPlan(null); setStep('paste'); }} className="flex-1">
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  Back
+                </Button>
+                <Button
+                  onClick={() => applyEnrichment.mutate()}
+                  disabled={enrichPlan.updates.length === 0 || applyEnrichment.isPending}
+                  className="flex-1"
+                >
+                  {applyEnrichment.isPending ? (
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Updating...</>
+                  ) : (
+                    <>Update {enrichPlan.updates.length} Item{enrichPlan.updates.length !== 1 ? 's' : ''}<ArrowRight className="w-4 h-4 ml-2" /></>
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {step === 'preview' && !enrichPlan && (
             <div className="space-y-4">
               {/* Summary banner for order history */}
               {detectedFormat === 'order_history_extension' && (vineCount > 0 || regularCount > 0) && (

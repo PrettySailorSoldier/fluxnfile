@@ -173,6 +173,7 @@ export function computeMergeData(
   const fillIfEmpty = [
     'upc',
     'brand',
+    'description',
     'retail_price',
     'amazon_asin',
     'amazon_order_id',
