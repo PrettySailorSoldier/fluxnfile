@@ -60,6 +60,7 @@ import {
 import { isoFromMDY, writeWithOrderDates } from '@/lib/orderDates';
 import { getAcquisitionDate } from '@/utils/lattice-csv-parser';
 import type { OrderHistoryItem } from '@/utils/order-history-extension-parser';
+import { isAmazonDataExportCSV, isAmazonRefundDetailsCSV, type AmazonExportItem } from '@/utils/amazon-data-export-parser';
 import type { LatticeItem } from '@/utils/lattice-csv-parser';
 import { ImportMethodTabs, type ImportMethod } from '@/components/amazon/ImportMethodTabs';
 
@@ -80,6 +81,7 @@ interface PipelineItem extends ParsedAmazonItem {
   amazonOrderId?: string | null;
   _orderHistoryData?: OrderHistoryItem;
   _latticeData?: LatticeItem;
+  _exportData?: AmazonExportItem;
   _isDuplicate?: boolean;
   _duplicateItemId?: string;
   _isVine?: boolean;
@@ -463,7 +465,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
       const match = findDuplicate(
         {
           asin: item.asin,
-          orderId: item._orderHistoryData?.orderId ?? item.amazonOrderId ?? null,
+          orderId: item._orderHistoryData?.orderId ?? item._exportData?.orderId ?? item.amazonOrderId ?? null,
           title: item.cleanTitle,
         },
         existingItems
@@ -478,9 +480,59 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
 
   // ── Text-based CSV router ─────────────────────────────────────────────────
 
-  function processCsvText(text: string) {
+  function processCsvText(text: string, refundDetailsCsv?: string) {
     setCsvFileError(null);
-    const detected = detectAndParseCSV(text);
+    const detected = detectAndParseCSV(text, refundDetailsCsv);
+
+    if (detected.format === 'amazon_data_export' && detected.dataExportResult) {
+      const r = detected.dataExportResult;
+      if (r.items.length === 0) {
+        setCsvFileError(r.parseWarnings[0] || 'No items found in Order History.csv.');
+        return;
+      }
+      const converted: PipelineItem[] = [];
+      for (const ex of r.items) {
+        const dateFound = !!ex.orderDate;
+        // One row per unit (capped, in case of bad data), like the other Amazon importers
+        for (let u = 0; u < Math.min(ex.quantity, 20); u++) {
+          converted.push({
+            id: `item-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+            title: ex.title,
+            cleanTitle: sanitizeTitle(ex.title),
+            orderDate: ex.orderDate ?? new Date().toISOString(),
+            price: ex.isVine ? 0 : ex.unitPrice,
+            asin: ex.asin,
+            amazonOrderId: ex.orderId || null,
+            imageUrl: null,
+            selected: true,
+            confidence: ex.asin && dateFound ? 'high' : 'medium',
+            confidenceDetails: {
+              titleFound: true,
+              priceFound: ex.unitPrice > 0,
+              priceGuessed: false,
+              dateFound,
+              dateGuessed: !dateFound,
+              asinFound: !!ex.asin,
+            },
+            vineReviewStatus: null,
+            vineQualityScore: null,
+            _exportData: ex,
+            _isVine: ex.isVine,
+          });
+        }
+      }
+      setParsedItems(applyDedupFlags(converted));
+      setParseWarnings(r.parseWarnings);
+      setIsVineMode(false);
+      setDetectedFormat('amazon_data_export');
+      setStep('preview');
+      toast.success(
+        `Amazon data export: ${converted.length} items — ${r.vineCount} Vine${
+          r.refundsApplied ? `, ${r.refundsApplied} refunds` : ''
+        }`
+      );
+      return;
+    }
 
     if (detected.format === 'lattice' && detected.latticeResult) {
       const r = detected.latticeResult;
@@ -785,6 +837,17 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
   /** Several order-history exports at once (e.g. one per year) — their rows are combined. */
   async function handleSpreadsheetBatch(files: File[]) {
     try {
+      // Amazon data-export folder: Order History.csv plus (optionally) Refund Details.csv
+      const csvFiles = files.filter((f) => /\.csv$/i.test(f.name));
+      if (csvFiles.length === files.length) {
+        const texts = await Promise.all(csvFiles.map((f) => f.text()));
+        const orderIdx = texts.findIndex(isAmazonDataExportCSV);
+        if (orderIdx >= 0) {
+          const refundIdx = texts.findIndex(isAmazonRefundDetailsCSV);
+          processCsvText(texts[orderIdx], refundIdx >= 0 ? texts[refundIdx] : undefined);
+          return;
+        }
+      }
       const rows: Record<string, string>[] = [];
       for (const file of files) rows.push(...(await parseFile(file)));
       processRowsAsCsv(rows);
@@ -943,6 +1006,8 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
       const importSource =
         detectedFormat === 'order_history_extension'
           ? 'order_history_extension'
+          : detectedFormat === 'amazon_data_export'
+          ? 'amazon_data_export'
           : detectedFormat === 'lattice'
           ? 'lattice_csv'
           : isVineMode
@@ -977,6 +1042,29 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
             ordered_date: new Date(oh.orderPlaced).toISOString().split('T')[0],
             status: 'acquired' as const,
             condition: 'new' as const,
+            physical_status: 'unconfirmed',
+            data_sources: [importSource],
+          };
+        } else if (item._exportData) {
+          const ex = item._exportData;
+          const orderedOn = ex.orderDate ? ex.orderDate.split('T')[0] : null;
+          itemData = {
+            title: item.cleanTitle.slice(0, 255),
+            amazon_asin: ex.asin,
+            amazon_order_id: ex.orderId || null,
+            original_cost: ex.isVine ? 0 : item.price,
+            vine_etv: ex.isVine && ex.unitPrice > 0 ? ex.unitPrice : null,
+            amazon_tax_amount: !ex.isVine && ex.unitTax > 0 ? ex.unitTax : null,
+            amazon_shipment_status: ex.shipmentStatus,
+            amazon_refund_amount: ex.refundAmount,
+            amazon_refund_date: ex.refundDate ? ex.refundDate.split('T')[0] : null,
+            acquisition_date: orderedOn ?? new Date().toISOString().split('T')[0],
+            ordered_date: orderedOn,
+            shipped_date: ex.shipDate ? ex.shipDate.split('T')[0] : null,
+            acquisition_source: ex.isVine ? 'Amazon Vine' : 'Amazon',
+            is_vine_order: ex.isVine,
+            status: 'acquired' as const,
+            condition: /used|refurb|renewed/i.test(ex.condition ?? '') ? ('good' as const) : ('new' as const),
             physical_status: 'unconfirmed',
             data_sources: [importSource],
           };
@@ -1030,7 +1118,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
         const duplicate = findDuplicate(
           {
             asin: item.asin,
-            orderId: item._orderHistoryData?.orderId ?? item.amazonOrderId ?? null,
+            orderId: item._orderHistoryData?.orderId ?? item._exportData?.orderId ?? item.amazonOrderId ?? null,
             title: item.cleanTitle,
           },
           existingIndex

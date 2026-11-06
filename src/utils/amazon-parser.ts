@@ -10,6 +10,11 @@ import {
   type OrderHistoryParseResult,
 } from './order-history-extension-parser';
 import { isLatticeCSV, parseLatticeCSV, type LatticeParseResult } from './lattice-csv-parser';
+import {
+  isAmazonDataExportCSV,
+  parseAmazonDataExport,
+  type AmazonExportParseResult,
+} from './amazon-data-export-parser';
 
 // ============================================================================
 // TYPES
@@ -1256,12 +1261,18 @@ export function detectCSVFormat(text: string): CSVFormat {
 // UNIVERSAL CSV ROUTER
 // ============================================================================
 
-export type DetectedCSVFormat = 'lattice' | 'order_history_extension' | 'amazon_standard' | 'unknown';
+export type DetectedCSVFormat =
+  | 'lattice'
+  | 'order_history_extension'
+  | 'amazon_data_export'
+  | 'amazon_standard'
+  | 'unknown';
 
 export interface UniversalCSVResult {
   format: DetectedCSVFormat;
   latticeResult?: LatticeParseResult;
   orderHistoryResult?: OrderHistoryParseResult;
+  dataExportResult?: AmazonExportParseResult;
   amazonResult?: ParseResult;
   warnings: string[];
 }
@@ -1270,7 +1281,7 @@ export interface UniversalCSVResult {
  * Auto-detect CSV format and route to the correct parser.
  * Called from AmazonImportDialog when a CSV file is uploaded or dropped.
  */
-export function detectAndParseCSV(text: string): UniversalCSVResult {
+export function detectAndParseCSV(text: string, refundDetailsCsv?: string): UniversalCSVResult {
   if (isLatticeCSV(text)) {
     return {
       format: 'lattice',
@@ -1282,6 +1293,13 @@ export function detectAndParseCSV(text: string): UniversalCSVResult {
     return {
       format: 'order_history_extension',
       orderHistoryResult: parseOrderHistoryExtensionCSV(text),
+      warnings: [],
+    };
+  }
+  if (isAmazonDataExportCSV(text)) {
+    return {
+      format: 'amazon_data_export',
+      dataExportResult: parseAmazonDataExport(text, refundDetailsCsv),
       warnings: [],
     };
   }

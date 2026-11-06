@@ -28,3 +28,6 @@ dist-ssr
 *.sw?
 .vercel
 .env*
+
+# Personal Amazon data export (orders, reviews, addresses, photos)
+/Amazon Data/
