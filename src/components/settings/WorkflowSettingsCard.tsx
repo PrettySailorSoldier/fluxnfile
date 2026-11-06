@@ -102,7 +102,8 @@ export function WorkflowSettingsCard() {
 
   const handleSave = async () => {
     try {
-      await updateSettings.mutateAsync(local);
+      // navTabs is edited elsewhere; don't overwrite it with this card's stale copy
+      await updateSettings.mutateAsync({ ...local, navTabs: settings.navTabs });
       setHasChanges(false);
       toast.success('Preferences saved!');
     } catch {

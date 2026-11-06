@@ -1,23 +1,18 @@
 import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
-  LayoutDashboard,
-  Package,
   Plus,
-  ClipboardList,
-  ListChecks,
   Menu,
-  BarChart2,
-  TrendingUp,
   StickyNote,
-  Facebook,
   ScanLine,
-  Settings,
   PencilLine,
   FileSpreadsheet,
   ChevronRight,
-  Store,
+  SlidersHorizontal,
 } from 'lucide-react';
+import { useNavTabs } from '@/hooks/useNavTabs';
+import { navSplit } from '@/lib/navConfig';
+import { NavCustomizer } from '@/components/layout/NavCustomizer';
 import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
@@ -31,17 +26,6 @@ interface NavEntry {
   description: string;
   icon: React.ElementType;
 }
-
-/** Everything that isn't a bottom tab lives here — every screen is reachable in two taps. */
-const MORE_ENTRIES: NavEntry[] = [
-  { path: '/market', label: 'Markets', description: 'Plan, sell and review flea market days', icon: Store },
-  { path: '/sales-check', label: 'Sales Check', description: 'Price checks, flags for you, what’s selling', icon: BarChart2 },
-  { path: '/analytics', label: 'Analytics', description: 'Profit, sell-through and trends', icon: TrendingUp },
-  { path: '/rough-notes', label: 'Rough Notes', description: 'Quick notes on boxes and lots to process later', icon: StickyNote },
-  { path: '/facebook-tools', label: 'Facebook Tools', description: 'Marketplace listings, offers, meetups', icon: Facebook },
-  { path: '/scan', label: 'Scan Session', description: 'Scan items in a row — receive, add or find', icon: ScanLine },
-  { path: '/settings', label: 'Settings', description: 'Team, categories, locations, workflow', icon: Settings },
-];
 
 const QUICK_ADD: (NavEntry & { to: string })[] = [
   { path: '/scan', to: '/scan', label: 'Scan items', description: 'Barcode → autofilled item, one after another', icon: ScanLine },
@@ -73,7 +57,14 @@ export function BottomNav() {
     refetchInterval: 30_000,
   });
 
-  const isMoreActive = MORE_ENTRIES.some((e) => location.pathname === e.path);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const { tabIds } = useNavTabs();
+  // Your tabs sit either side of the + button; everything else is in More (every screen stays two taps away)
+  const { tabs, more: moreEntries } = navSplit(tabIds);
+  const leftTabs = tabs.slice(0, Math.ceil(tabs.length / 2));
+  const rightTabs = tabs.slice(Math.ceil(tabs.length / 2));
+  const tabBadge: Record<string, number> = { orders: unconfirmedCount, tasks: myTaskCount };
+  const isMoreActive = moreEntries.some((e) => location.pathname === e.path);
 
   const badge = (count: number) =>
     count > 0 ? (
@@ -142,8 +133,7 @@ export function BottomNav() {
         aria-label="Main"
       >
         <div className="flex items-center w-full max-w-lg mx-auto h-16">
-          {navLink('/', LayoutDashboard, 'Home')}
-          {navLink('/inventory', Package, 'Items')}
+          {leftTabs.map((t) => navLink(t.path, t.icon, t.label, tabBadge[t.id] ?? 0))}
 
           {/* Center + opens quick add */}
           <div className="flex items-center justify-center flex-1 -mt-6">
@@ -157,8 +147,7 @@ export function BottomNav() {
             </button>
           </div>
 
-          {navLink('/order-sheet', ClipboardList, 'Orders', unconfirmedCount)}
-          {navLink('/tasks', ListChecks, 'Tasks', myTaskCount)}
+          {rightTabs.map((t) => navLink(t.path, t.icon, t.label, tabBadge[t.id] ?? 0))}
 
           <button
             type="button"
@@ -190,9 +179,30 @@ export function BottomNav() {
           <SheetHeader className="text-left pb-2">
             <SheetTitle>More</SheetTitle>
           </SheetHeader>
-          <div className="space-y-1">{MORE_ENTRIES.map((e) => entryRow(e, e.path))}</div>
+          <div className="space-y-1">
+            {moreEntries.map((e) => entryRow(e, e.path))}
+            <button
+              type="button"
+              onClick={() => {
+                setMoreOpen(false);
+                setCustomizeOpen(true);
+              }}
+              className="w-full flex items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-muted transition-colors"
+            >
+              <span className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
+                <SlidersHorizontal className="w-5 h-5 text-foreground" />
+              </span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm font-medium text-foreground">Customize navigation</span>
+                <span className="block text-xs text-muted-foreground">Choose what’s in the bottom bar and what’s in More</span>
+              </span>
+              <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+            </button>
+          </div>
         </SheetContent>
       </Sheet>
+
+      <NavCustomizer open={customizeOpen} onOpenChange={setCustomizeOpen} />
     </>
   );
 }

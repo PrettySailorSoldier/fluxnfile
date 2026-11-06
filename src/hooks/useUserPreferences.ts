@@ -69,6 +69,10 @@ export interface WorkflowSettings {
   marketTaxSetAsidePercent: number;
   /** IRS standard mileage rate per mile, for the mileage deduction estimate */
   marketMileageRate: number;
+
+  // ── NAVIGATION ───────────────────────────────────────
+  /** Ids of the bottom-bar tabs, in order (see lib/navConfig). Unset = defaults. */
+  navTabs?: string[];
 }
 
 export const DEFAULT_WORKFLOW_SETTINGS: WorkflowSettings = {
