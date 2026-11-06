@@ -15,6 +15,7 @@ import {
   Item,
 } from '@/hooks/useInventory';
 import { useWorkflowSettings } from '@/hooks/useUserPreferences';
+import { parseQuery, matchItem } from '@/lib/itemSearch';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -84,7 +85,7 @@ export default function Inventory() {
   const { data: storageLocations = [] } = useStorageLocations();
   const workflowSettings = useWorkflowSettings();
 
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(searchParams.get('q') || '');
   const [statusFilter, setStatusFilter] = useState<string>(searchParams.get('status') || 'all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [locationFilter, setLocationFilter] = useState<string>('all');
@@ -111,19 +112,9 @@ export default function Inventory() {
   const needsDetailsCount = useMemo(() => items.filter(needsDetails).length, [items]);
 
   const filteredItems = useMemo(() => {
+    const terms = parseQuery(search);
     let result = items.filter((item) => {
-      const q = search.trim().toLowerCase();
-      const matchesSearch =
-        !q ||
-        item.title?.toLowerCase().includes(q) ||
-        item.category?.name?.toLowerCase().includes(q) ||
-        item.acquisition_source?.toLowerCase().includes(q) ||
-        item.brand?.toLowerCase().includes(q) ||
-        item.storage_location?.name?.toLowerCase().includes(q) ||
-        item.upc?.includes(q.replace(/\D/g, '') || '\u0000') ||
-        item.amazon_asin?.toLowerCase() === q ||
-        item.fnsku?.toLowerCase() === q ||
-        String(item.tracking_number ?? '') === q.replace(/^#/, '');
+      const matchesSearch = terms.length === 0 || matchItem(item, terms) !== null;
 
       if (needsDetailsOnly && !needsDetails(item)) return false;
       if (locationFilter !== 'all') {
@@ -537,7 +528,7 @@ export default function Inventory() {
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Search items..."
+            placeholder="Search any words — name, brand, notes, UPC..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
