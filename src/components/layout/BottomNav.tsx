@@ -16,6 +16,7 @@ import {
   PencilLine,
   FileSpreadsheet,
   ChevronRight,
+  Store,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
@@ -33,6 +34,7 @@ interface NavEntry {
 
 /** Everything that isn't a bottom tab lives here — every screen is reachable in two taps. */
 const MORE_ENTRIES: NavEntry[] = [
+  { path: '/market', label: 'Markets', description: 'Plan, sell and review flea market days', icon: Store },
   { path: '/sales-check', label: 'Sales Check', description: 'Price checks, flags for you, what’s selling', icon: BarChart2 },
   { path: '/analytics', label: 'Analytics', description: 'Profit, sell-through and trends', icon: TrendingUp },
   { path: '/rough-notes', label: 'Rough Notes', description: 'Quick notes on boxes and lots to process later', icon: StickyNote },

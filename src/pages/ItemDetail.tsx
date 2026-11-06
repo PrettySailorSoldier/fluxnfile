@@ -16,6 +16,8 @@ import { toast } from 'sonner';
 import { ArrowLeft, Save, Trash2, Package, ChevronRight, Loader2, Edit2, Facebook, MessageSquare, Calendar, DollarSign } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { sanitizeError } from '@/lib/errorHandler';
+import { useWorkflowSettings } from '@/hooks/useUserPreferences';
+import { suggestTagPrice } from '@/lib/market';
 import { QuickListDialog } from '@/components/fb/QuickListDialog';
 import { FBTrackingSection } from '@/components/fb/FBTrackingSection';
 import { TemplateLibrary } from '@/components/fb/TemplateLibrary';
@@ -36,6 +38,7 @@ export default function ItemDetail() {
   const { data: categories = [] } = useCategories();
   const { data: locations = [] } = useStorageLocations();
   const { data: platforms = [] } = usePlatforms();
+  const marketSettings = useWorkflowSettings();
 
   const [isEditing, setIsEditing] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -59,6 +62,8 @@ export default function ItemDetail() {
   const [title, setTitle] = useState('');
   const [originalCost, setOriginalCost] = useState('');
   const [targetPrice, setTargetPrice] = useState('');
+  const [tagPrice, setTagPrice] = useState('');
+  const [floorPrice, setFloorPrice] = useState('');
   const [actualPrice, setActualPrice] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const [condition, setCondition] = useState<ItemCondition>('good');
@@ -95,6 +100,8 @@ export default function ItemDetail() {
       setTitle(item.title || '');
       setOriginalCost(item.original_cost?.toString() || '');
       setTargetPrice(item.target_price?.toString() || '');
+      setTagPrice(item.tag_price?.toString() || '');
+      setFloorPrice(item.floor_price?.toString() || '');
       setActualPrice(item.actual_price?.toString() || '');
       setCategoryId(item.category_id || '');
       setCondition(item.condition);
@@ -152,6 +159,8 @@ export default function ItemDetail() {
       title: title.trim() || null,
       original_cost: parseFloat(originalCost) || 0,
       target_price: targetPrice ? parseFloat(targetPrice) : null,
+      tag_price: tagPrice ? parseFloat(tagPrice) : null,
+      floor_price: floorPrice ? parseFloat(floorPrice) : null,
       actual_price: actualPrice ? parseFloat(actualPrice) : null,
       category_id: categoryId || null,
       condition,
@@ -465,6 +474,46 @@ export default function ItemDetail() {
                     />
                   </div>
                 </div>
+              </div>
+
+              <div className="rounded-lg border border-dashed border-border p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Market table</p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs"
+                    disabled={!floorPrice && !targetPrice}
+                    onClick={() => {
+                      // Floor first; with only a target, the floor starts at the target and the tag adds the buffer
+                      const floor = parseFloat(floorPrice) || parseFloat(targetPrice) || 0;
+                      if (!floorPrice && floor) setFloorPrice(String(floor));
+                      setTagPrice(String(suggestTagPrice(floor, marketSettings.marketTagBufferPercent, marketSettings.marketRoundStep)));
+                    }}
+                  >
+                    Suggest tag
+                  </Button>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor="tag">Tag price (on sticker)</Label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                      <Input id="tag" type="number" step="0.01" value={tagPrice} onChange={(e) => setTagPrice(e.target.value)} className="pl-7" />
+                    </div>
+                  </div>
+                  <div>
+                    <Label htmlFor="floor">Floor (private)</Label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                      <Input id="floor" type="number" step="0.01" value={floorPrice} onChange={(e) => setFloorPrice(e.target.value)} className="pl-7" />
+                    </div>
+                  </div>
+                </div>
+                {tagPrice && floorPrice && parseFloat(tagPrice) < parseFloat(floorPrice) && (
+                  <p className="text-xs text-destructive">Tag is below your floor.</p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">

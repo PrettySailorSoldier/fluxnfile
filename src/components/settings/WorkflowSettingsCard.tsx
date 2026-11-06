@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
+import { Input } from '@/components/ui/input';
 import {
   Settings2,
   DollarSign,
@@ -20,7 +21,42 @@ import {
   ScanLine,
   Bell,
   RotateCcw,
+  Store,
 } from 'lucide-react';
+
+/** Small numeric field; keeps what you type until it's a valid number. */
+function NumField({
+  value,
+  onChange,
+  prefix,
+  suffix,
+  step = 0.1,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  prefix?: string;
+  suffix?: string;
+  step?: number;
+}) {
+  return (
+    <div className="flex items-center gap-1 w-28">
+      {prefix && <span className="text-sm text-muted-foreground">{prefix}</span>}
+      <Input
+        type="number"
+        inputMode="decimal"
+        min={0}
+        step={step}
+        value={Number.isFinite(value) ? value : ''}
+        onChange={(e) => {
+          const n = parseFloat(e.target.value);
+          onChange(Number.isFinite(n) && n >= 0 ? n : 0);
+        }}
+        className="h-8 text-sm text-right"
+      />
+      {suffix && <span className="text-sm text-muted-foreground">{suffix}</span>}
+    </div>
+  );
+}
 
 function PrefRow({
   label,
@@ -375,6 +411,75 @@ export function WorkflowSettingsCard() {
             checked={local.notifyPendingReviews}
             onCheckedChange={(v) => update('notifyPendingReviews', v)}
           />
+        </PrefRow>
+
+        <Separator className="my-2" />
+
+        {/* ── MARKET DAY ── */}
+        <SectionHeader icon={Store} title="Market Day" />
+
+        <PrefRow
+          label="Tag buffer %"
+          description="Sticker = your floor price + this (guides suggest 15–25%)"
+        >
+          <NumField value={local.marketTagBufferPercent} onChange={(v) => update('marketTagBufferPercent', v)} suffix="%" />
+        </PrefRow>
+
+        <PrefRow label="Round tags to" description="Clean numbers for cash and quick maths (instead of .99)">
+          <Select
+            value={String(local.marketRoundStep)}
+            onValueChange={(v) => update('marketRoundStep', v === '5' ? 5 : 1)}
+          >
+            <SelectTrigger className="w-28 h-8 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="1">Whole $1</SelectItem>
+              <SelectItem value="5">Nearest $5</SelectItem>
+            </SelectContent>
+          </Select>
+        </PrefRow>
+
+        <PrefRow label="Card fee %" description="Your reader's rate — check your own, it varies by reader and plan">
+          <NumField value={local.marketCardFeePercent} onChange={(v) => update('marketCardFeePercent', v)} suffix="%" />
+        </PrefRow>
+
+        <PrefRow label="Card fee per sale" description="Flat part of the fee, in dollars">
+          <NumField value={local.marketCardFeeFlat} onChange={(v) => update('marketCardFeeFlat', v)} prefix="$" />
+        </PrefRow>
+
+        <PrefRow label="Venmo / app fee %" description="0 for personal transfers">
+          <NumField value={local.marketAppFeePercent} onChange={(v) => update('marketAppFeePercent', v)} suffix="%" />
+        </PrefRow>
+
+        <PrefRow
+          label="Sales tax %"
+          description="0 = don't add tax at the register. Ask CDTFA/your accountant what applies to you."
+        >
+          <NumField value={local.marketSalesTaxPercent} onChange={(v) => update('marketSalesTaxPercent', v)} suffix="%" />
+        </PrefRow>
+
+        <PrefRow label="Tag prices include tax" description="Back the tax out of the price instead of adding it on top">
+          <Switch
+            checked={local.marketTaxIncluded}
+            onCheckedChange={(v) => update('marketTaxIncluded', v)}
+          />
+        </PrefRow>
+
+        <PrefRow label="“Book again” at $/hour" description="Needs gross of at least 3× the booth fee too">
+          <NumField value={local.marketGoodProfitPerHour} onChange={(v) => update('marketGoodProfitPerHour', v)} prefix="$" />
+        </PrefRow>
+
+        <PrefRow label="“Skip” under $/hour" description="Profit per hour below this suggests skipping that market">
+          <NumField value={local.marketMinProfitPerHour} onChange={(v) => update('marketMinProfitPerHour', v)} prefix="$" />
+        </PrefRow>
+
+        <PrefRow label="Tax set-aside %" description="Share of each market's profit to move aside (rough starting point)">
+          <NumField value={local.marketTaxSetAsidePercent} onChange={(v) => update('marketTaxSetAsidePercent', v)} suffix="%" />
+        </PrefRow>
+
+        <PrefRow label="Mileage rate $/mile" description="Update each year — confirm the current IRS business rate">
+          <NumField value={local.marketMileageRate} onChange={(v) => update('marketMileageRate', v)} prefix="$" step={0.01} />
         </PrefRow>
 
         {/* ── SAVE / RESET ── */}

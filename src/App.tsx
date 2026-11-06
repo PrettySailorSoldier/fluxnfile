@@ -21,6 +21,9 @@ import RoughNotes from "./pages/RoughNotes";
 import SalesCheck from "./pages/SalesCheck";
 import OrderSheet from "./pages/OrderSheet";
 import ScanSession from "./pages/ScanSession";
+import Market from "./pages/Market";
+import MarketEvent from "./pages/MarketEvent";
+import PriceTags from "./pages/PriceTags";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -93,6 +96,22 @@ const App = () => (
             <Route path="/order-sheet" element={
               <ProtectedRoute>
                 <AppLayout><OrderSheet /></AppLayout>
+              </ProtectedRoute>
+            } />
+            <Route path="/market" element={
+              <ProtectedRoute>
+                <AppLayout><Market /></AppLayout>
+              </ProtectedRoute>
+            } />
+            <Route path="/market/:id" element={
+              <ProtectedRoute>
+                <AppLayout><MarketEvent /></AppLayout>
+              </ProtectedRoute>
+            } />
+            {/* Printable tags — no app chrome */}
+            <Route path="/market/:id/tags" element={
+              <ProtectedRoute>
+                <PriceTags />
               </ProtectedRoute>
             } />
             {/* Full-screen scanner — no app chrome */}

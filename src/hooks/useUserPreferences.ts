@@ -46,6 +46,29 @@ export interface WorkflowSettings {
   // ── NOTIFICATIONS ────────────────────────────────────
   notifyStaleListings: boolean;
   notifyPendingReviews: boolean;
+
+  // ── MARKET DAY ───────────────────────────────────────
+  /** Sticker = floor × (1 + buffer). Research range 15–25. */
+  marketTagBufferPercent: number;
+  /** Market tags use clean round numbers instead of .99 */
+  marketRoundStep: 1 | 5;
+  /** Your card reader's rate (e.g. Square ≈ 2.6% + 10¢ in person — check yours) */
+  marketCardFeePercent: number;
+  marketCardFeeFlat: number;
+  /** Venmo / Cash App fee; 0 for personal transfers */
+  marketAppFeePercent: number;
+  /** 0 = don't add tax at the register */
+  marketSalesTaxPercent: number;
+  /** Sticker prices already include tax */
+  marketTaxIncluded: boolean;
+  /** Profit/hour at or above this (and ≥3× booth fee) suggests "Book again" */
+  marketGoodProfitPerHour: number;
+  /** Below this suggests "Skip" */
+  marketMinProfitPerHour: number;
+  /** Set-aside for taxes, as a percent of net profit (rough starting point) */
+  marketTaxSetAsidePercent: number;
+  /** IRS standard mileage rate per mile, for the mileage deduction estimate */
+  marketMileageRate: number;
 }
 
 export const DEFAULT_WORKFLOW_SETTINGS: WorkflowSettings = {
@@ -68,6 +91,18 @@ export const DEFAULT_WORKFLOW_SETTINGS: WorkflowSettings = {
   scanHapticFeedback: true,
   notifyStaleListings: true,
   notifyPendingReviews: true,
+  marketTagBufferPercent: 20,
+  marketRoundStep: 1,
+  marketCardFeePercent: 2.6,
+  marketCardFeeFlat: 0.1,
+  marketAppFeePercent: 0,
+  marketSalesTaxPercent: 0,
+  marketTaxIncluded: false,
+  marketGoodProfitPerHour: 20,
+  marketMinProfitPerHour: 8,
+  marketTaxSetAsidePercent: 25,
+  // Update each year — this is the 2025 IRS business rate; confirm for the current year
+  marketMileageRate: 0.7,
 };
 
 export interface UserPreferences {

@@ -164,6 +164,11 @@ export type Database = {
           vine_review_date: string | null
           vine_review_quality: string | null
           vine_review_status: string | null
+          tag_price: number | null
+          floor_price: number | null
+          packed_for_event_id: string | null
+          channel_sold: string | null
+          market_attempts: number
         }
         Insert: {
           acquisition_date?: string
@@ -234,6 +239,11 @@ export type Database = {
           vine_review_date?: string | null
           vine_review_quality?: string | null
           vine_review_status?: string | null
+          tag_price?: number | null
+          floor_price?: number | null
+          packed_for_event_id?: string | null
+          channel_sold?: string | null
+          market_attempts?: number
         }
         Update: {
           acquisition_date?: string
@@ -304,6 +314,11 @@ export type Database = {
           vine_review_date?: string | null
           vine_review_quality?: string | null
           vine_review_status?: string | null
+          tag_price?: number | null
+          floor_price?: number | null
+          packed_for_event_id?: string | null
+          channel_sold?: string | null
+          market_attempts?: number
         }
         Relationships: [
           {

@@ -85,6 +85,15 @@ export interface Item {
   lattice_reviewed_date: string | null;
   // Multi-source tracking
   data_sources: string[] | null;
+  // Market-day selling (20261106000000_market_selling.sql)
+  /** Price on the sticker at a market */
+  tag_price?: number | null;
+  /** Private walk-away price — never printed */
+  floor_price?: number | null;
+  packed_for_event_id?: string | null;
+  /** 'market' (in person) or 'online' */
+  channel_sold?: string | null;
+  market_attempts?: number | null;
   // Joined relations
   category?: Category | null;
   storage_location?: StorageLocation | null;
