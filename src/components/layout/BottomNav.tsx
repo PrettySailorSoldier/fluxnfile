@@ -8,11 +8,9 @@ import {
   PencilLine,
   FileSpreadsheet,
   ChevronRight,
-  SlidersHorizontal,
 } from 'lucide-react';
 import { useNavTabs } from '@/hooks/useNavTabs';
 import { navSplit } from '@/lib/navConfig';
-import { NavCustomizer } from '@/components/layout/NavCustomizer';
 import { useQuery } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
@@ -57,7 +55,6 @@ export function BottomNav() {
     refetchInterval: 30_000,
   });
 
-  const [customizeOpen, setCustomizeOpen] = useState(false);
   const { tabIds } = useNavTabs();
   // Your tabs sit either side of the + button; everything else is in More (every screen stays two taps away)
   const { tabs, more: moreEntries } = navSplit(tabIds);
@@ -181,28 +178,9 @@ export function BottomNav() {
           </SheetHeader>
           <div className="space-y-1">
             {moreEntries.map((e) => entryRow(e, e.path))}
-            <button
-              type="button"
-              onClick={() => {
-                setMoreOpen(false);
-                setCustomizeOpen(true);
-              }}
-              className="w-full flex items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-muted transition-colors"
-            >
-              <span className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
-                <SlidersHorizontal className="w-5 h-5 text-foreground" />
-              </span>
-              <span className="flex-1 min-w-0">
-                <span className="block text-sm font-medium text-foreground">Customize navigation</span>
-                <span className="block text-xs text-muted-foreground">Choose what’s in the bottom bar and what’s in More</span>
-              </span>
-              <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-            </button>
           </div>
         </SheetContent>
       </Sheet>
-
-      <NavCustomizer open={customizeOpen} onOpenChange={setCustomizeOpen} />
     </>
   );
 }

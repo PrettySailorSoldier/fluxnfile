@@ -11,6 +11,7 @@ import { StorageLocationManager } from '@/components/settings/StorageLocationMan
 import { MeetupLocationManager } from '@/components/settings/MeetupLocationManager';
 import { ThemeCustomizer } from '@/components/settings/ThemeCustomizer';
 import { WorkflowSettingsCard } from '@/components/settings/WorkflowSettingsCard';
+import { NavSettingsCard } from '@/components/settings/NavSettingsCard';
 import { ProfileEditor } from '@/components/settings/ProfileEditor';
 import { useTeamMembers } from '@/hooks/useTeam';
 import {
@@ -159,6 +160,8 @@ export default function Settings() {
       </Card>
 
       {/* Workflow Preferences */}
+      <NavSettingsCard />
+
       <WorkflowSettingsCard />
 
       {/* Theme */}
