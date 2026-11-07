@@ -75,24 +75,40 @@ export function LinkUpcSheet({
   });
   const productName = hint !== undefined ? hint : lookup?.found ? lookup.title : null;
 
+  // Stickers print the order title ("Taramico Tennis Bracelets…"), but once the catalog
+  // is imported an item's title drops the brand — match against brand + title.
+  const byId = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
+  const searchable = useMemo(
+    () =>
+      items.map((i) => {
+        const brand = i.brand?.trim();
+        const title = i.title ?? '';
+        const named = brand && !title.toLowerCase().includes(brand.toLowerCase()) ? `${brand} ${title}` : title;
+        return { ...i, title: i.title ? named : i.title };
+      }),
+    [items]
+  );
+
   const ranked = useMemo(() => {
     const q = search.trim().toLowerCase();
     const words = q.split(/\s+/).filter(Boolean);
     const pool = words.length
-      ? items.filter((item) => {
+      ? searchable.filter((item) => {
           const hay = `${item.title ?? ''} ${item.amazon_asin ?? ''} ${item.fnsku ?? ''} ${item.amazon_order_number ?? ''} ${item.amazon_order_id ?? ''}`.toLowerCase();
           return words.every((w) => hay.includes(w));
         })
-      : items;
+      : searchable;
     // X00 stickers print a cut-off name ("Golf Target Clot") — match its words instead
-    return codeType === 'fnsku' ? rankBySticker(pool, productName ?? null) : rankByTitle(pool, productName ?? null);
-  }, [items, productName, search, codeType]);
+    const result = codeType === 'fnsku' ? rankBySticker(pool, productName ?? null) : rankByTitle(pool, productName ?? null);
+    return result.map((r) => ({ ...r, item: byId.get(r.item.id) ?? r.item }));
+  }, [searchable, byId, productName, search, codeType]);
 
   // The best guess over the whole list (not the search), and how sure it is
   const guess = useMemo(() => {
     if (!productName) return null;
-    return codeType === 'fnsku' ? guessStickerMatch(items, productName) : guessTitleMatch(items, productName);
-  }, [items, productName, codeType]);
+    const g = codeType === 'fnsku' ? guessStickerMatch(searchable, productName) : guessTitleMatch(searchable, productName);
+    return g ? { ...g, item: byId.get(g.item.id) ?? g.item } : null;
+  }, [searchable, byId, productName, codeType]);
 
   // Open the best guess's details straight away — checking it is one look
   useEffect(() => {
