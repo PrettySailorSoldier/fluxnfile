@@ -249,7 +249,12 @@ function rankByName<T extends { title: string | null }>(candidates: T[], text: s
       let against = 0;
       // A looked-up name is clean text, so its unknown word is as telling as the rarest real one
       const unknown = mode === 'name' ? Math.log(1 + n) : UNKNOWN_STICKER_WORD;
-      for (let qi = first + 1; qi < last; qi++) if (idf[qi] === 0 && !MODEL_CODE.test(query[qi])) against += unknown;
+      for (let qi = first + 1; qi < last; qi++) {
+        if (idf[qi] !== 0 || MODEL_CODE.test(query[qi])) continue;
+        // A short unknown fragment is usually the stub of a word the sticker cut off
+        // ("Tenn…ezel" for "Tennis … Bezel") or OCR noise — a weak sign of another product
+        against += mode === 'sticker' && query[qi].length <= 4 ? unknown / 4 : unknown;
+      }
       const ordered = orderedWeight(chain);
       // The read starts where the title starts
       const firstTwo = [...new Set(chain.map((h) => h.q))].slice(0, 2);
