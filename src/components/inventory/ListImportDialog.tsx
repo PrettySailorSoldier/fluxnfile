@@ -427,7 +427,9 @@ export function ListImportDialog({ open, onOpenChange, defaultDestination = 'sel
       setStep('done');
     } catch (e) {
       console.error('List import failed:', e);
-      toast.error(e instanceof Error ? `Import failed: ${e.message}` : 'Import failed');
+      // Supabase errors are plain objects with a message, not Error instances
+      const reason = e instanceof Error ? e.message : (e as { message?: string } | null)?.message;
+      toast.error(reason ? `Import failed: ${reason}` : 'Import failed');
       setStep('map');
     }
   };
