@@ -395,7 +395,8 @@ const readSpreadsheet = (file: File): Promise<SpreadsheetRead> => {
       setTimeout(() => {
         try {
           const data = e.target?.result;
-          const workbook = XLSX.read(data, { type: 'array' });
+          // dense mode keeps big catalog workbooks (tens of MB of XML) within browser memory
+          const workbook = XLSX.read(data, { type: 'array', dense: true });
           const catalog = parseAnyCatalogWorkbook(workbook);
           if (catalog) {
             resolve({ rows: [], catalog });
@@ -405,8 +406,10 @@ const readSpreadsheet = (file: File): Promise<SpreadsheetRead> => {
           const worksheet = workbook.Sheets[sheetName];
           const rows = XLSX.utils.sheet_to_json<Record<string, string>>(worksheet, { defval: '' });
           resolve({ rows, catalog: null });
-        } catch {
-          reject(new Error('Could not read file. Please upload a valid Excel or CSV file.'));
+        } catch (err) {
+          console.error('Spreadsheet read failed:', err);
+          const detail = err instanceof Error && err.message ? ` (${err.message})` : '';
+          reject(new Error(`Could not read file. Please upload a valid Excel or CSV file.${detail}`));
         }
       }, 30);
     };

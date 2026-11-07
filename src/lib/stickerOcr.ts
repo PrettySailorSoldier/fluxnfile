@@ -102,7 +102,7 @@ function textStrip(frame: StickerFrame, degrees: Degrees): HTMLCanvasElement | n
   // Rectangle in upright terms: as wide as the barcode (+15% each side), from just
   // past the scan line to ~0.7 barcode-lengths down
   const across = length * 1.3;
-  const down0 = length * 0.12;
+  const down0 = length * 0.16; // clear of the bars' lower edge, which OCR reads as junk words
   const down1 = length * 0.75;
   // Map "down" in the upright picture back to the frame's direction
   const dir: Record<Degrees, [number, number]> = { 0: [0, 1], 180: [0, -1], 90: [1, 0], 270: [-1, 0] };
@@ -118,6 +118,8 @@ function textStrip(frame: StickerFrame, degrees: Degrees): HTMLCanvasElement | n
   const longSide = Math.max(region.w, region.h);
   return upright(canvas, degrees, region, Math.min(2, Math.max(1, 1400 / longSide)));
 }
+
+const MIN_WORD_CONFIDENCE = 70;
 
 /** Words that appear on every sticker and say nothing about the product. */
 const NOISE_WORDS = new Set(['made', 'china', 'new', 'the', 'and', 'for', 'with']);
@@ -166,29 +168,43 @@ export async function readStickerText(frame: StickerFrame, sticker: string, budg
   } catch {
     return null;
   }
-  const read = async (canvas: HTMLCanvasElement | null, mode: 'auto' | 'block'): Promise<{ text: string; confidence: number }> => {
-    if (!canvas || Date.now() - started > budgetMs) return { text: '', confidence: 0 };
+  const read = async (
+    canvas: HTMLCanvasElement | null,
+    mode: 'auto' | 'block'
+  ): Promise<{ text: string; sure: string; confidence: number }> => {
+    if (!canvas || Date.now() - started > budgetMs) return { text: '', sure: '', confidence: 0 };
     try {
       // PSM 3 = find text anywhere; PSM 6 = one block of text (the strip)
       await worker.setParameters({ tessedit_pageseg_mode: (mode === 'auto' ? '3' : '6') as PSM });
       const { data } = await worker.recognize(canvas);
-      return { text: data.text ?? '', confidence: data.confidence ?? 0 };
+      // Words Tesseract is genuinely confident about; the barcode's bars and glare
+      // come out as low-confidence junk ("llu rue cell rine … ape att jet")
+      const sure: string[] = [];
+      for (const block of data.blocks ?? [])
+        for (const para of block.paragraphs ?? [])
+          for (const line of para.lines ?? [])
+            for (const w of line.words ?? []) if (w.confidence >= MIN_WORD_CONFIDENCE) sure.push(w.text);
+      return { text: data.text ?? '', sure: sure.join(' '), confidence: data.confidence ?? 0 };
     } catch {
-      return { text: '', confidence: 0 };
+      return { text: '', sure: '', confidence: 0 };
     }
   };
 
   const orientations: Degrees[] = frame.vertical ? [90, 270] : [0, 180];
-  const tries: { text: string; score: number; confirmed: boolean }[] = [];
+  const tries: { text: string; sure: string; score: number; confirmed: boolean }[] = [];
   for (const degrees of orientations) {
     const strip = await read(textStrip(frame, degrees), 'block');
     const whole = await read(wholeFrame(frame, degrees), 'auto');
     const text = `${strip.text}\n${whole.text}`;
     const confirmed = showsCode(text, sticker);
-    tries.push({ text, confirmed, score: (confirmed ? 1000 : 0) + strip.confidence + whole.confidence });
+    tries.push({ text, sure: `${strip.sure}
+${whole.sure}`, confirmed, score: (confirmed ? 1000 : 0) + strip.confidence + whole.confidence });
     if (confirmed) break; // right way up — no need to read the other way
   }
   const best = [...tries].sort((a, b) => b.score - a.score)[0];
-  const words = best ? stickerWords(best.text, sticker) : [];
+  if (!best) return null;
+  // Prefer the confident words; fall back to everything if that leaves too little
+  let words = stickerWords(best.sure, sticker);
+  if (words.length < 2) words = stickerWords(best.text, sticker);
   return words.length >= 2 ? words.join(' ') : null;
 }
