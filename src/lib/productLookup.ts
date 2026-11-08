@@ -20,6 +20,12 @@ export interface ProductLookup {
   source: string | null;
   /** ASIN when an Amazon source answered — how FNSKU stickers resolve */
   asin: string | null;
+  /**
+   * Every ASIN an Amazon search returned for this barcode, best first (incl. `asin`).
+   * The top result is often a sibling variant (another colour or size) of what
+   * was ordered; the ordered one is usually further down the same results.
+   */
+  candidateAsins: string[];
   /** Matched by an Amazon search rather than an exact barcode record */
   fuzzy: boolean;
   cached: boolean;
@@ -40,9 +46,17 @@ const EMPTY: Omit<ProductLookup, 'code' | 'codeType'> = {
   retailPrice: null,
   source: null,
   asin: null,
+  candidateAsins: [],
   fuzzy: false,
   cached: false,
 };
+
+/** Older function deployments don't send candidateAsins — fall back to the one ASIN. */
+function withCandidates(r: ProductLookup): ProductLookup {
+  const list = Array.isArray(r.candidateAsins) ? r.candidateAsins : [];
+  const all = [r.asin, ...list].filter((a): a is string => typeof a === 'string' && a.length > 0).map((a) => a.toUpperCase());
+  return { ...r, candidateAsins: [...new Set(all)] };
+}
 
 /** Look up one barcode. Never throws — a failed lookup returns found:false. */
 export async function lookupProduct(
@@ -56,7 +70,12 @@ export async function lookupProduct(
     if (error || !data) {
       return { ...EMPTY, code, codeType: codeType ?? 'upc', error: error?.message ?? 'Lookup failed' };
     }
-    return { ...EMPTY, ...(data as Partial<ProductLookup>), code, codeType: (data as ProductLookup).codeType ?? codeType ?? 'upc' };
+    return withCandidates({
+      ...EMPTY,
+      ...(data as Partial<ProductLookup>),
+      code,
+      codeType: (data as ProductLookup).codeType ?? codeType ?? 'upc',
+    });
   } catch (e) {
     return {
       ...EMPTY,
@@ -84,7 +103,7 @@ export async function lookupProducts(
       const results = ((data as { results?: ProductLookup[] })?.results ?? []) as ProductLookup[];
       chunk.forEach((code, idx) => {
         const r = results[idx];
-        if (r) out.set(code, { ...EMPTY, ...r });
+        if (r) out.set(code, withCandidates({ ...EMPTY, ...r }));
       });
     } catch {
       // leave these codes unresolved

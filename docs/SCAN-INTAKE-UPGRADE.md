@@ -148,6 +148,18 @@ When no code on a box is on the list, the box is matched by name: the words read
 
 Seeds 2 and 3 look similar: the new matcher had one confident wrong guess per path, against five for the old one on UPC names. The cases still missed are mostly true look-alikes, such as colour or size variants the sticker or lookup doesn't mention. "Best match" is still only a label; nothing is received without "This is it".
 
+## Scan review fixes (Nov 7)
+
+- **Same product ordered twice.** A UPC or X00 sticker is saved on the first order it's matched to. Other orders of the same product share its ASIN but not the code. Before, the second box read "Already have 1" and its order stayed on the Order Sheet. `findByCode` now also returns unconfirmed orders with the same ASIN. The scan session, Find → Receive now and the Order Sheet's Scan Package receive the next one and save the code on it.
+- **Back-to-back scans.** The next queued scan read the session list before React re-rendered. A second barcode on the same box could miss "Same box" and be added as another item. The list is now kept in a ref that updates immediately.
+- **The sticker after the UPC.** An X00 sticker read within 30 s of a received/added box is linked to that box when its words clearly match that item better than any order. Before, it opened "Which item is this?" for a box that was already done.
+- **Other Amazon results.** The Amazon search for a barcode often puts another colour or size first, and the variant you ordered further down. `lookup-upc` now returns up to 10 `candidateAsins` (kept in `product_catalog.raw`, no migration needed). If one of them is on the Order Sheet, the picker opens it first, labelled "Amazon lists this for the barcode". You still confirm it. The Order Sheet picker uses its own lookup the same way.
+- **Order Sheet Scan Package** checks the database before asking: same-ASIN orders, and items already confirmed with that code. Known stickers no longer go through OCR.
+- **Memory.** Each X00 scan copies a full camera frame (~8 MB). Re-scanning a known sticker used to keep that copy for the rest of the session. It's now released every time.
+- Scans made before the account finishes loading now show an error row. Before, they were dropped silently. After a sheet closes, a scanner gun's input box gets focus back.
+
+**Deploy:** `supabase functions deploy lookup-upc`. Until you do, everything else works, but there's no "other Amazon results" suggestion. Barcodes already cached by Amazon search only have their top ASIN until the cache row is refreshed.
+
 ## Quick test
 
 - Inventory → **Scan** → type `012345678905` + Enter → a new item appears, autofilled if the lookup finds it. Type it again → the row shows ×2.

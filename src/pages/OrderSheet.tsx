@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useOrderSheetItems, useItems, Item, statusConfig } from '@/hooks/useInventory';
 import { parseQuery, searchItems, matchNote, type SearchHit } from '@/lib/itemSearch';
-import type { CodeType } from '@/lib/barcode';
+import { sameUpc, type CodeType } from '@/lib/barcode';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { Input } from '@/components/ui/input';
@@ -33,7 +33,6 @@ import {
 import { ConfirmItemSheet } from '@/components/inventory/ConfirmItemSheet';
 import { BarcodeScannerModal } from '@/components/inventory/BarcodeScannerModal';
 import { LinkUpcSheet } from '@/components/inventory/LinkUpcSheet';
-import { normalizeUpc } from '@/hooks/useBarcodeScanner';
 import { ReviewStatusBadge } from '@/components/amazon/ReviewStatusBadge';
 import { AmazonImportDialog } from '@/components/amazon/AmazonImportDialog';
 import { VineReportImportDialog } from '@/components/amazon/VineReportImportDialog';
@@ -140,7 +139,7 @@ export default function OrderSheet() {
     // A sticker or UPC saved onto the wrong order would keep matching it
     if (scan.codeType === 'fnsku' && item.fnsku?.toUpperCase() === scan.code.toUpperCase()) {
       await supabase.from('items').update({ fnsku: null }).eq('id', item.id);
-    } else if (scan.codeType === 'upc' && item.upc === scan.code) {
+    } else if (scan.codeType === 'upc' && sameUpc(item.upc, scan.code)) {
       await supabase.from('items').update({ upc: null }).eq('id', item.id);
     }
     queryClient.invalidateQueries({ queryKey: ['items'] });
@@ -156,33 +155,11 @@ export default function OrderSheet() {
       return;
     }
 
-    // Not on the order sheet — check whether it's already confirmed inventory
-    const query = supabase
-      .from('items')
-      .select('id, title, upc, physical_status, storage_location:storage_locations(name)')
-      .eq('team_id', team.id)
-      .neq('physical_status', 'unconfirmed')
-      .limit(1);
-    const { data } =
-      codeType === 'asin'
-        ? await query
-            .ilike('amazon_asin', code)
-            .maybeSingle<{ id: string; title: string | null; storage_location: { name: string } | null }>()
-        : await query
-            .in('upc', [code, normalizeUpc(code), `0${code}`])
-            .maybeSingle<{ id: string; title: string | null; storage_location: { name: string } | null }>();
-
-    if (data) {
-      const loc = data.storage_location?.name;
-      toast.info(
-        `Already confirmed: ${data.title || 'Untitled item'}${loc ? ` — stored in ${loc}` : ''}`
-      );
-      return;
-    }
-
+    // (The scanner already checked confirmed inventory and same-ASIN orders.)
     if (codeType === 'upc') {
       // Unknown product barcode — let the user link it to an order once;
-      // every future scan of this UPC matches instantly
+      // every future scan of this UPC matches instantly. The picker looks the
+      // barcode up and puts orders Amazon lists for it first.
       setLinkTarget({ code, codeType });
     } else {
       toast.warning(`No order found for ASIN ${code}. Import your orders first, or add it manually.`);
@@ -378,6 +355,7 @@ export default function OrderSheet() {
         onMatchFound={(item, code, codeType) => handleScanMatch(item, { code, codeType })}
         onNoMatch={handleScanNoMatch}
         onClose={() => setShowScanner(false)}
+        checkDatabase
       />
 
       <LinkUpcSheet

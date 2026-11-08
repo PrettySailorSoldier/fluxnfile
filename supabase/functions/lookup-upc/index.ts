@@ -43,6 +43,7 @@ const AMAZON_SEARCH_URL = 'https://api.openwebninja.com/realtime-amazon-data/sea
 const USER_AGENT = 'FluxAndFile/1.0 (inventory app)';
 const NEGATIVE_CACHE_DAYS = 14;
 const MAX_BATCH = 25;
+const MAX_CANDIDATE_ASINS = 10;
 
 type CodeType = 'upc' | 'isbn' | 'asin' | 'fnsku';
 
@@ -63,6 +64,8 @@ interface ProductLookup {
   source: string | null;
   /** Amazon ASIN when an Amazon source answered (lets the app match orders / resolve FNSKUs) */
   asin: string | null;
+  /** Every ASIN in the Amazon search results, best first (incl. asin) */
+  candidateAsins: string[];
   /** True when the product came from an Amazon keyword search — worth a glance */
   fuzzy: boolean;
   cached: boolean;
@@ -360,6 +363,16 @@ async function fromAmazonSearch(query: string): Promise<SourceResult> {
     const products = Array.isArray(json?.data?.products) ? json.data.products : [];
     const top = products.find((p: { asin?: string; product_title?: string }) => p?.asin && p?.product_title);
     if (!top) return { hit: false };
+    // The other results matter too: the top one is often another colour/size of
+    // the listing, and the variant actually ordered is further down. The app
+    // checks these against the order list (as a suggestion, never auto-received).
+    const candidateAsins = [
+      ...new Set(
+        products
+          .map((p: { asin?: unknown }) => (typeof p?.asin === 'string' ? p.asin.trim().toUpperCase() : ''))
+          .filter((a: string) => /^[A-Z0-9]{10}$/.test(a)),
+      ),
+    ].slice(0, MAX_CANDIDATE_ASINS) as string[];
 
     const price = num(top.product_price);
     const original = num(top.product_original_price);
@@ -374,9 +387,11 @@ async function fromAmazonSearch(query: string): Promise<SourceResult> {
         highestPrice: original,
         retailPrice: original ?? price,
         asin: top.asin,
+        candidateAsins,
         fuzzy: true,
         source: 'amazon-search',
-        raw: top,
+        // No column for the candidates — they ride along in raw for cached reads
+        raw: { ...top, candidate_asins: candidateAsins },
       },
     };
   } catch (e) {
@@ -390,8 +405,15 @@ function emptyResult(code: string, codeType: CodeType, extra: Partial<ProductLoo
   return {
     code, codeType, found: false, title: null, brand: null, model: null, description: null,
     category: null, imageUrl: null, images: [], lowestPrice: null, highestPrice: null,
-    retailPrice: null, source: null, asin: null, fuzzy: false, cached: false, upc: code, ...extra,
+    retailPrice: null, source: null, asin: null, candidateAsins: [], fuzzy: false, cached: false, upc: code, ...extra,
   };
+}
+
+function candidatesOf(asin: string | null | undefined, list: unknown): string[] {
+  const all = [asin, ...(Array.isArray(list) ? list : [])]
+    .filter((a): a is string => typeof a === 'string' && a.length > 0)
+    .map((a) => a.toUpperCase());
+  return [...new Set(all)];
 }
 
 function rowToResult(row: Record<string, any>, digits: string): ProductLookup {
@@ -411,6 +433,7 @@ function rowToResult(row: Record<string, any>, digits: string): ProductLookup {
     retailPrice: row.retail_price != null ? Number(row.retail_price) : null,
     source: row.source,
     asin: row.asin ?? null,
+    candidateAsins: candidatesOf(row.asin, row.raw?.candidate_asins),
     fuzzy: row.source === 'amazon-search',
     cached: true,
     upc: digits,
@@ -482,6 +505,7 @@ async function lookupOne(
     ? { ...emptyResult(digits, codeType), ...hit, found: true, cached: false }
     : emptyResult(digits, codeType, lastError ? { error: lastError } : {});
   delete (result as Record<string, unknown>).raw;
+  result.candidateAsins = candidatesOf(result.asin, result.candidateAsins);
 
   // 2. Cache hits always; cache misses only when every source gave a definite "no"
   if (db && (hit || !transient)) {

@@ -57,7 +57,9 @@ import {
   fillFromLookup,
   findByCode,
   findOrderSheetNameMatch,
+  guessStickerMatch,
   receiveItem,
+  rememberCode,
   undoReceive,
   type IntakeContext,
   type IntakeDefaults,
@@ -99,6 +101,8 @@ interface SessionRow {
   autofilled?: boolean;
   /** Product name to rank the "Which item is this?" list by (lookup title or sticker text) */
   hint?: string | null;
+  /** Orders Amazon lists for this barcode — shown first in "Which item is this?" */
+  suggestedIds?: string[];
   /** Product came from an Amazon keyword search — worth a quick check */
   fuzzy?: boolean;
   /** Other barcodes of the same product seen this session (ASIN, FNSKU, UPC…) */
@@ -108,6 +112,8 @@ interface SessionRow {
 
 /** A second, different barcode of the same product within this window = the same box. */
 const SAME_BOX_MS = 10_000;
+/** Reading a sticker takes a few seconds, so its same-box window is wider (and needs a clear name match). */
+const STICKER_SAME_BOX_MS = 30_000;
 
 const DEFAULTS_KEY = 'scan-session-defaults';
 const ROWS_KEY = 'scan-session-rows';
@@ -189,7 +195,7 @@ export default function ScanSession() {
       askWhenUnmatched: true,
     })
   );
-  const [rows, setRows] = useState<SessionRow[]>(readRows);
+  const [rows, setRowsState] = useState<SessionRow[]>(readRows);
   const [showSettings, setShowSettings] = useState(false);
   const [manualCode, setManualCode] = useState('');
   const [cameraEnabled, setCameraEnabled] = useState(true);
@@ -202,12 +208,23 @@ export default function ScanSession() {
     rowKey: string;
     /** Product name already looked up (undefined = let the sheet look it up) */
     hint?: string | null;
+    suggestedIds?: string[];
   } | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const manualRef = useRef<HTMLInputElement>(null);
+  /**
+   * The session list, always current. Scans run back to back in a queue, and
+   * the next one starts before React re-renders — reading `rows` there would
+   * miss the row the previous scan just added (a second barcode on the same box
+   * would then be added as another item). Every change goes through setRows.
+   */
   const rowsRef = useRef(rows);
-  rowsRef.current = rows;
+  const setRows = useCallback((update: SessionRow[] | ((prev: SessionRow[]) => SessionRow[])) => {
+    const next = typeof update === 'function' ? update(rowsRef.current) : update;
+    rowsRef.current = next;
+    setRowsState(next);
+  }, []);
   const queueRef = useRef<Promise<void>>(Promise.resolve());
 
   // Persist
@@ -265,11 +282,14 @@ export default function ScanSession() {
     return () => clearTimeout(t);
   }, [feedback]);
 
-  const pushRow = (row: Omit<SessionRow, 'key' | 'at'>) => {
-    const full: SessionRow = { ...row, key: uid(), at: Date.now() };
-    setRows((prev) => [full, ...prev]);
-    return full;
-  };
+  const pushRow = useCallback(
+    (row: Omit<SessionRow, 'key' | 'at'>) => {
+      const full: SessionRow = { ...row, key: uid(), at: Date.now() };
+      setRows((prev) => [full, ...prev]);
+      return full;
+    },
+    [setRows]
+  );
 
   const patchRow = (key: string, patch: Partial<SessionRow> | ((r: SessionRow) => Partial<SessionRow>)) => {
     setRows((prev) => {
@@ -334,14 +354,38 @@ export default function ScanSession() {
     const full = pushRow(row);
     signal('unmatched', 'Which item is this?');
     if (row.codeType) {
-      setLinkTarget((t) => t ?? { code: row.code, codeType: row.codeType!, rowKey: full.key, hint });
+      setLinkTarget(
+        (t) => t ?? { code: row.code, codeType: row.codeType!, rowKey: full.key, hint, suggestedIds: row.suggestedIds }
+      );
     }
+  };
+
+  /** Order Sheet items with one of these ASINs, in the ASINs' order (Amazon's ranking). */
+  const orderSheetByAsins = (asins: string[]): string[] => {
+    if (asins.length === 0) return [];
+    const rank = new Map(asins.map((a, i) => [a.toUpperCase(), i]));
+    return orderItemsRef.current
+      .filter((i) => i.physical_status === 'unconfirmed' && i.amazon_asin && rank.has(i.amazon_asin.trim().toUpperCase()))
+      .sort((a, b) => rank.get(a.amazon_asin!.trim().toUpperCase())! - rank.get(b.amazon_asin!.trim().toUpperCase())!)
+      .map((i) => i.id);
   };
 
   const processCode = useCallback(
     async (scannedCode: string, scannedType: CodeType) => {
+      // An X00 sticker's camera frame is taken off the map whatever happens next —
+      // each one is a full camera image (~8 MB), and known stickers never use it
+      const frame = scannedType === 'fnsku' ? stickerFramesRef.current.get(scannedCode) ?? null : null;
+      if (scannedType === 'fnsku') stickerFramesRef.current.delete(scannedCode);
       const c = ctxRef.current;
-      if (!c) return;
+      if (!c) {
+        // Account still loading — say so instead of dropping the scan silently
+        pushRow({
+          code: scannedCode, codeType: scannedType, kind: 'error', title: scannedCode, photo: null, itemIds: [],
+          message: 'Still loading your account — scan it again in a moment',
+        });
+        signal('error', 'Not ready yet — scan again');
+        return;
+      }
       const currentMode = modeRef.current;
       const code = scannedCode;
       const codeType = scannedType;
@@ -351,18 +395,45 @@ export default function ScanSession() {
       // Same box again while it's waiting to be picked → just reopen the picker
       const waiting = currentMode === 'add' ? rowsRef.current.find((r) => r.kind === 'unmatched' && r.code === code) : null;
       if (waiting?.codeType) {
-        setLinkTarget((t) => t ?? { code: waiting.code, codeType: waiting.codeType!, rowKey: waiting.key, hint: waiting.hint });
+        setLinkTarget(
+          (t) =>
+            t ?? {
+              code: waiting.code, codeType: waiting.codeType!, rowKey: waiting.key,
+              hint: waiting.hint, suggestedIds: waiting.suggestedIds,
+            }
+        );
         return;
       }
 
       // Amazon X00 sticker. One matched before is saved on its item (items.fnsku)
       // and found by findByCode below. A new one can't be looked up (the code is
       // the seller's, not the product's), so read the product name printed on it.
-      if (codeType === 'fnsku' && (await findByCode(c.teamId, code, 'fnsku')).length === 0) {
+      const known = codeType === 'fnsku' ? await findByCode(c.teamId, code, 'fnsku') : null;
+      if (codeType === 'fnsku' && known!.length === 0) {
         if (rowsRef.current.some((r) => r.kind === 'amazon_label' && r.code === code)) return;
-        const frame = stickerFramesRef.current.get(code) ?? null;
-        stickerFramesRef.current.delete(code);
         const printed = frame && currentMode === 'add' ? await readStickerText(frame, code) : null;
+
+        // The sticker on a box whose UPC was scanned a moment ago: its words
+        // point at that item more clearly than at any order → same box
+        if (currentMode === 'add' && printed) {
+          const now = Date.now();
+          const recent = rowsRef.current.filter(
+            (r) => (r.kind === 'added' || r.kind === 'received') && r.itemIds.length > 0 && now - r.at < STICKER_SAME_BOX_MS && !isUnknownTitle(r.title)
+          );
+          if (recent.length > 0) {
+            const taken = new Set(recent.flatMap((r) => r.itemIds));
+            const pool = [
+              ...recent.map((r) => ({ id: `row:${r.key}`, title: r.title })),
+              ...orderItemsRef.current.filter((i) => !taken.has(i.id)).map((i) => ({ id: i.id, title: i.title })),
+            ];
+            const g = guessStickerMatch(pool, printed);
+            const row = g?.sure && g.item.id.startsWith('row:') ? recent.find((r) => `row:${r.key}` === g.item.id) : null;
+            if (row) {
+              await linkSameBox(row, code, codeType);
+              return;
+            }
+          }
+        }
 
         // Never received on the reading alone — a brand's look-alikes (a 4-pack of
         // pathway lights vs. a house-number sign) read much the same. The picker
@@ -413,7 +484,7 @@ export default function ScanSession() {
         }
       }
 
-      const matches = await findByCode(c.teamId, code, codeType);
+      const matches = known ?? (await findByCode(c.teamId, code, codeType));
       const unconfirmed = matches.filter((m) => m.physical_status === 'unconfirmed');
       const inStock = inStockOf(matches.filter((m) => m.physical_status !== 'unconfirmed'));
 
@@ -447,6 +518,8 @@ export default function ScanSession() {
       if (unconfirmed.length > 0) {
         let target = unconfirmed[0];
         const undo = await receiveItem(target, c);
+        // Found through another order of the same ASIN → link the code to this one too
+        await rememberCode(target.id, code, codeType);
         await saveStickers([target.id], altCodes);
         // Imported without a name → fill it in from the barcode lookup
         if (isUnknownTitle(target.title)) {
@@ -524,27 +597,39 @@ export default function ScanSession() {
         }
       }
 
-      // 3c. A UPC whose product name clearly matches an Order Sheet item, or 3d. sorting
+      // 3c. Another product in Amazon's results for this barcode is on the Order Sheet —
+      // usually the colour/size actually ordered when the top result is a sibling variant.
+      // Strong, but not exact: it opens first in the picker for the user to confirm.
+      const suggestedIds = codeType === 'upc' && lookup.found ? orderSheetByAsins(lookup.candidateAsins) : [];
+
+      // 3d. A UPC whose product name clearly matches an Order Sheet item, or 3e. sorting
       // a backlog of boxes that are all on the order list already → ask which one.
       // A name match is only a guess, so it's shown (details open) for the user to confirm.
       const nameMatch =
-        codeType === 'upc' && lookup.found ? await findOrderSheetNameMatch(lookup.title, orderItemsRef.current) : null;
-      if (nameMatch || askFirst()) {
+        codeType === 'upc' && lookup.found && suggestedIds.length === 0
+          ? await findOrderSheetNameMatch(lookup.title, orderItemsRef.current)
+          : null;
+      if (suggestedIds.length > 0 || nameMatch || askFirst()) {
         askWhichItem(
           {
             code, codeType, kind: 'unmatched',
             title: lookup.found && lookup.title ? lookup.title : `Barcode ${code}`,
             photo: lookup.imageUrl, itemIds: [], fuzzy: lookup.found && lookup.fuzzy,
             hint: lookup.found ? lookup.title : null,
+            suggestedIds,
             altCodes: [...altCodes, ...(asin && asin !== code ? [asin] : [])],
-            message: lookup.found ? 'Not matched to an order yet — pick it from your list' : 'Barcode not recognized — pick the item from your list',
+            message: suggestedIds.length
+              ? 'Amazon lists an order of yours for this barcode — check it and confirm'
+              : lookup.found
+                ? 'Not matched to an order yet — pick it from your list'
+                : 'Barcode not recognized — pick the item from your list',
           },
           lookup.found ? lookup.title : null
         );
         return;
       }
 
-      // 3e. Create a new, autofilled item
+      // 3f. Create a new, autofilled item
       const created = await createFromBarcode(code, codeType, c, lookup);
       await saveStickers([created.id], altCodes);
       pushRow({
@@ -583,7 +668,7 @@ export default function ScanSession() {
         })
         .finally(() => setPending((n) => n - 1));
     },
-    [processCode, signal]
+    [processCode, signal, pushRow]
   );
 
   // ── Camera ─────────────────────────────────────────────────────────────────
@@ -623,19 +708,19 @@ export default function ScanSession() {
 
   // Ignore the camera while a sheet is open
   useEffect(() => {
-    if (editItem || linkTarget) scanner.pause();
-    else scanner.resume();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editItem, linkTarget]);
-
-  // Hardware scanner guns type the code + Enter — keep the box focused on desktop
-  useEffect(() => {
+    if (editItem || linkTarget) {
+      scanner.pause();
+      return;
+    }
+    scanner.resume();
+    // A scanner gun types into the code box — give it focus back once a sheet closes
     try {
       if (window.matchMedia('(pointer: fine)').matches) manualRef.current?.focus();
     } catch {
       /* ignore */
     }
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editItem, linkTarget]);
 
   const submitManual = () => {
     const parsed = classifyCode(manualCode);
@@ -733,6 +818,7 @@ export default function ScanSession() {
         return;
       }
       const undo = await receiveItem(target, c);
+      await rememberCode(target.id, row.code, row.codeType);
       patchRow(row.key, { kind: 'received', itemIds: [target.id], undo });
       signal('received', `Received: ${target.title || 'item'}`);
     });
@@ -1132,7 +1218,11 @@ export default function ScanSession() {
               onAdd={() => void addFromNotFound(row)}
               onLink={
                 (row.kind === 'added' || row.kind === 'unmatched') && row.codeType
-                  ? () => setLinkTarget({ code: row.code, codeType: row.codeType!, rowKey: row.key, hint: row.hint })
+                  ? () =>
+                      setLinkTarget({
+                        code: row.code, codeType: row.codeType!, rowKey: row.key,
+                        hint: row.hint, suggestedIds: row.suggestedIds,
+                      })
                   : undefined
               }
               onDismiss={() => removeRow(row.key)}
@@ -1184,6 +1274,7 @@ export default function ScanSession() {
         upc={linkTarget?.code ?? null}
         codeType={linkTarget?.codeType}
         hint={linkTarget?.hint}
+        suggestedIds={linkTarget?.suggestedIds}
         open={!!linkTarget}
         items={linkCandidates}
         onClose={() => setLinkTarget(null)}

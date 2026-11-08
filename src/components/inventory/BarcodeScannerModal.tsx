@@ -8,6 +8,8 @@ import { Item } from '@/hooks/useInventory';
 import { toast } from 'sonner';
 import { readStickerText } from '@/lib/stickerOcr';
 import { classifyCode, type CodeType } from '@/lib/barcode';
+import { rememberCode, resolveCode } from '@/lib/scanIntake';
+import { useAuth } from '@/contexts/AuthContext';
 
 const VIEWFINDER_ID = 'zxing-viewfinder';
 
@@ -19,6 +21,12 @@ interface BarcodeScannerModalProps {
   /** `hint`: words read off an X00 sticker, to rank the picker */
   onNoMatch: (code: string, codeType: CodeType, hint?: string | null) => void;
   onClose: () => void;
+  /**
+   * Before giving up on a code that isn't on `items`, check the database: an
+   * order of the same product that shares the code's ASIN (picked from `items`),
+   * or an item already confirmed with it (reported, not passed on).
+   */
+  checkDatabase?: boolean;
 }
 
 export function BarcodeScannerModal({
@@ -27,8 +35,10 @@ export function BarcodeScannerModal({
   onMatchFound,
   onNoMatch,
   onClose,
+  checkDatabase = false,
 }: BarcodeScannerModalProps) {
   const { scan, cancelScan, isScanning, error, torchSupported, torchOn, toggleTorch } = useBarcodeScanner();
+  const { team } = useAuth();
   const [cameraOn, setCameraOn] = useState(true);
   const [typed, setTyped] = useState('');
   // The latest handler, for the scan started by the effect below
@@ -48,6 +58,52 @@ export function BarcodeScannerModal({
           onClose();
           break;
         }
+        const direct =
+          result.codeType === 'asin'
+            ? items.find((item) => item.amazon_asin?.toUpperCase() === result.value)
+            : result.codeType === 'upc'
+              ? items.find((item) => item.upc && normalizeUpc(item.upc) === normalizeUpc(result.value))
+              : undefined;
+        if (direct) {
+          toast.success(`Found: ${direct.title || 'Untitled item'}`);
+          onMatchFound(direct, result.value, result.codeType);
+          onClose();
+          break;
+        }
+
+        // Not on this list by code. The code may be saved on another order of the
+        // same product that was already received (2 of the same thing ordered), or
+        // on confirmed inventory — check before asking or reading the sticker.
+        if (checkDatabase && team?.id) {
+          try {
+            const { waiting, stocked } = await resolveCode(team.id, result.value, result.codeType);
+            const order = waiting ? items.find((i) => i.id === waiting.id) : undefined;
+            if (order) {
+              await rememberCode(order.id, result.value, result.codeType);
+              toast.success(`Found: ${order.title || 'Untitled item'}`);
+              onMatchFound(
+                result.codeType === 'fnsku'
+                  ? { ...order, fnsku: result.value }
+                  : result.codeType === 'upc'
+                    ? { ...order, upc: order.upc ?? result.value }
+                    : order,
+                result.value,
+                result.codeType
+              );
+              onClose();
+              break;
+            }
+            if (stocked) {
+              const loc = stocked.storage_location?.name;
+              toast.info(`Already confirmed: ${stocked.title || 'Untitled item'}${loc ? ` — stored in ${loc}` : ''}`);
+              onClose();
+              break;
+            }
+          } catch (e) {
+            console.warn('[BarcodeScannerModal] code check failed:', e);
+          }
+        }
+
         if (result.codeType === 'fnsku') {
           // A new X00 sticker can't be looked up — read the product name printed on it
           const reading = result.frame ? toast.loading('Reading the sticker…') : undefined;
@@ -59,16 +115,7 @@ export function BarcodeScannerModal({
           onClose();
           break;
         }
-        const match =
-          result.codeType === 'asin'
-            ? items.find((item) => item.amazon_asin?.toUpperCase() === result.value)
-            : items.find((item) => item.upc && normalizeUpc(item.upc) === normalizeUpc(result.value));
-        if (match) {
-          toast.success(`Found: ${match.title || 'Untitled item'}`);
-          onMatchFound(match, result.value, result.codeType);
-        } else {
-          onNoMatch(result.value, result.codeType);
-        }
+        onNoMatch(result.value, result.codeType);
         onClose();
         break;
       }

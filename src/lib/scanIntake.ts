@@ -63,7 +63,15 @@ export interface MatchRow {
 const MATCH_FIELDS =
   'id, title, photos, physical_status, status, storage_location_id, target_price, original_cost, upc, amazon_asin, created_at, storage_location:storage_locations(name)';
 
-/** Every item (any status) with this barcode, oldest first. */
+/**
+ * Every item (any status) with this barcode, oldest first.
+ *
+ * A UPC or X00 sticker is saved on the one order it was first matched to. When
+ * the same product was ordered more than once (two orders, or a quantity of 2
+ * imported as two rows), the other orders share its ASIN but not the code — so
+ * the unconfirmed orders with the same ASIN are included too. Without this, the
+ * second box of a product reads "Already have 1" and its order is never received.
+ */
 export async function findByCode(teamId: string, code: string, codeType: CodeType): Promise<MatchRow[]> {
   let query = supabase.from('items').select(MATCH_FIELDS).eq('team_id', teamId);
   query =
@@ -81,7 +89,52 @@ export async function findByCode(teamId: string, code: string, codeType: CodeTyp
     }
     throw error;
   }
-  return (data ?? []) as unknown as MatchRow[];
+  const direct = (data ?? []) as unknown as MatchRow[];
+  if (codeType === 'asin' || direct.length === 0) return direct;
+
+  // Same product, other orders: unconfirmed rows sharing the matched items' ASIN.
+  // More than a few distinct ASINs behind one code means the code was linked
+  // inconsistently — don't guess then.
+  const asins = [...new Set(direct.map((r) => r.amazon_asin?.trim().toUpperCase()).filter((a): a is string => !!a))];
+  if (asins.length === 0 || asins.length > 3) return direct;
+  const { data: siblings, error: sibErr } = await supabase
+    .from('items')
+    .select(MATCH_FIELDS)
+    .eq('team_id', teamId)
+    .eq('physical_status', 'unconfirmed')
+    .in('amazon_asin', asins)
+    .order('created_at', { ascending: true })
+    .limit(100);
+  if (sibErr || !siblings?.length) return direct;
+  const seen = new Set(direct.map((r) => r.id));
+  const extra = (siblings as unknown as MatchRow[]).filter((r) => !seen.has(r.id));
+  return [...direct, ...extra].sort((a, b) => a.created_at.localeCompare(b.created_at));
+}
+
+/**
+ * Save the scanned code on an order it was matched to through a sibling (same
+ * ASIN), so the next box with that code finds it directly. Fills blanks only.
+ */
+export async function rememberCode(itemId: string, code: string, codeType: CodeType): Promise<void> {
+  // An ASIN match is already exact; UPCs and stickers are what get linked
+  if (codeType !== 'asin') await attachCode([itemId], code, codeType);
+}
+
+/**
+ * Exact-code check for scanners that only hold the Order Sheet in memory:
+ * the oldest order waiting for this code (incl. same-ASIN siblings), and
+ * otherwise an item already confirmed with it.
+ */
+export async function resolveCode(
+  teamId: string,
+  code: string,
+  codeType: CodeType
+): Promise<{ waiting: MatchRow | null; stocked: MatchRow | null }> {
+  const matches = await findByCode(teamId, code, codeType);
+  const waiting = matches.find((m) => m.physical_status === 'unconfirmed') ?? null;
+  const confirmed = matches.filter((m) => m.physical_status !== 'unconfirmed');
+  const stocked = confirmed.find((m) => m.status !== 'sold' && m.status !== 'shipped') ?? confirmed[0] ?? null;
+  return { waiting, stocked };
 }
 
 export interface ReceiveUndo {

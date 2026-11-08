@@ -22,6 +22,11 @@ interface LinkUpcSheetProps {
   codeType?: CodeType;
   /** Product name from a lookup already done — skips looking it up again */
   hint?: string | null;
+  /**
+   * Items whose ASIN Amazon lists for this barcode (from a lookup already done).
+   * They go to the top and the first one opens — still confirmed by the user.
+   */
+  suggestedIds?: string[];
   open: boolean;
   items: Item[];
   onClose: () => void;
@@ -46,6 +51,7 @@ export function LinkUpcSheet({
   upc,
   codeType = 'upc',
   hint,
+  suggestedIds,
   open,
   items,
   onClose,
@@ -89,6 +95,24 @@ export function LinkUpcSheet({
     [items]
   );
 
+  /**
+   * Items whose ASIN Amazon returns for this barcode → their rank in Amazon's
+   * results (0 = top). From the caller's lookup, or this sheet's own.
+   */
+  const onAmazon = useMemo(() => {
+    const out = new Map<string, number>();
+    (suggestedIds ?? []).forEach((id, i) => out.set(id, i));
+    const asins = codeType === 'upc' && lookup?.found ? lookup.candidateAsins ?? [] : [];
+    if (asins.length) {
+      const rank = new Map(asins.map((a, i) => [a.toUpperCase(), i]));
+      for (const item of items) {
+        const r = item.amazon_asin ? rank.get(item.amazon_asin.trim().toUpperCase()) : undefined;
+        if (r !== undefined && !out.has(item.id)) out.set(item.id, r);
+      }
+    }
+    return out;
+  }, [suggestedIds, lookup, items, codeType]);
+
   const ranked = useMemo(() => {
     const q = search.trim().toLowerCase();
     const words = q.split(/\s+/).filter(Boolean);
@@ -100,8 +124,13 @@ export function LinkUpcSheet({
       : searchable;
     // X00 stickers print a cut-off name ("Golf Target Clot") — match its words instead
     const result = codeType === 'fnsku' ? rankBySticker(pool, productName ?? null) : rankByTitle(pool, productName ?? null);
-    return result.map((r) => ({ ...r, item: byId.get(r.item.id) ?? r.item }));
-  }, [searchable, byId, productName, search, codeType]);
+    // Orders Amazon lists for this exact barcode go first, in Amazon's order
+    const top = result
+      .filter((r) => onAmazon.has(r.item.id))
+      .sort((a, b) => (onAmazon.get(a.item.id) ?? 0) - (onAmazon.get(b.item.id) ?? 0));
+    const rest = result.filter((r) => !onAmazon.has(r.item.id));
+    return [...top, ...rest].map((r) => ({ ...r, item: byId.get(r.item.id) ?? r.item }));
+  }, [searchable, byId, productName, search, codeType, onAmazon]);
 
   // The best guess over the whole list (not the search), and how sure it is
   const guess = useMemo(() => {
@@ -110,12 +139,20 @@ export function LinkUpcSheet({
     return g ? { ...g, item: byId.get(g.item.id) ?? g.item } : null;
   }, [searchable, byId, productName, codeType]);
 
+  /** First order Amazon lists for the barcode — beats a name guess */
+  const amazonPick = useMemo(() => {
+    let best: { id: string; rank: number } | null = null;
+    for (const [id, rank] of onAmazon) if (!best || rank < best.rank) best = { id, rank };
+    return best ? byId.get(best.id) ?? null : null;
+  }, [onAmazon, byId]);
+
   // Open the best guess's details straight away — checking it is one look
   useEffect(() => {
-    if (!open || !guess || autoOpened.current) return;
+    const first = amazonPick ?? guess?.item;
+    if (!open || !first || autoOpened.current) return;
     autoOpened.current = true;
-    setOpenId(guess.item.id);
-  }, [open, guess]);
+    setOpenId(first.id);
+  }, [open, guess, amazonPick]);
 
   const linkMutation = useMutation({
     mutationFn: async (item: Item) => {
@@ -239,7 +276,13 @@ export function LinkUpcSheet({
                           {date ? ` · ${date}` : ''}
                           {item.physical_status === 'unconfirmed' ? ' · on order sheet' : ''}
                         </p>
-                        {item.id === guessId && (
+                        {onAmazon.has(item.id) && (
+                          <Badge className="mt-1 mr-1 bg-primary/15 text-primary border-primary/30">
+                            <Sparkles className="w-3 h-3 mr-1" />
+                            Amazon lists this for the barcode
+                          </Badge>
+                        )}
+                        {item.id === guessId && !onAmazon.has(item.id) && (
                           <Badge
                             className={`mt-1 ${
                               guess?.sure
