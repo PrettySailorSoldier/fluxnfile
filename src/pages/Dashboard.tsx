@@ -2,7 +2,7 @@ import { useItems, calculateProfit } from '@/hooks/useInventory';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTasks } from '@/hooks/useTasks';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Package, DollarSign, TrendingUp, Clock, AlertCircle, CheckCircle2, Plus, ListTodo } from 'lucide-react';
+import { Package, DollarSign, TrendingUp, Clock, AlertCircle, CheckCircle2, Plus, ListTodo, CreditCard } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -64,15 +64,26 @@ export default function Dashboard() {
         <p className="text-muted-foreground text-sm">{team?.name}</p>
       </div>
 
-      {/* Quick Add Button */}
-      <Button
-        onClick={() => navigate('/add')}
-        className="w-full"
-        size="lg"
-      >
-        <Plus className="w-5 h-5 mr-2" />
-        Add New Item
-      </Button>
+      {/* Quick Actions */}
+      <div className="grid grid-cols-2 gap-3">
+        <Button
+          onClick={() => navigate('/sales?action=pay')}
+          className="w-full gap-2 shadow-sm"
+          size="lg"
+        >
+          <CreditCard className="w-5 h-5" />
+          Take Payment
+        </Button>
+        <Button
+          onClick={() => navigate('/add')}
+          variant="outline"
+          className="w-full gap-2"
+          size="lg"
+        >
+          <Plus className="w-5 h-5" />
+          Add Item
+        </Button>
+      </div>
 
       {/* Quick Stats - Clickable */}
       <div className="grid grid-cols-2 gap-3">
@@ -110,7 +121,7 @@ export default function Dashboard() {
 
         <Card
           className="bg-card cursor-pointer hover:shadow-md transition-shadow"
-          onClick={() => navigate('/inventory?show=sold')}
+          onClick={() => navigate('/sales')}
         >
           <CardHeader className="pb-2 pt-4 px-4">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">

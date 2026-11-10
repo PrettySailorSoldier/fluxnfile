@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { CalendarDays, MapPin, Plus, Store } from 'lucide-react';
+import { CalendarDays, MapPin, Plus, Store, DollarSign } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -63,9 +63,16 @@ export default function Market() {
         <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
           <Store className="w-6 h-6" /> Markets
         </h1>
-        <Button onClick={() => setCreating(true)} className="gap-2">
-          <Plus className="w-4 h-4" /> New market
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button asChild variant="outline" size="sm" className="gap-1.5">
+            <Link to="/sales">
+              <DollarSign className="w-4 h-4" /> Sales Hub
+            </Link>
+          </Button>
+          <Button onClick={() => setCreating(true)} size="sm" className="gap-1.5">
+            <Plus className="w-4 h-4" /> New market
+          </Button>
+        </div>
       </div>
 
       {isLoading && <p className="text-muted-foreground text-sm">Loading…</p>}

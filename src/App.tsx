@@ -26,6 +26,7 @@ import MarketEvent from "./pages/MarketEvent";
 import PriceTags from "./pages/PriceTags";
 import Locations from "./pages/Locations";
 import BinLabels from "./pages/BinLabels";
+import Sales from "./pages/Sales";
 import NotFound from "./pages/NotFound";
 
 // Lists stay fresh through realtime (useTeamRealtime) and mutations, so a short
@@ -87,6 +88,11 @@ const App = () => (
             <Route path="/facebook-tools" element={
               <ProtectedRoute>
                 <AppLayout><FacebookTools /></AppLayout>
+              </ProtectedRoute>
+            } />
+            <Route path="/sales" element={
+              <ProtectedRoute>
+                <AppLayout><Sales /></AppLayout>
               </ProtectedRoute>
             } />
             <Route path="/rough-notes" element={

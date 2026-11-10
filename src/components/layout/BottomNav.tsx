@@ -8,6 +8,7 @@ import {
   PencilLine,
   FileSpreadsheet,
   ChevronRight,
+  CreditCard,
 } from 'lucide-react';
 import { useNavTabs } from '@/hooks/useNavTabs';
 import { navSplit } from '@/lib/navConfig';
@@ -26,6 +27,7 @@ interface NavEntry {
 }
 
 const QUICK_ADD: (NavEntry & { to: string })[] = [
+  { path: '/sales', to: '/sales?action=pay', label: 'Take payment / Sell', description: 'Ring up a sale with card, Venmo, Cash App or cash', icon: CreditCard },
   { path: '/scan', to: '/scan', label: 'Scan items', description: 'Barcode → autofilled item, one after another', icon: ScanLine },
   { path: '/add', to: '/add', label: 'Add one item', description: 'Fill in the form (barcode lookup optional)', icon: PencilLine },
   { path: '/inventory', to: '/inventory?import=list', label: 'Import a list', description: 'CSV, Excel or rows pasted from a sheet', icon: FileSpreadsheet },

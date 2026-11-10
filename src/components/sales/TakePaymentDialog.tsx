@@ -13,6 +13,10 @@ import {
   ShieldCheck,
   RefreshCw,
   Share2,
+  Store,
+  Search,
+  Plus,
+  X,
 } from 'lucide-react';
 import {
   Dialog,
@@ -28,8 +32,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { usePlatforms, type Item } from '@/hooks/useInventory';
-import { useRecordSale, type PaymentMethod } from '@/hooks/useMarket';
+import { usePlatforms, useItems, type Item } from '@/hooks/useInventory';
+import { useRecordSale, useEvents, type PaymentMethod } from '@/hooks/useMarket';
 import { useWorkflowSettings } from '@/hooks/useUserPreferences';
 import { QRCode } from '@/components/QRCode';
 import {
@@ -51,11 +55,12 @@ import { cn } from '@/lib/utils';
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Item to sell. If null, custom sale */
+  /** Item to sell. If null, pick from inventory or custom sale */
   item?: Item | null;
   /** Multiple items (e.g. bundled sale) */
   items?: Item[];
   defaultChannel?: string;
+  defaultEventId?: string | null;
   defaultBuyerName?: string;
   onSuccess?: (saleId: string) => void;
 }
@@ -67,21 +72,30 @@ export function TakePaymentDialog({
   onOpenChange,
   item,
   items: initialItems,
-  defaultChannel = 'Facebook Marketplace',
+  defaultChannel = 'In person',
+  defaultEventId = null,
   defaultBuyerName = '',
   onSuccess,
 }: Props) {
   const settings = useWorkflowSettings();
   const { data: platforms = [] } = usePlatforms();
+  const { data: allInventory = [] } = useItems();
+  const { data: events = [] } = useEvents();
   const recordSale = useRecordSale();
+
+  // If item(s) passed in, use them; otherwise, user can pick from inventory
+  const [pickedItems, setPickedItems] = useState<Item[]>([]);
+  const [inventorySearch, setInventorySearch] = useState('');
+  const [showItemPicker, setShowItemPicker] = useState(false);
 
   const saleItems = useMemo(() => {
     if (initialItems && initialItems.length > 0) return initialItems;
     if (item) return [item];
-    return [];
-  }, [item, initialItems]);
+    return pickedItems;
+  }, [item, initialItems, pickedItems]);
 
-  const [channel, setChannel] = useState(defaultChannel);
+  const [channel, setChannel] = useState(defaultEventId ? 'market' : defaultChannel);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(defaultEventId);
   const [buyerName, setBuyerName] = useState(defaultBuyerName);
   const [buyerContact, setBuyerContact] = useState('');
   const [shippingAddress, setShippingAddress] = useState('');
@@ -115,12 +129,32 @@ export function TakePaymentDialog({
   // Success receipt view
   const [completedSaleId, setCompletedSaleId] = useState<string | null>(null);
 
+  // Available inventory items to pick from (unsold items)
+  const availableInventory = useMemo(() => {
+    const pickedSet = new Set(saleItems.map((i) => i.id));
+    return allInventory.filter(
+      (it) => ['acquired', 'refurbishing', 'ready_to_list', 'listed'].includes(it.status) && !pickedSet.has(it.id)
+    );
+  }, [allInventory, saleItems]);
+
+  const filteredInventory = useMemo(() => {
+    if (!inventorySearch.trim()) return availableInventory.slice(0, 8);
+    const q = inventorySearch.toLowerCase();
+    return availableInventory
+      .filter((it) => it.title?.toLowerCase().includes(q) || String(it.tracking_number || '').includes(q))
+      .slice(0, 10);
+  }, [availableInventory, inventorySearch]);
+
   useEffect(() => {
     if (!open) {
       setCompletedSaleId(null);
+      setPickedItems([]);
+      setShowItemPicker(false);
+      setInventorySearch('');
       return;
     }
-    setChannel(defaultChannel);
+    setChannel(defaultEventId ? 'market' : defaultChannel);
+    setSelectedEventId(defaultEventId);
     setBuyerName(defaultBuyerName);
     setSaleDate(todayLocal());
     setShippingCost('0');
@@ -132,19 +166,33 @@ export function TakePaymentDialog({
     setCardZip('');
     setCardHolder(defaultBuyerName);
 
-    if (saleItems.length > 0) {
-      const initial: Record<string, string> = {};
-      for (const it of saleItems) {
-        const p = it.target_price ?? it.tag_price ?? it.actual_price ?? 0;
-        initial[it.id] = p > 0 ? String(p) : '';
-      }
-      setPrices(initial);
+    if (item) {
+      setPickedItems([item]);
+    } else if (initialItems && initialItems.length > 0) {
+      setPickedItems(initialItems);
     } else {
+      setPickedItems([]);
       setPrices({});
       setCustomPrice('');
       setCustomTitle('');
     }
-  }, [open, saleItems, defaultChannel, defaultBuyerName]);
+  }, [open, item, initialItems, defaultChannel, defaultEventId, defaultBuyerName]);
+
+  // Sync prices when saleItems change
+  useEffect(() => {
+    if (saleItems.length > 0) {
+      setPrices((prev) => {
+        const next = { ...prev };
+        for (const it of saleItems) {
+          if (next[it.id] === undefined) {
+            const p = it.target_price ?? it.tag_price ?? it.actual_price ?? 0;
+            next[it.id] = p > 0 ? String(p) : '';
+          }
+        }
+        return next;
+      });
+    }
+  }, [saleItems]);
 
   // Totals
   const itemsSubtotal = useMemo(() => {
@@ -211,9 +259,10 @@ export function TakePaymentDialog({
               },
             ];
 
+      const isMarket = channel === 'market' || channel === 'Flea Market';
       const saleId = await recordSale.mutateAsync({
-        eventId: null,
-        channel,
+        eventId: isMarket && selectedEventId ? selectedEventId : null,
+        channel: isMarket ? 'market' : channel,
         paymentMethod: paymentMethodUsed,
         lines,
         discount: 0,
@@ -221,7 +270,7 @@ export function TakePaymentDialog({
         fee: cents(fee),
         shipping: cents(shipping),
         total,
-        bundleLabel: saleItems.length > 1 ? `Online bundle (${saleItems.length})` : null,
+        bundleLabel: saleItems.length > 1 ? `Bundle (${saleItems.length})` : null,
         notes: fullNotes || undefined,
         buyerName: buyerName.trim() || undefined,
         saleDate,
@@ -334,53 +383,118 @@ export function TakePaymentDialog({
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <CreditCard className="w-5 h-5 text-primary" />
-                Take Online Payment
+                Take Payment & Ring Up Sale
               </DialogTitle>
               <DialogDescription>
-                Process card payment or generate live payment QR & links. Keeps track of sales automatically.
+                Accept card, Venmo/Cash App QR codes, or record cash. Works across flea markets, online, and meetups.
               </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-4">
               {/* Items & Price */}
               <div className="space-y-2">
-                <Label className="text-xs uppercase tracking-wide text-muted-foreground">Item(s) & Price</Label>
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs uppercase tracking-wide text-muted-foreground">Item(s) & Price</Label>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-xs text-primary gap-1"
+                    onClick={() => setShowItemPicker(!showItemPicker)}
+                  >
+                    <Plus className="w-3 h-3" />
+                    {showItemPicker ? 'Hide Inventory' : 'Pick from Inventory'}
+                  </Button>
+                </div>
+
+                {/* Item Search / Picker dropdown */}
+                {showItemPicker && (
+                  <div className="p-2.5 rounded-lg border bg-muted/30 space-y-2">
+                    <div className="relative">
+                      <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        className="h-8 pl-8 text-xs"
+                        placeholder="Search unsold inventory by title or #..."
+                        value={inventorySearch}
+                        onChange={(e) => setInventorySearch(e.target.value)}
+                      />
+                    </div>
+                    <div className="max-h-36 overflow-y-auto space-y-1">
+                      {filteredInventory.length === 0 ? (
+                        <p className="text-xs text-muted-foreground text-center py-2">No matching unsold items found</p>
+                      ) : (
+                        filteredInventory.map((inv) => (
+                          <div
+                            key={inv.id}
+                            onClick={() => {
+                              setPickedItems((prev) => [...prev, inv]);
+                              setPrices((prev) => ({
+                                ...prev,
+                                [inv.id]: String(inv.target_price ?? inv.tag_price ?? ''),
+                              }));
+                              setShowItemPicker(false);
+                              setInventorySearch('');
+                            }}
+                            className="flex items-center justify-between p-1.5 rounded hover:bg-muted cursor-pointer text-xs"
+                          >
+                            <span className="truncate max-w-[200px] font-medium">{inv.title || 'Untitled'}</span>
+                            <span className="text-muted-foreground flex-shrink-0">
+                              {inv.target_price ? money(inv.target_price) : 'No price'}
+                            </span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {saleItems.length > 0 ? (
-                  saleItems.map((it) => (
-                    <div key={it.id} className="flex items-center gap-2 p-2 rounded-lg bg-muted/40 border">
-                      <div className="w-10 h-10 rounded bg-muted flex items-center justify-center overflow-hidden flex-shrink-0">
-                        {it.photos?.[0] ? (
-                          <img src={it.photos[0]} alt="" className="w-full h-full object-cover" />
-                        ) : (
-                          <Package className="w-5 h-5 text-muted-foreground" />
+                  <div className="space-y-1.5">
+                    {saleItems.map((it) => (
+                      <div key={it.id} className="flex items-center gap-2 p-2 rounded-lg bg-muted/40 border">
+                        <div className="w-10 h-10 rounded bg-muted flex items-center justify-center overflow-hidden flex-shrink-0">
+                          {it.photos?.[0] ? (
+                            <img src={it.photos[0]} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <Package className="w-5 h-5 text-muted-foreground" />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{it.title || 'Untitled item'}</p>
+                          <p className="text-xs text-muted-foreground">
+                            Cost {money(itemBasis(it))} · Asking {it.target_price ? money(it.target_price) : 'none'}
+                          </p>
+                        </div>
+                        <div className="w-24">
+                          <div className="relative">
+                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              className="h-8 pl-5 text-right text-sm"
+                              value={prices[it.id] ?? ''}
+                              onChange={(e) => setPrices((p) => ({ ...p, [it.id]: e.target.value }))}
+                              placeholder="0.00"
+                            />
+                          </div>
+                        </div>
+                        {pickedItems.some((pi) => pi.id === it.id) && (
+                          <button
+                            type="button"
+                            onClick={() => setPickedItems((prev) => prev.filter((p) => p.id !== it.id))}
+                            className="p-1 text-muted-foreground hover:text-destructive"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
                         )}
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{it.title || 'Untitled item'}</p>
-                        <p className="text-xs text-muted-foreground">
-                          Cost {money(itemBasis(it))} · Asking {it.target_price ? money(it.target_price) : 'none'}
-                        </p>
-                      </div>
-                      <div className="w-24">
-                        <div className="relative">
-                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            className="h-8 pl-5 text-right text-sm"
-                            value={prices[it.id] ?? ''}
-                            onChange={(e) => setPrices((p) => ({ ...p, [it.id]: e.target.value }))}
-                            placeholder="0.00"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ))
+                    ))}
+                  </div>
                 ) : (
                   <div className="grid grid-cols-3 gap-2">
                     <div className="col-span-2">
                       <Input
-                        placeholder="What sold? (e.g. Vintage Jacket)"
+                        placeholder="What sold? (e.g. Vintage Levi's, Flea market grab)"
                         value={customTitle}
                         onChange={(e) => setCustomTitle(e.target.value)}
                         className="h-9 text-sm"
@@ -412,18 +526,19 @@ export function TakePaymentDialog({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="market">Flea Market</SelectItem>
+                      <SelectItem value="In person">In person / Meetup</SelectItem>
                       <SelectItem value="Facebook Marketplace">Facebook Marketplace</SelectItem>
-                      <SelectItem value="Online">Online Store / Link</SelectItem>
+                      <SelectItem value="Online">Online Store / Shipped</SelectItem>
                       <SelectItem value="eBay">eBay</SelectItem>
                       <SelectItem value="OfferUp">OfferUp</SelectItem>
                       <SelectItem value="Craigslist">Craigslist</SelectItem>
-                      <SelectItem value="In person">In person</SelectItem>
-                      <SelectItem value="market">Flea market</SelectItem>
+                      <SelectItem value="Other">Other</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Buyer Name</Label>
+                  <Label className="text-xs">Buyer Name (Optional)</Label>
                   <Input
                     className="h-9 text-sm"
                     placeholder="e.g. Sarah Jenkins"
@@ -431,6 +546,28 @@ export function TakePaymentDialog({
                     onChange={(e) => setBuyerName(e.target.value)}
                   />
                 </div>
+
+                {channel === 'market' && events.length > 0 && (
+                  <div className="space-y-1 col-span-2">
+                    <Label className="text-xs">Market Event (Optional)</Label>
+                    <Select
+                      value={selectedEventId || 'none'}
+                      onValueChange={(val) => setSelectedEventId(val === 'none' ? null : val)}
+                    >
+                      <SelectTrigger className="h-9 text-sm">
+                        <SelectValue placeholder="Select market event" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">General / No Specific Event</SelectItem>
+                        {events.map((ev) => (
+                          <SelectItem key={ev.id} value={ev.id}>
+                            {ev.name} {ev.event_date ? `(${ev.event_date})` : ''} {ev.status === 'open' ? '· Open' : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
               </div>
 
               {/* Shipping & Fees Breakdown */}

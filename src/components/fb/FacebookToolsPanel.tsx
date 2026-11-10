@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -16,13 +17,13 @@ import {
   ExternalLink,
   HelpCircle,
   CreditCard,
+  DollarSign,
+  ArrowRight,
 } from 'lucide-react';
 import { useItems } from '@/hooks/useInventory';
 import { MarketplaceExport } from './MarketplaceExport';
 import { CustomerListExport } from './CustomerListExport';
 import { AdCreationHelper } from './AdCreationHelper';
-import { OnlineSalesTracker } from './OnlineSalesTracker';
-import { TakePaymentDialog } from '@/components/sales/TakePaymentDialog';
 
 /**
  * Facebook Tools Panel
@@ -111,8 +112,7 @@ const FEATURE_CARDS = [
 
 export function FacebookToolsPanel() {
   const { data: items = [] } = useItems();
-  const [activeTab, setActiveTab] = useState('sales');
-  const [takePaymentOpen, setTakePaymentOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState('overview');
 
   // Stats
   const readyToListCount = items.filter(i => i.status === 'ready_to_list').length;
@@ -129,37 +129,45 @@ export function FacebookToolsPanel() {
               alt="Facebook"
               className="w-7 h-7"
             />
-            Facebook & Online Sales
+            Facebook Marketplace Tools
           </h2>
           <p className="text-sm text-muted-foreground">
-            Take payments, track online orders, and manage Marketplace listings
+            Bulk export inventory, build ad custom audiences, and create listing copy
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Button onClick={() => setTakePaymentOpen(true)} className="gap-1.5 shadow-sm">
-            <CreditCard className="w-4 h-4" /> Take Payment
-          </Button>
           {items.length > 0 && <MarketplaceExport items={items} />}
           <CustomerListExport />
           <AdCreationHelper />
         </div>
       </div>
 
-      <TakePaymentDialog open={takePaymentOpen} onOpenChange={setTakePaymentOpen} />
+      {/* Sales Hub Link Banner */}
+      <div className="flex items-center justify-between p-3.5 bg-primary/10 border border-primary/20 rounded-xl">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg bg-primary/20 flex items-center justify-center text-primary flex-shrink-0">
+            <DollarSign className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-foreground">Looking to take payments or track sales?</p>
+            <p className="text-xs text-muted-foreground">
+              Sales happen everywhere — at flea markets, meetups, Facebook, and online. Manage all team sales, payments, and shipping in the Sales Hub.
+            </p>
+          </div>
+        </div>
+        <Button asChild size="sm" variant="default" className="gap-1.5 flex-shrink-0">
+          <Link to="/sales">
+            Open Sales Hub <ArrowRight className="w-4 h-4" />
+          </Link>
+        </Button>
+      </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid grid-cols-4 max-w-xl">
-          <TabsTrigger value="sales" className="gap-1.5">
-            <CreditCard className="w-4 h-4" /> Online Sales
-          </TabsTrigger>
+        <TabsList className="grid grid-cols-3 max-w-md">
           <TabsTrigger value="overview">Tools & Export</TabsTrigger>
           <TabsTrigger value="quick-links">Quick Links</TabsTrigger>
           <TabsTrigger value="help">Help & Guides</TabsTrigger>
         </TabsList>
-
-        <TabsContent value="sales" className="pt-2">
-          <OnlineSalesTracker />
-        </TabsContent>
 
         <TabsContent value="overview" className="space-y-6">
           {/* Stats */}

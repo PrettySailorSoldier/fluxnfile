@@ -10,6 +10,7 @@ import {
   ScanLine,
   Settings,
   Store,
+  BadgeDollarSign,
 } from 'lucide-react';
 
 export interface NavDestination {
@@ -23,6 +24,7 @@ export interface NavDestination {
 /** Every screen that can sit in the bottom bar or the More sheet. Order here = order in More. */
 export const NAV_DESTINATIONS: NavDestination[] = [
   { id: 'home', path: '/', label: 'Home', description: 'Dashboard', icon: LayoutDashboard },
+  { id: 'sales', path: '/sales', label: 'Sales', description: 'Take payments, ring up sales, track flea market & online orders', icon: BadgeDollarSign },
   { id: 'inventory', path: '/inventory', label: 'Items', description: 'Your inventory', icon: Package },
   { id: 'orders', path: '/order-sheet', label: 'Orders', description: 'Unconfirmed orders to receive', icon: ClipboardList },
   { id: 'tasks', path: '/tasks', label: 'Tasks', description: 'Your open tasks', icon: ListChecks },
@@ -30,7 +32,7 @@ export const NAV_DESTINATIONS: NavDestination[] = [
   { id: 'sales-check', path: '/sales-check', label: 'Sales Check', description: 'Price checks, flags for you, what’s selling', icon: BarChart2 },
   { id: 'analytics', path: '/analytics', label: 'Analytics', description: 'Profit, sell-through and trends', icon: TrendingUp },
   { id: 'rough-notes', path: '/rough-notes', label: 'Rough Notes', description: 'Quick notes on boxes and lots to process later', icon: StickyNote },
-  { id: 'facebook', path: '/facebook-tools', label: 'Facebook Tools', description: 'Marketplace listings, offers, meetups', icon: Facebook },
+  { id: 'facebook', path: '/facebook-tools', label: 'Facebook Tools', description: 'Marketplace listings, ads, audience exports', icon: Facebook },
   { id: 'scan', path: '/scan', label: 'Scan Session', description: 'Scan items in a row — receive, add or find', icon: ScanLine },
   { id: 'settings', path: '/settings', label: 'Settings', description: 'Team, categories, locations, workflow', icon: Settings },
 ];
