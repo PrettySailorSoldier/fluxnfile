@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Bell, Check, Volume2, VolumeX, Play, Upload, Trash2, Plus } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
+import { playSynthesizedTone, TONE_CONFIGS } from '@/utils/audioGenerator';
 
 // Default notification tone options
 const DEFAULT_TONES = [
@@ -142,8 +143,6 @@ export function NotificationBell() {
         });
       } else {
         // For default tones, use synthesized audio (more reliable)
-        const { playSynthesizedTone, TONE_CONFIGS } = await import('@/utils/audioGenerator');
-        
         if (TONE_CONFIGS[toneId]) {
           setIsPlaying(toneId);
           playSynthesizedTone(toneId, vol, () => {
