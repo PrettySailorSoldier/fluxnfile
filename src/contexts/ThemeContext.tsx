@@ -1,14 +1,13 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { useUserPreferences, useUpdateUserPreferences } from '@/hooks/useUserPreferences';
+import {
+  useUserPreferences,
+  useUpdateUserPreferences,
+  type BackgroundSettings,
+  type ThemeMode,
+} from '@/hooks/useUserPreferences';
 import { useAuth } from '@/contexts/AuthContext';
 
-type ThemeMode = 'light' | 'dark' | 'system';
-
-export interface BackgroundSettings {
-  zoom: number;
-  positionX: number;
-  positionY: number;
-}
+export type { BackgroundSettings, ThemeMode };
 
 interface ThemeContextType {
   mode: ThemeMode;
@@ -117,9 +116,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const { data: preferences, isLoading } = useUserPreferences();
   const updatePreferences = useUpdateUserPreferences();
 
+  // Mode state - initialized with user scoping
   const [mode, setModeState] = useState<ThemeMode>(() => {
-    if (typeof window !== 'undefined') {
-      return (localStorage.getItem('theme-mode') as ThemeMode) || 'system';
+    if (typeof window !== 'undefined' && user?.id) {
+      const userSaved = localStorage.getItem(`theme-mode:${user.id}`);
+      if (userSaved) return userSaved as ThemeMode;
     }
     return 'system';
   });
@@ -129,9 +130,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     ...defaultColors,
     backgroundImageUrl: null,
   });
+
   const [backgroundSettings, setBackgroundSettings] = useState<BackgroundSettings>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('background-settings');
+    if (typeof window !== 'undefined' && user?.id) {
+      const saved = localStorage.getItem(`background-settings:${user.id}`);
       if (saved) {
         try {
           return JSON.parse(saved);
@@ -142,6 +144,75 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
     return defaultBackgroundSettings;
   });
+
+  // When user logs out or switches accounts, clean up styles immediately to prevent any bleed
+  useEffect(() => {
+    if (!user) {
+      setColors({ ...defaultColors, backgroundImageUrl: null });
+      setBackgroundSettings(defaultBackgroundSettings);
+      setModeState('system');
+      if (typeof document !== 'undefined') {
+        document.documentElement.style.removeProperty('--primary');
+        document.documentElement.style.removeProperty('--primary-foreground');
+        document.documentElement.style.removeProperty('--accent');
+        document.documentElement.style.removeProperty('--accent-foreground');
+        document.documentElement.style.removeProperty('--ring');
+        document.documentElement.style.removeProperty('--nav-active');
+        document.body.style.backgroundImage = '';
+        document.documentElement.classList.remove('dark');
+      }
+      return;
+    }
+
+    // New user logged in: restore their user-scoped local cache immediately while network query resolves
+    try {
+      const userMode = localStorage.getItem(`theme-mode:${user.id}`) as ThemeMode | null;
+      if (userMode) setModeState(userMode);
+
+      const userBg = localStorage.getItem(`background-settings:${user.id}`);
+      if (userBg) setBackgroundSettings(JSON.parse(userBg));
+    } catch {
+      /* ignore */
+    }
+  }, [user?.id]);
+
+  // Load user preferences from database (source of truth attached to user_id)
+  useEffect(() => {
+    if (!user?.id) return;
+
+    if (preferences) {
+      setColors({
+        primaryColor: preferences.primary_color || defaultColors.primaryColor,
+        accentColor: preferences.accent_color || defaultColors.accentColor,
+        textColor: preferences.text_color || defaultColors.textColor,
+        backgroundImageUrl: preferences.background_image_url || null,
+        cardColor: defaultColors.cardColor,
+        mutedColor: defaultColors.mutedColor,
+      });
+
+      if (preferences.background_settings) {
+        setBackgroundSettings(preferences.background_settings);
+        try {
+          localStorage.setItem(`background-settings:${user.id}`, JSON.stringify(preferences.background_settings));
+        } catch {}
+      }
+
+      if (preferences.theme_mode) {
+        setModeState(preferences.theme_mode);
+        try {
+          localStorage.setItem(`theme-mode:${user.id}`, preferences.theme_mode);
+        } catch {}
+      }
+    } else if (!isLoading) {
+      // User has no custom preferences yet: reset cleanly to defaults so previous user's styles never linger
+      setColors({
+        ...defaultColors,
+        backgroundImageUrl: null,
+      });
+      setBackgroundSettings(defaultBackgroundSettings);
+      setModeState('system');
+    }
+  }, [preferences, isLoading, user?.id]);
 
   // Handle system preference changes
   useEffect(() => {
@@ -158,10 +229,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, [mode]);
 
-  // Apply mode changes
+  // Apply mode changes to isDark state
   useEffect(() => {
-    localStorage.setItem('theme-mode', mode);
-
     if (mode === 'system') {
       const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
       setIsDark(systemDark);
@@ -179,41 +248,22 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
   }, [isDark]);
 
-  // Load preferences from database
-  useEffect(() => {
-    if (preferences) {
-      setColors({
-        primaryColor: preferences.primary_color || defaultColors.primaryColor,
-        accentColor: preferences.accent_color || defaultColors.accentColor,
-        textColor: preferences.text_color || defaultColors.textColor,
-        backgroundImageUrl: preferences.background_image_url,
-        cardColor: defaultColors.cardColor,
-        mutedColor: defaultColors.mutedColor,
-      });
-    }
-  }, [preferences]);
-
   // Apply custom colors to CSS variables - these persist regardless of dark mode
   useEffect(() => {
     const root = document.documentElement;
 
-    // Apply primary color - works in both light and dark mode
     if (colors.primaryColor) {
       root.style.setProperty('--primary', hexToHsl(colors.primaryColor));
       root.style.setProperty('--ring', hexToHsl(colors.primaryColor));
       root.style.setProperty('--nav-active', hexToHsl(colors.primaryColor));
-      // Auto-set accessible foreground color for primary buttons
       root.style.setProperty('--primary-foreground', getAccessibleForeground(colors.primaryColor));
     }
 
-    // Apply accent color - works in both light and dark mode
     if (colors.accentColor) {
       root.style.setProperty('--accent', hexToHsl(colors.accentColor));
-      // Auto-set accessible foreground color for accent elements
       root.style.setProperty('--accent-foreground', getAccessibleForeground(colors.accentColor));
     }
 
-    // Apply background image with custom positioning - works in both light and dark mode
     if (colors.backgroundImageUrl) {
       document.body.style.backgroundImage = `url(${colors.backgroundImageUrl})`;
       document.body.style.backgroundSize = `${backgroundSettings.zoom}%`;
@@ -229,7 +279,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
 
     return () => {
-      // Cleanup
       root.style.removeProperty('--primary');
       root.style.removeProperty('--primary-foreground');
       root.style.removeProperty('--accent');
@@ -242,6 +291,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const setMode = (newMode: ThemeMode) => {
     setModeState(newMode);
+    if (user?.id) {
+      try {
+        localStorage.setItem(`theme-mode:${user.id}`, newMode);
+      } catch {}
+      void updatePreferences.mutateAsync({ theme_mode: newMode });
+    }
   };
 
   const updateColors = async (newColors: Partial<CustomColors>) => {
@@ -260,20 +315,29 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const updateBackgroundSettings = (settings: BackgroundSettings) => {
     setBackgroundSettings(settings);
-    localStorage.setItem('background-settings', JSON.stringify(settings));
+    if (user?.id) {
+      try {
+        localStorage.setItem(`background-settings:${user.id}`, JSON.stringify(settings));
+      } catch {}
+      void updatePreferences.mutateAsync({ background_settings: settings });
+    }
   };
 
   const resetTheme = async () => {
     setColors({ ...defaultColors, backgroundImageUrl: null });
     setBackgroundSettings(defaultBackgroundSettings);
-    localStorage.removeItem('background-settings');
 
     if (user?.id) {
+      try {
+        localStorage.removeItem(`background-settings:${user.id}`);
+        localStorage.removeItem(`theme-mode:${user.id}`);
+      } catch {}
       await updatePreferences.mutateAsync({
         primary_color: null,
         accent_color: null,
         text_color: null,
         background_image_url: null,
+        background_settings: null,
       });
     }
   };

@@ -22,6 +22,7 @@ import {
   Bell,
   RotateCcw,
   Store,
+  CreditCard,
 } from 'lucide-react';
 
 /** Small numeric field; keeps what you type until it's a valid number. */
@@ -481,6 +482,45 @@ export function WorkflowSettingsCard() {
 
         <PrefRow label="Mileage rate $/mile" description="Update each year — confirm the current IRS business rate">
           <NumField value={local.marketMileageRate} onChange={(v) => update('marketMileageRate', v)} prefix="$" step={0.01} />
+        </PrefRow>
+
+        {/* ── ONLINE & DIGITAL PAYMENTS ── */}
+        <SectionHeader icon={CreditCard} title="Online & Digital Payments" />
+
+        <PrefRow label="Venmo @handle" description="For generating instant QR codes and payment deep links">
+          <Input
+            value={local.venmoHandle || ''}
+            onChange={(e) => update('venmoHandle', e.target.value.replace(/^@/, ''))}
+            placeholder="username"
+            className="h-8 text-sm w-36"
+          />
+        </PrefRow>
+
+        <PrefRow label="Cash App $tag" description="For Cash App QR codes and payment requests">
+          <Input
+            value={local.cashAppTag || ''}
+            onChange={(e) => update('cashAppTag', e.target.value.replace(/^\$/, ''))}
+            placeholder="cashtag"
+            className="h-8 text-sm w-36"
+          />
+        </PrefRow>
+
+        <PrefRow label="PayPal.me username" description="For PayPal payment links and QR codes">
+          <Input
+            value={local.paypalUsername || ''}
+            onChange={(e) => update('paypalUsername', e.target.value.replace(/^@/, ''))}
+            placeholder="username"
+            className="h-8 text-sm w-36"
+          />
+        </PrefRow>
+
+        <PrefRow label="Zelle recipient" description="Email or phone number for Zelle payments">
+          <Input
+            value={local.zelleContact || ''}
+            onChange={(e) => update('zelleContact', e.target.value)}
+            placeholder="team@example.com"
+            className="h-8 text-sm w-36"
+          />
         </PrefRow>
 
         {/* ── SAVE / RESET ── */}

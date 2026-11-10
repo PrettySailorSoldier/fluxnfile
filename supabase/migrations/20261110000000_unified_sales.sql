@@ -39,6 +39,11 @@ ALTER TABLE public.sale_lines
 ALTER TABLE public.items
   ADD COLUMN IF NOT EXISTS listed_at TIMESTAMP WITH TIME ZONE;
 
+-- Per-user personalization: persists to the user's account regardless of device
+ALTER TABLE public.user_preferences
+  ADD COLUMN IF NOT EXISTS background_settings JSONB,
+  ADD COLUMN IF NOT EXISTS theme_mode TEXT DEFAULT 'system';
+
 -- Sales happen in many places; the channel is the platform's name (or 'market').
 ALTER TABLE public.items DROP CONSTRAINT IF EXISTS items_channel_sold_check;
 
@@ -247,7 +252,7 @@ DO $$
 DECLARE
   t TEXT;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['sales', 'events', 'items', 'tasks', 'offers', 'meetups', 'storage_locations', 'categories'] LOOP
+  FOREACH t IN ARRAY ARRAY['sales', 'events', 'items', 'tasks', 'offers', 'meetups', 'storage_locations', 'categories', 'profiles'] LOOP
     IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = t)
        AND NOT EXISTS (
          SELECT 1 FROM pg_publication_tables

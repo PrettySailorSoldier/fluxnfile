@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useTheme, BackgroundSettings } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -81,6 +81,16 @@ export function ThemeCustomizer() {
   const [originalAccent, setOriginalAccent] = useState(accentColor);
   const [originalText, setOriginalText] = useState(textColor);
   const [originalBgImage, setOriginalBgImage] = useState<string | null>(backgroundImageUrl);
+
+  // Keep local editor values in sync with active theme whenever it loads or changes
+  useEffect(() => {
+    if (!open) {
+      setLocalPrimary(primaryColor);
+      setLocalAccent(accentColor);
+      setLocalText(textColor);
+      setLocalBgImage(backgroundImageUrl);
+    }
+  }, [primaryColor, accentColor, textColor, backgroundImageUrl, open]);
 
   // Sync local state when dialog opens
   const handleOpenChange = (isOpen: boolean) => {

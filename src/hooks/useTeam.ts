@@ -154,6 +154,7 @@ export function useTeamRealtime() {
       .on('postgres_changes', on('meetups'), refresh('meetups', 'items'))
       .on('postgres_changes', on('storage_locations'), refresh('storage_locations'))
       .on('postgres_changes', on('categories'), refresh('categories'))
+      .on('postgres_changes', on('profiles'), refresh('team-members'))
       .subscribe();
 
     // A phone that slept through the afternoon missed those events: catch up when it wakes

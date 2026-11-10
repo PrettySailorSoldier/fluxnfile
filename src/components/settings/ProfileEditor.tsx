@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,11 @@ export function ProfileEditor() {
   const [isUpdating, setIsUpdating] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Keep local full name in sync whenever auth profile loads or switches
+  useEffect(() => {
+    setFullName(profile?.full_name || '');
+  }, [profile?.full_name, user?.id]);
 
   const getInitials = (name: string | null) => {
     if (!name) return 'U';
@@ -68,9 +73,9 @@ export function ProfileEditor() {
     setIsUploadingAvatar(true);
 
     try {
-      // Create unique filename
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${user.id}/avatar.${fileExt}`;
+      // Create unique user-isolated filename
+      const fileExt = file.name.split('.').pop() || 'jpg';
+      const fileName = `${user.id}/avatar-${Date.now()}.${fileExt}`;
 
       // Upload to storage
       const { error: uploadError } = await supabase.storage

@@ -1,5 +1,6 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react';
 import { User, Session } from '@supabase/supabase-js';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 
 interface Profile {
@@ -33,6 +34,8 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
+  const activeUserIdRef = useRef<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -88,6 +91,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Set up auth state listener FIRST
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
+        const nextUserId = session?.user?.id ?? null;
+        if (event === 'SIGNED_OUT' || (activeUserIdRef.current && nextUserId !== activeUserIdRef.current)) {
+          // User switched or logged out — wipe query cache immediately to prevent data bleed
+          queryClient.clear();
+        }
+        activeUserIdRef.current = nextUserId;
+
         setSession(session);
         setUser(session?.user ?? null);
 
@@ -185,8 +195,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = async () => {
     await supabase.auth.signOut();
+    queryClient.clear();
     setProfile(null);
     setTeam(null);
+    setUser(null);
+    setSession(null);
+    activeUserIdRef.current = null;
+
+    // Reset document styles immediately so nothing bleeds into the login screen or next user
+    if (typeof document !== 'undefined') {
+      document.documentElement.style.removeProperty('--primary');
+      document.documentElement.style.removeProperty('--primary-foreground');
+      document.documentElement.style.removeProperty('--accent');
+      document.documentElement.style.removeProperty('--accent-foreground');
+      document.documentElement.style.removeProperty('--ring');
+      document.documentElement.style.removeProperty('--nav-active');
+      document.body.style.backgroundImage = '';
+    }
   };
 
   const createTeam = async (teamName: string) => {

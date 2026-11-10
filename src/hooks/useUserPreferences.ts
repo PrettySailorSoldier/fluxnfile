@@ -73,6 +73,20 @@ export interface WorkflowSettings {
   // ── NAVIGATION ───────────────────────────────────────
   /** Ids of the bottom-bar tabs, in order (see lib/navConfig). Unset = defaults. */
   navTabs?: string[];
+
+  // ── ONLINE & DIGITAL PAYMENTS ────────────────────────
+  /** Team Venmo handle (without @) */
+  venmoHandle?: string;
+  /** Team Cash App cashtag (without $) */
+  cashAppTag?: string;
+  /** Team PayPal username or paypal.me name */
+  paypalUsername?: string;
+  /** Team Zelle email or phone */
+  zelleContact?: string;
+  /** Optional Stripe / custom payment link */
+  stripePaymentLink?: string;
+  /** Default shipping fee for online orders */
+  defaultShippingCost?: number;
 }
 
 export const DEFAULT_WORKFLOW_SETTINGS: WorkflowSettings = {
@@ -109,6 +123,14 @@ export const DEFAULT_WORKFLOW_SETTINGS: WorkflowSettings = {
   marketMileageRate: 0.7,
 };
 
+export interface BackgroundSettings {
+  zoom: number;
+  positionX: number;
+  positionY: number;
+}
+
+export type ThemeMode = 'light' | 'dark' | 'system';
+
 export interface UserPreferences {
   id: string;
   user_id: string;
@@ -116,6 +138,8 @@ export interface UserPreferences {
   primary_color: string | null;
   accent_color: string | null;
   text_color: string | null;
+  background_settings?: BackgroundSettings | null;
+  theme_mode?: ThemeMode | null;
   notification_tone: string | null;
   notification_volume: number | null;
   custom_notification_tones: CustomNotificationTone[] | null;
@@ -140,11 +164,15 @@ export function useUserPreferences() {
 
       if (error) throw error;
       if (!data) return null;
-      // Cast Json columns to their typed interfaces
+      const row = data as any;
+      const wf = row.workflow_settings as WorkflowSettings | null;
+      // Cast Json columns to their typed interfaces, checking both column and fallback workflow_settings
       return {
-        ...data,
-        custom_notification_tones: data.custom_notification_tones as unknown as CustomNotificationTone[] | null,
-        workflow_settings: data.workflow_settings as unknown as WorkflowSettings | null,
+        ...row,
+        background_settings: (row.background_settings ?? (wf as any)?.background_settings ?? null) as BackgroundSettings | null,
+        theme_mode: (row.theme_mode ?? (wf as any)?.theme_mode ?? null) as ThemeMode | null,
+        custom_notification_tones: row.custom_notification_tones as unknown as CustomNotificationTone[] | null,
+        workflow_settings: wf,
       } as UserPreferences;
     },
     enabled: !!user?.id,
@@ -161,26 +189,34 @@ export function useUpdateUserPreferences() {
 
       const { data: existing } = await supabase
         .from('user_preferences')
-        .select('id')
+        .select('id, workflow_settings')
         .eq('user_id', user.id)
         .maybeSingle();
 
       // Strip out the strongly typed fields so we can replace them with Json versions
-      const { custom_notification_tones, workflow_settings, ...restPreferences } = preferences;
+      const { custom_notification_tones, workflow_settings, background_settings, theme_mode, ...restPreferences } = preferences;
       
+      const existingWf = ((existing as any)?.workflow_settings as Record<string, unknown>) || {};
+      const updatedWf = {
+        ...existingWf,
+        ...(workflow_settings || {}),
+        ...(background_settings !== undefined ? { background_settings } : {}),
+        ...(theme_mode !== undefined ? { theme_mode } : {}),
+      };
+
       // Cast typed interfaces back to Json for Supabase
-      const dbPreferences = {
+      const dbPreferences: Record<string, unknown> = {
         ...restPreferences,
+        ...(background_settings !== undefined ? { background_settings } : {}),
+        ...(theme_mode !== undefined ? { theme_mode } : {}),
         ...(custom_notification_tones !== undefined
           ? { custom_notification_tones: custom_notification_tones as unknown as Json }
           : {}),
-        ...(workflow_settings !== undefined
-          ? { workflow_settings: workflow_settings as unknown as Json }
-          : {}),
+        workflow_settings: updatedWf,
       };
 
       if (existing) {
-        const { data, error } = await supabase
+        const { data, error } = await (supabase as any)
           .from('user_preferences')
           .update(dbPreferences)
           .eq('user_id', user.id)
@@ -190,7 +226,7 @@ export function useUpdateUserPreferences() {
         if (error) throw error;
         return data;
       } else {
-        const { data, error } = await supabase
+        const { data, error } = await (supabase as any)
           .from('user_preferences')
           .insert({ user_id: user.id, ...dbPreferences })
           .select()
@@ -201,7 +237,7 @@ export function useUpdateUserPreferences() {
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['user-preferences'] });
+      queryClient.invalidateQueries({ queryKey: ['user-preferences', user?.id] });
     },
   });
 }

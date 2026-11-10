@@ -32,6 +32,8 @@ import {
   type CartLine,
 } from '@/lib/market';
 import { sanitizeError } from '@/lib/errorHandler';
+import { QRCode } from '@/components/QRCode';
+import { buildVenmoUrl } from '@/lib/payments';
 
 const SELLABLE = new Set(['acquired', 'refurbishing', 'ready_to_list', 'listed']);
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -553,6 +555,24 @@ export function MarketSell({ event, items, sales, phases, rules }: Props) {
                   {tenderedNum > 0 && tenderedNum < totals.total && (
                     <p className="text-xs text-destructive">Short by {money(cents(totals.total - tenderedNum))}</p>
                   )}
+                </div>
+              )}
+
+              {payment === 'venmo' && (
+                <div className="flex gap-3 items-center p-2.5 rounded-lg bg-blue-50/50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900">
+                  <QRCode
+                    text={settings.venmoHandle ? buildVenmoUrl(settings.venmoHandle, totals.total, event.name) : 'https://venmo.com'}
+                    size={100}
+                  />
+                  <div className="space-y-1 text-xs">
+                    <p className="font-semibold text-blue-600 dark:text-blue-400">Scan to Pay via Venmo</p>
+                    <p className="text-muted-foreground">Customer scans with phone camera to pay {money(totals.total)}</p>
+                    {settings.venmoHandle ? (
+                      <p className="font-mono text-[11px]">@{settings.venmoHandle}</p>
+                    ) : (
+                      <p className="text-[10px] text-muted-foreground">Set @handle in Settings to prefill</p>
+                    )}
+                  </div>
                 </div>
               )}
 

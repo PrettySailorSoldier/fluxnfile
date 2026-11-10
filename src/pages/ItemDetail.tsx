@@ -13,7 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { ArrowLeft, Save, Trash2, Package, ChevronRight, Loader2, Edit2, Facebook, MessageSquare, Calendar, DollarSign } from 'lucide-react';
+import { ArrowLeft, Save, Trash2, Package, ChevronRight, Loader2, Edit2, Facebook, MessageSquare, Calendar, DollarSign, CreditCard } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { sanitizeError } from '@/lib/errorHandler';
 import { useWorkflowSettings } from '@/hooks/useUserPreferences';
@@ -25,10 +25,11 @@ import { OfferTracker } from '@/components/fb/OfferTracker';
 import { MeetupScheduler, MeetupsList } from '@/components/fb/MeetupScheduler';
 import { SafetyCheckIn, QuickSafetyButton } from '@/components/fb/SafetyCheckIn';
 import { useMeetups, useUpdateMeetup, Meetup } from '@/hooks/useMeetups';
-import { Offer } from '@/hooks/useOffers';
+import { useOffers, Offer } from '@/hooks/useOffers';
 import { CommentsSection } from '@/components/items/CommentsSection';
 import { ReviewStatusBadge, ReviewActions } from '@/components/amazon';
 import { RecordSaleDialog, type RecordSaleDefaults } from '@/components/sales/RecordSaleDialog';
+import { TakePaymentDialog } from '@/components/sales/TakePaymentDialog';
 import { useUnsellItem } from '@/hooks/useMarket';
 import { saleDateFor } from '@/lib/dates';
 import type { Item } from '@/hooks/useInventory';
@@ -55,10 +56,12 @@ export default function ItemDetail() {
   const [selectedOfferForMeetup, setSelectedOfferForMeetup] = useState<Offer | null>(null);
   const [selectedMeetupForCheckIn, setSelectedMeetupForCheckIn] = useState<Meetup | null>(null);
   const [saleDefaults, setSaleDefaults] = useState<RecordSaleDefaults | null>(null);
+  const [takePaymentOpen, setTakePaymentOpen] = useState(false);
   const unsell = useUnsellItem();
 
   // Fetch meetups for this item
   const { data: meetups = [] } = useMeetups(id);
+  const { data: offers = [] } = useOffers(id);
   const updateMeetup = useUpdateMeetup();
 
   // Get active meetup if exists
@@ -289,10 +292,17 @@ export default function ItemDetail() {
           </div>
         </div>
         {!isEditing ? (
-          <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
-            <Edit2 className="w-4 h-4 mr-1" />
-            Edit
-          </Button>
+          <div className="flex items-center gap-2">
+            {!isSoldStatus(item.status) && (
+              <Button size="sm" onClick={() => setTakePaymentOpen(true)} className="gap-1.5 shadow-sm">
+                <CreditCard className="w-4 h-4" /> Take Payment
+              </Button>
+            )}
+            <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
+              <Edit2 className="w-4 h-4 mr-1" />
+              Edit
+            </Button>
+          </div>
         ) : (
           <div className="flex gap-2">
             <Button variant="ghost" size="sm" onClick={() => setIsEditing(false)}>
@@ -765,6 +775,13 @@ export default function ItemDetail() {
         items={[item as unknown as Item]}
         defaults={saleDefaults ?? undefined}
         onRecorded={() => setIsEditing(false)}
+      />
+
+      <TakePaymentDialog
+        open={takePaymentOpen}
+        onOpenChange={setTakePaymentOpen}
+        item={item as unknown as Item}
+        defaultBuyerName={offers[0]?.buyer_name || ''}
       />
 
       {/* Quick List Dialog */}
