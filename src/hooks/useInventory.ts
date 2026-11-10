@@ -91,8 +91,10 @@ export interface Item {
   /** Private walk-away price — never printed */
   floor_price?: number | null;
   packed_for_event_id?: string | null;
-  /** 'market' (in person) or 'online' */
+  /** Where it sold: 'market', or the platform's name ("Facebook Marketplace", "eBay", …) */
   channel_sold?: string | null;
+  /** When the status last became 'listed' (20261110000000_unified_sales.sql) */
+  listed_at?: string | null;
   market_attempts?: number | null;
   // Joined relations
   category?: Category | null;
@@ -178,6 +180,9 @@ export function useItems(options?: { enabled?: boolean }) {
       );
     },
     enabled: !!team?.id && (options?.enabled ?? true),
+    // Teammates' changes arrive over realtime (useTeamRealtime) and invalidate this,
+    // so there's no need to re-download the whole inventory on every screen change.
+    staleTime: 5 * 60 * 1000,
   });
 }
 
@@ -263,9 +268,45 @@ export function usePlatforms() {
   });
 }
 
+/** What an item sold for (or is expected to): the recorded price, else the asking price. */
+export function sellingPriceOf(item: Pick<Item, 'actual_price' | 'target_price'>): number {
+  return item.actual_price || item.target_price || 0;
+}
+
+/** Storage locations with how many unsold items are in each, and what they're asking. */
+export function useLocationStock() {
+  const { team } = useAuth();
+  return useQuery({
+    queryKey: ['items', 'location-stock', team?.id],
+    queryFn: async () => {
+      if (!team?.id) return new Map<string, { count: number; value: number }>();
+      const rows = await fetchAllPages((from, to) =>
+        supabase
+          .from('items')
+          .select('id, storage_location_id, target_price, status')
+          .eq('team_id', team.id)
+          .neq('physical_status', 'unconfirmed')
+          .not('status', 'in', '(sold,shipped)')
+          .order('id')
+          .range(from, to)
+      );
+      const stock = new Map<string, { count: number; value: number }>();
+      for (const r of rows) {
+        const key = r.storage_location_id ?? '';
+        const s = stock.get(key) ?? { count: 0, value: 0 };
+        s.count += 1;
+        s.value += Number(r.target_price) || 0;
+        stock.set(key, s);
+      }
+      return stock;
+    },
+    enabled: !!team?.id,
+  });
+}
+
 // Calculate profit metrics
 export function calculateProfit(item: Item) {
-  const sellingPrice = item.actual_price || item.target_price || 0;
+  const sellingPrice = sellingPriceOf(item);
   const totalCost = item.original_cost + (item.refurbish_cost || 0);
   const grossProfit = sellingPrice - item.original_cost;
   const netProfit = sellingPrice - totalCost - (item.shipping_cost || 0) - (item.platform_fees || 0);

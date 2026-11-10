@@ -10,6 +10,7 @@ import type { Item } from '@/hooks/useInventory';
 import { useWorkflowSettings } from '@/hooks/useUserPreferences';
 import { useContinuousScanner } from '@/hooks/useContinuousScanner';
 import {
+  MARKET_CHANNEL,
   useCompleteSale,
   useUndoSale,
   type BundleRuleRow,
@@ -43,7 +44,27 @@ interface CartEntry {
   chip: Chip;
   /** Typed price for the custom chip */
   custom: string;
+  /** Not an inventory item — something off the table that was never entered */
+  misc?: boolean;
 }
+
+/** A stand-in so a quick-sale line can sit in the cart next to real items. */
+const quickSaleItem = (description: string): Item =>
+  ({
+    id: `quick-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    title: description,
+    status: 'acquired',
+    original_cost: 0,
+    refurbish_cost: null,
+    category_id: null,
+    tracking_number: null,
+    target_price: null,
+    actual_price: null,
+    sale_date: null,
+    platform_fees: null,
+    shipping_cost: null,
+    photos: null,
+  }) as unknown as Item;
 
 interface Props {
   event: MarketEvent;
@@ -65,6 +86,9 @@ export function MarketSell({ event, items, sales, phases, rules }: Props) {
   const [belowFloorOk, setBelowFloorOk] = useState(false);
   const [cameraOn, setCameraOn] = useState(false);
   const [now, setNow] = useState(() => new Date());
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [quickWhat, setQuickWhat] = useState('');
+  const [quickPrice, setQuickPrice] = useState('');
 
   // The markdown phase follows the clock
   useEffect(() => {
@@ -120,10 +144,11 @@ export function MarketSell({ event, items, sales, phases, rules }: Props) {
 
   const baseLines: CartLine[] = cart.map((e) => ({
     item_id: e.item.id,
-    tag_price: tagOf(e.item),
+    // A quick-sale line has no sticker: its price is its tag, so it never reads as a discount
+    tag_price: e.misc ? priceFor(e) : tagOf(e.item),
     category_id: e.item.category_id,
     price: priceFor(e),
-    manual: e.chip !== 'tag' && e.chip !== 'phase',
+    manual: e.misc || (e.chip !== 'tag' && e.chip !== 'phase'),
   }));
   const priced = useMemo(
     () => applyBundles(baseLines, rules),
@@ -159,6 +184,20 @@ export function MarketSell({ event, items, sales, phases, rules }: Props) {
   const setCustom = (id: string, custom: string) =>
     setCart((c) => c.map((e) => (e.item.id === id ? { ...e, chip: 'custom', custom } : e)));
   const remove = (id: string) => setCart((c) => c.filter((e) => e.item.id !== id));
+  const addQuick = () => {
+    const price = parseFloat(quickPrice);
+    if (!(price > 0)) {
+      toast.error('Enter what it sold for');
+      return;
+    }
+    setCart((c) => [
+      ...c,
+      { item: quickSaleItem(quickWhat.trim() || 'Misc item'), chip: 'custom', custom: String(price), misc: true },
+    ]);
+    setQuickWhat('');
+    setQuickPrice('');
+    setQuickOpen(false);
+  };
 
   // ── Scanner ───────────────────────────────────────────────────────────────
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -206,8 +245,13 @@ export function MarketSell({ event, items, sales, phases, rules }: Props) {
     try {
       await completeSale.mutateAsync({
         eventId: event.id,
+        channel: MARKET_CHANNEL,
         paymentMethod: payment,
-        lines: cart.map((e, i) => ({ item: e.item, tag_price: tagOf(e.item), sold_price: priced[i].sold_price })),
+        lines: cart.map((e, i) =>
+          e.misc
+            ? { item: null, description: e.item.title ?? 'Misc item', tag_price: null, sold_price: priced[i].sold_price }
+            : { item: e.item, tag_price: tagOf(e.item), sold_price: priced[i].sold_price }
+        ),
         discount: totals.discount,
         tax: totals.tax,
         fee,
@@ -343,6 +387,43 @@ export function MarketSell({ event, items, sales, phases, rules }: Props) {
             </div>
           )}
           {query && results.length === 0 && <p className="text-sm text-muted-foreground px-1">Nothing sellable matches “{query}”.</p>}
+
+          {/* Quick sale: something that was never entered into inventory */}
+          {quickOpen ? (
+            <div className="rounded-lg border p-2.5 space-y-2">
+              <p className="text-xs text-muted-foreground">
+                Not in inventory — counts toward today’s sales, with no item cost.
+              </p>
+              <div className="flex gap-2">
+                <Input
+                  autoFocus
+                  value={quickWhat}
+                  onChange={(e) => setQuickWhat(e.target.value.slice(0, 80))}
+                  placeholder="What was it? (optional)"
+                  className="h-10 flex-1"
+                />
+                <Input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.01"
+                  value={quickPrice}
+                  onChange={(e) => setQuickPrice(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && addQuick()}
+                  placeholder="$"
+                  className="h-10 w-24"
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button size="sm" className="flex-1" onClick={addQuick}>Add to sale</Button>
+                <Button size="sm" variant="ghost" onClick={() => setQuickOpen(false)}>Cancel</Button>
+              </div>
+            </div>
+          ) : (
+            <Button variant="outline" size="sm" className="w-full gap-1.5" onClick={() => setQuickOpen(true)}>
+              <Plus className="w-4 h-4" /> Quick sale — not in inventory
+            </Button>
+          )}
         </div>
       )}
 
@@ -369,7 +450,7 @@ export function MarketSell({ event, items, sales, phases, rules }: Props) {
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">{e.item.title || 'Untitled item'}</p>
                       <p className="text-xs text-muted-foreground">
-                        {itemNo(e.item)}
+                        {e.misc ? 'Quick sale · not in inventory' : itemNo(e.item)}
                         {p.bundle && <Badge variant="secondary" className="ml-2 text-[10px]">{p.bundle}</Badge>}
                       </p>
                     </div>

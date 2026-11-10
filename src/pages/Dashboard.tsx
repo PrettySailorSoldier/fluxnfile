@@ -8,6 +8,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { statusConfig } from '@/hooks/useInventory';
 import { cn } from '@/lib/utils';
+import { daysSince, parseLocalDate } from '@/lib/dates';
+import { useWorkflowSettings } from '@/hooks/useUserPreferences';
+import { TeamActivity } from '@/components/team/TeamActivity';
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -15,22 +18,25 @@ export default function Dashboard() {
   const { data: items = [], isLoading } = useItems();
   const { data: tasks = [] } = useTasks();
   const pendingTasks = tasks.filter(t => t.status !== 'completed');
+  const { staleDaysThreshold } = useWorkflowSettings();
 
   // Calculate metrics
   const inventoryCount = items.filter(i => !['sold', 'shipped'].includes(i.status)).length;
   const inventoryValue = items
     .filter(i => !['sold', 'shipped'].includes(i.status))
     .reduce((sum, i) => sum + i.original_cost, 0);
-  
+
   const soldItems = items.filter(i => ['sold', 'shipped'].includes(i.status));
   const monthStart = new Date();
   monthStart.setDate(1);
   monthStart.setHours(0, 0, 0, 0);
-  
-  const thisMonthSales = soldItems.filter(i => 
-    i.sale_date && new Date(i.sale_date) >= monthStart
-  );
-  
+
+  // sale_date is a plain calendar day: read it as local, or the 1st falls into last month
+  const thisMonthSales = soldItems.filter(i => {
+    const sold = parseLocalDate(i.sale_date);
+    return sold != null && sold >= monthStart;
+  });
+
   const monthlyProfit = thisMonthSales.reduce((sum, i) => {
     const { netProfit } = calculateProfit(i);
     return sum + netProfit;
@@ -39,12 +45,10 @@ export default function Dashboard() {
   const listedCount = items.filter(i => i.status === 'listed').length;
 
   // Items needing attention
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  
-  const staleItems = items.filter(i => 
-    i.status === 'listed' && 
-    new Date(i.created_at) < thirtyDaysAgo
+  // Since it was listed — not since the row was created
+  const staleItems = items.filter(i =>
+    i.status === 'listed' &&
+    (daysSince(i.listed_at ?? i.fb_listed_date ?? i.created_at) ?? 0) >= staleDaysThreshold
   );
 
   const readyToList = items.filter(i => i.status === 'ready_to_list');
@@ -106,7 +110,7 @@ export default function Dashboard() {
 
         <Card
           className="bg-card cursor-pointer hover:shadow-md transition-shadow"
-          onClick={() => navigate('/inventory?status=sold')}
+          onClick={() => navigate('/inventory?show=sold')}
         >
           <CardHeader className="pb-2 pt-4 px-4">
             <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
@@ -187,18 +191,23 @@ export default function Dashboard() {
             </Link>
           )}
           {staleItems.length > 0 && (
-            <Card className="bg-warning/20 border-warning/30">
-              <CardContent className="p-3 flex items-center gap-3">
-                <AlertCircle className="w-5 h-5 text-foreground" />
-                <div className="flex-1">
-                  <p className="font-medium text-sm">{staleItems.length} items listed 30+ days</p>
-                  <p className="text-xs text-muted-foreground">Consider repricing</p>
-                </div>
-              </CardContent>
-            </Card>
+            <Link to="/inventory?show=stale">
+              <Card className="bg-warning/20 border-warning/30">
+                <CardContent className="p-3 flex items-center gap-3">
+                  <AlertCircle className="w-5 h-5 text-foreground" />
+                  <div className="flex-1">
+                    <p className="font-medium text-sm">{staleItems.length} items listed {staleDaysThreshold}+ days</p>
+                    <p className="text-xs text-muted-foreground">Consider repricing — tap to view</p>
+                  </div>
+                </CardContent>
+              </Card>
+            </Link>
           )}
         </div>
       )}
+
+      {/* What the team has been doing, wherever they are */}
+      <TeamActivity items={items} />
 
       {/* Recent Items */}
       {recentItems.length > 0 ? (

@@ -28,6 +28,12 @@ import { useMeetups, useUpdateMeetup, Meetup } from '@/hooks/useMeetups';
 import { Offer } from '@/hooks/useOffers';
 import { CommentsSection } from '@/components/items/CommentsSection';
 import { ReviewStatusBadge, ReviewActions } from '@/components/amazon';
+import { RecordSaleDialog, type RecordSaleDefaults } from '@/components/sales/RecordSaleDialog';
+import { useUnsellItem } from '@/hooks/useMarket';
+import { saleDateFor } from '@/lib/dates';
+import type { Item } from '@/hooks/useInventory';
+
+const isSoldStatus = (s: string) => s === 'sold' || s === 'shipped';
 
 const statusOrder: ItemStatus[] = ['acquired', 'refurbishing', 'ready_to_list', 'listed', 'sold', 'shipped'];
 
@@ -48,6 +54,8 @@ export default function ItemDetail() {
   const [showSafetyCheckIn, setShowSafetyCheckIn] = useState(false);
   const [selectedOfferForMeetup, setSelectedOfferForMeetup] = useState<Offer | null>(null);
   const [selectedMeetupForCheckIn, setSelectedMeetupForCheckIn] = useState<Meetup | null>(null);
+  const [saleDefaults, setSaleDefaults] = useState<RecordSaleDefaults | null>(null);
+  const unsell = useUnsellItem();
 
   // Fetch meetups for this item
   const { data: meetups = [] } = useMeetups(id);
@@ -154,35 +162,69 @@ export default function ItemDetail() {
     },
   });
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (!item) return;
+    const wasSold = isSoldStatus(item.status);
+    const nowSold = isSoldStatus(status);
+    // Back in stock: the sale comes off the books too
+    if (wasSold && !nowSold) {
+      try {
+        await unsell.mutateAsync({ itemId: item.id, status });
+      } catch (e) {
+        toast.error(sanitizeError(e));
+        return;
+      }
+    }
     updateItem.mutate({
       title: title.trim() || null,
       original_cost: parseFloat(originalCost) || 0,
       target_price: targetPrice ? parseFloat(targetPrice) : null,
       tag_price: tagPrice ? parseFloat(tagPrice) : null,
       floor_price: floorPrice ? parseFloat(floorPrice) : null,
-      actual_price: actualPrice ? parseFloat(actualPrice) : null,
+      actual_price: nowSold && actualPrice ? parseFloat(actualPrice) : null,
       category_id: categoryId || null,
       condition,
-      status,
+      // Selling goes through the sale dialog (below) so it gets a price, a place and a ledger entry
+      status: nowSold && !wasSold ? item.status : status,
       acquisition_source: acquisitionSource.trim() || null,
       storage_location_id: storageLocationId || null,
       refurbish_notes: refurbishNotes.trim() || null,
       refurbish_cost: parseFloat(refurbishCost) || 0,
       shipping_cost: parseFloat(shippingCost) || 0,
       platform_fees: parseFloat(platformFees) || 0,
-      sale_date: status === 'sold' || status === 'shipped' ? new Date().toISOString().split('T')[0] : null,
+      // A sold item keeps the day it sold — saving an edit must not move it to today
+      sale_date: wasSold && nowSold ? saleDateFor(status, item) : null,
     });
+    if (nowSold && !wasSold) {
+      setStatus(item.status);
+      setSaleDefaults({ price: actualPrice ? parseFloat(actualPrice) : null });
+    }
   };
 
   const handleStatusChange = (newStatus: ItemStatus) => {
-    setStatus(newStatus);
-    if (!isEditing) {
-      updateItem.mutate({ 
-        status: newStatus,
-        sale_date: newStatus === 'sold' || newStatus === 'shipped' ? new Date().toISOString().split('T')[0] : null,
-      });
+    if (isEditing || !item) {
+      setStatus(newStatus);
+      return;
     }
+    const wasSold = isSoldStatus(item.status);
+    const nowSold = isSoldStatus(newStatus);
+    if (nowSold && !wasSold) {
+      // Not just a status flip: ask what it sold for and where
+      setSaleDefaults({});
+      return;
+    }
+    if (wasSold && !nowSold) {
+      if (!window.confirm('Put this back in stock? Its sale price and sale record are removed.')) return;
+      setStatus(newStatus);
+      unsell.mutate(
+        { itemId: item.id, status: newStatus },
+        { onSuccess: () => toast.success('Back in stock'), onError: (e) => toast.error(sanitizeError(e)) }
+      );
+      return;
+    }
+    setStatus(newStatus);
+    // sold → shipped (or back): the sale date stays the day it sold
+    updateItem.mutate({ status: newStatus, sale_date: saleDateFor(newStatus, item) });
   };
 
   const handleFBListingComplete = (listingUrl: string) => {
@@ -226,7 +268,12 @@ export default function ItemDetail() {
     <div className="p-4 space-y-4 pb-24">
       {/* Header */}
       <div className="flex items-center gap-3 pt-2">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/inventory')}>
+        <Button
+          variant="ghost"
+          size="icon"
+          // Back to the list as it was (search, filters, grouping), not a fresh one
+          onClick={() => (window.history.state?.idx > 0 ? navigate(-1) : navigate('/inventory'))}
+        >
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <div className="flex-1 min-w-0">
@@ -428,6 +475,13 @@ export default function ItemDetail() {
             setSelectedOfferForMeetup(null);
             setShowMeetupScheduler(true);
           }}
+          onSold={(meetup) =>
+            setSaleDefaults({
+              channel: 'Facebook Marketplace',
+              price: meetup.agreed_price,
+              buyerName: meetup.buyer_name,
+            })
+          }
         />
       )}
 
@@ -704,6 +758,14 @@ export default function ItemDetail() {
       {!isEditing && id && (
         <CommentsSection itemId={id} />
       )}
+
+      <RecordSaleDialog
+        open={!!saleDefaults}
+        onOpenChange={(o) => !o && setSaleDefaults(null)}
+        items={[item as unknown as Item]}
+        defaults={saleDefaults ?? undefined}
+        onRecorded={() => setIsEditing(false)}
+      />
 
       {/* Quick List Dialog */}
       <QuickListDialog

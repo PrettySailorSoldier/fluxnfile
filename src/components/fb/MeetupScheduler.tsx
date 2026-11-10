@@ -480,9 +480,11 @@ export function MeetupCard({ meetup, onStatusChange, onStartMeeting, compact }: 
 interface MeetupsListProps {
   itemId: string;
   onScheduleMeetup?: () => void;
+  /** The meetup ended in a sale — the caller records it (price, buyer, where) */
+  onSold?: (meetup: Meetup) => void;
 }
 
-export function MeetupsList({ itemId, onScheduleMeetup }: MeetupsListProps) {
+export function MeetupsList({ itemId, onScheduleMeetup, onSold }: MeetupsListProps) {
   const { data: meetups = [] } = useMeetups(itemId);
   const updateMeetup = useUpdateMeetup();
   const [isExpanded, setIsExpanded] = useState(true);
@@ -497,7 +499,9 @@ export function MeetupsList({ itemId, onScheduleMeetup }: MeetupsListProps) {
         status,
         completed_at: status === 'completed' ? new Date().toISOString() : undefined,
       });
-      toast.success(`Meetup marked as ${meetupStatusLabels[status].toLowerCase()}`);
+      const sold = status === 'completed' ? meetups.find((m) => m.id === meetupId) : undefined;
+      if (sold && onSold) onSold(sold);
+      else toast.success(`Meetup marked as ${meetupStatusLabels[status].toLowerCase()}`);
     } catch {
       toast.error('Failed to update meetup');
     }

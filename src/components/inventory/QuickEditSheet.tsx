@@ -28,6 +28,11 @@ import {
   getMissingDetails,
 } from '@/hooks/useInventory';
 import { isUnknownTitle } from '@/lib/productLookup';
+import { todayLocal } from '@/lib/dates';
+import { unsellItem } from '@/hooks/useMarket';
+import { RecordSaleDialog } from '@/components/sales/RecordSaleDialog';
+
+const isSoldStatus = (s: string) => s === 'sold' || s === 'shipped';
 
 // Extends Item with the new flag columns (not yet in generated types)
 type FlaggedItem = Item & { flagged_for?: string | null; flag_note?: string | null };
@@ -58,7 +63,8 @@ export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queue
   const [actualPrice, setActualPrice] = useState('');
   const [storageLocationId, setStorageLocationId] = useState('');
   const [quickNote, setQuickNote] = useState('');
-  const [saleDate, setSaleDate] = useState(new Date().toISOString().split('T')[0]);
+  const [saleDate, setSaleDate] = useState(todayLocal());
+  const [showSale, setShowSale] = useState(false);
   const [flagNote, setFlagNote] = useState('');
   const [title, setTitle] = useState('');
   const [categoryId, setCategoryId] = useState('');
@@ -92,7 +98,7 @@ export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queue
     setActualPrice(item.actual_price != null ? String(item.actual_price) : '');
     setStorageLocationId(item.storage_location_id ?? '');
     setQuickNote(item.refurbish_notes ?? '');
-    setSaleDate(item.sale_date ?? new Date().toISOString().split('T')[0]);
+    setSaleDate(item.sale_date ?? todayLocal());
     setFlagNote(fi.flag_note ?? '');
     setTitle(isUnknownTitle(item.title) ? '' : item.title ?? '');
     setCategoryId(item.category_id ?? '');
@@ -151,12 +157,14 @@ export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queue
     mutationFn: async (_opts: { next?: boolean } = {}) => {
       if (!item) return;
       const trimmedTitle = title.trim();
+      // Back in stock: the sale comes off the books too
+      if (isSoldStatus(item.status) && !showSaleFields) await unsellItem(item.id, status);
       const { error } = await supabase
         .from('items')
         .update({
           status,
           target_price: targetPrice !== '' ? parseFloat(targetPrice) : null,
-          actual_price: actualPrice !== '' ? parseFloat(actualPrice) : null,
+          actual_price: showSaleFields && actualPrice !== '' ? parseFloat(actualPrice) : null,
           storage_location_id: storageLocationId || null,
           refurbish_notes: quickNote || null,
           sale_date: showSaleFields ? saleDate : null,
@@ -313,7 +321,14 @@ export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queue
 
           <div className="space-y-1.5">
             <Label>Status</Label>
-            <Select value={status} onValueChange={(v) => setStatus(v as ItemStatus)}>
+            <Select
+              value={status}
+              onValueChange={(v) => {
+                // Selling isn't a status flip: ask what it sold for and where
+                if (item && isSoldStatus(v) && !isSoldStatus(item.status)) setShowSale(true);
+                else setStatus(v as ItemStatus);
+              }}
+            >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -377,21 +392,23 @@ export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queue
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label>Sold For</Label>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                className="pl-6"
-                placeholder="0.00"
-                value={actualPrice}
-                onChange={(e) => setActualPrice(e.target.value)}
-              />
+          {showSaleFields && (
+            <div className="space-y-1.5">
+              <Label>Sold For</Label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  className="pl-6"
+                  placeholder="0.00"
+                  value={actualPrice}
+                  onChange={(e) => setActualPrice(e.target.value)}
+                />
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="space-y-1.5">
             <Label>Storage Location</Label>
@@ -523,6 +540,13 @@ export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queue
           </div>
         </div>
       </SheetContent>
+      <RecordSaleDialog
+        open={showSale}
+        onOpenChange={setShowSale}
+        items={item ? [item] : []}
+        defaults={{ price: targetPrice !== '' ? parseFloat(targetPrice) : null }}
+        onRecorded={onSaved}
+      />
       <AssignTaskDialog
         open={showAssign}
         onOpenChange={setShowAssign}

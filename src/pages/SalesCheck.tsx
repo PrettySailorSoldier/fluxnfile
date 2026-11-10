@@ -26,6 +26,10 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { AmazonImportDialog } from '@/components/amazon/AmazonImportDialog';
 import { QuickEditSheet } from '@/components/inventory/QuickEditSheet';
+import { parseLocalDate } from '@/lib/dates';
+
+/** When an item went live: the listed date, falling back to the Facebook date, then creation. */
+const listedOn = (i: Item) => i.listed_at ?? i.fb_listed_date ?? i.created_at;
 import { useBarcodeScanner } from '@/hooks/useBarcodeScanner';
 import { normalizeTitle, jaccardSimilarity } from '@/utils/import-dedup-engine';
 
@@ -477,8 +481,8 @@ export default function SalesCheck() {
   const staleListings = useMemo(() => {
     const cutoff = Date.now() - 21 * MS_PER_DAY;
     return items
-      .filter(i => i.status === 'listed' && new Date(i.created_at).getTime() < cutoff)
-      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      .filter(i => i.status === 'listed' && new Date(listedOn(i)).getTime() < cutoff)
+      .sort((a, b) => new Date(listedOn(a)).getTime() - new Date(listedOn(b)).getTime());
   }, [items]);
 
   const recentSales = useMemo(() => {
@@ -486,14 +490,12 @@ export default function SalesCheck() {
     return items
       .filter(i => {
         if (!['sold', 'shipped'].includes(i.status)) return false;
-        const ts = i.sale_date
-          ? new Date(i.sale_date).getTime()
-          : new Date(i.created_at).getTime();
+        const ts = (parseLocalDate(i.sale_date) ?? new Date(i.created_at)).getTime();
         return ts >= cutoff;
       })
       .sort((a, b) => {
-        const da = new Date(a.sale_date || a.created_at).getTime();
-        const db = new Date(b.sale_date || b.created_at).getTime();
+        const da = (parseLocalDate(a.sale_date) ?? new Date(a.created_at)).getTime();
+        const db = (parseLocalDate(b.sale_date) ?? new Date(b.created_at)).getTime();
         return db - da;
       });
   }, [items]);
@@ -505,9 +507,9 @@ export default function SalesCheck() {
         i =>
           i.status === 'listed' &&
           i.target_price !== null &&
-          new Date(i.created_at).getTime() < cutoff
+          new Date(listedOn(i)).getTime() < cutoff
       )
-      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      .sort((a, b) => new Date(listedOn(a)).getTime() - new Date(listedOn(b)).getTime());
   }, [items]);
 
   // ── Sales summary ──────────────────────────────────────────────────────────
@@ -760,7 +762,7 @@ export default function SalesCheck() {
                         Cost ${item.original_cost.toFixed(2)}
                         {item.target_price != null && ` → $${item.target_price.toFixed(2)}`}
                         {' · '}
-                        {daysSince(item.created_at)}d ago
+                        {daysSince(listedOn(item))}d ago
                       </p>
                     </div>
                     <Button
@@ -800,7 +802,7 @@ export default function SalesCheck() {
             ) : (
               <div className="divide-y">
                 {staleListings.map(item => {
-                  const days = daysSince(item.created_at);
+                  const days = daysSince(listedOn(item));
                   return (
                     <div key={item.id} className="flex items-center gap-3 px-4 py-3">
                       <div className="flex-1 min-w-0">
@@ -906,7 +908,7 @@ export default function SalesCheck() {
             <CollapsibleContent>
               <div className="divide-y">
                 {repriceCandidates.map(item => {
-                  const days = daysSince(item.created_at);
+                  const days = daysSince(listedOn(item));
                   return (
                     <div key={item.id} className="flex items-center gap-3 px-4 py-3">
                       <div className="flex-1 min-w-0">

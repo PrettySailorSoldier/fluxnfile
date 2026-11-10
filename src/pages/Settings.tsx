@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { LogOut, Users, Copy, MessageSquare, UserMinus, ShoppingBag, FileSpreadsheet, Megaphone, ChevronRight, ListTodo } from 'lucide-react';
+import { LogOut, Users, Copy, MessageSquare, UserMinus, ShoppingBag, FileSpreadsheet, Megaphone, ChevronRight, ListTodo, Share2, Boxes } from 'lucide-react';
 import { toast } from 'sonner';
 import { TemplateLibrary } from '@/components/fb/TemplateLibrary';
 import { CategoryManager } from '@/components/settings/CategoryManager';
@@ -94,9 +94,29 @@ export default function Settings() {
             <Button size="sm" variant="outline" onClick={copyTeamId}>
               <Copy className="w-4 h-4" />
             </Button>
+            {typeof navigator !== 'undefined' && 'share' in navigator && (
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label="Share invite"
+                onClick={() =>
+                  navigator
+                    .share({
+                      title: `Join ${team?.name ?? 'our team'} on Flux & File`,
+                      text: `Join ${team?.name ?? 'our team'} on Flux & File: sign up, choose "Join a team" and paste this team ID:\n${team?.id}`,
+                    })
+                    .catch(() => {
+                      /* share sheet dismissed */
+                    })
+                }
+              >
+                <Share2 className="w-4 h-4" />
+              </Button>
+            )}
           </div>
           <p className="text-xs text-muted-foreground">
-            Share this ID to invite team members
+            Share this ID to invite team members. Everyone on the team sees sales, offers, meetups and
+            changes from the others live, wherever they are.
           </p>
           <AlertDialog>
             <AlertDialogTrigger asChild>
@@ -131,6 +151,12 @@ export default function Settings() {
       <CategoryManager />
 
       {/* Storage Locations */}
+      <Button variant="outline" className="w-full justify-between" onClick={() => navigate('/locations')}>
+        <span className="flex items-center gap-2">
+          <Boxes className="w-4 h-4" /> Locations — what's in each bin, bin labels
+        </span>
+        <ChevronRight className="w-4 h-4" />
+      </Button>
       <StorageLocationManager />
 
       {/* Meetup Locations */}

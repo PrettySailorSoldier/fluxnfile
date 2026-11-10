@@ -332,7 +332,10 @@ export function reviewEvent(
   let itemsSold = 0;
   for (const s of sales) {
     const sub = s.lines.reduce((t, l) => t + l.sold_price, 0);
-    gross += sub;
+    // When sticker prices include tax the line prices carry it too (total == subtotal),
+    // so take it back out: tax collected isn't income.
+    const taxInLines = s.tax_amount > 0 && s.total <= sub + 0.005 ? s.tax_amount : 0;
+    gross += sub - taxInLines;
     cogs += s.lines.reduce((t, l) => t + l.cost, 0);
     fees += s.fee_amount;
     discount += s.discount_amount;

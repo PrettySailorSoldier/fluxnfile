@@ -10,6 +10,7 @@ import type { Item } from '@/hooks/useInventory';
 import { useWorkflowSettings } from '@/hooks/useUserPreferences';
 import {
   useCloseEvent,
+  useReopenEvent,
   useRouteLeftovers,
   useUpdateEvent,
   type LeftoverAction,
@@ -48,6 +49,7 @@ export function EventReview({ event, items, sales }: Props) {
   const settings = useWorkflowSettings();
   const updateEvent = useUpdateEvent();
   const closeEvent = useCloseEvent();
+  const reopenEvent = useReopenEvent();
   const route = useRouteLeftovers();
 
   const [counted, setCounted] = useState(event.counted_cash != null ? String(event.counted_cash) : '');
@@ -56,7 +58,9 @@ export function EventReview({ event, items, sales }: Props) {
   const packed = useMemo(() => items.filter((i) => i.packed_for_event_id === event.id), [items, event.id]);
   const soldIds = useMemo(() => new Set(sales.flatMap((s) => s.lines.map((l) => l.item_id).filter(Boolean) as string[])), [sales]);
   const unsold = packed.filter((i) => !soldIds.has(i.id) && i.status !== 'sold' && i.status !== 'shipped');
-  const brought = new Set([...packed.map((p) => p.id), ...soldIds]).size;
+  // Quick sales (things never entered into inventory) came along too
+  const quickSales = sales.reduce((n, s) => n + s.lines.filter((l) => !l.item_id).length, 0);
+  const brought = new Set([...packed.map((p) => p.id), ...soldIds]).size + quickSales;
 
   const hours = eventHours(event.start_time, event.end_time);
   const review = reviewEvent(
@@ -131,7 +135,7 @@ export function EventReview({ event, items, sales }: Props) {
           d.toLocaleTimeString(),
           event.name,
           l.item?.tracking_number ? String(l.item.tracking_number).padStart(5, '0') : null,
-          l.item?.title ?? null,
+          l.item?.title ?? l.description ?? null,
           l.tag_price,
           l.sold_price,
           s.payment_method,
@@ -201,7 +205,16 @@ export function EventReview({ event, items, sales }: Props) {
             ))}
           </div>
           {closed ? (
-            <Button variant="outline" size="sm" className="gap-2" onClick={() => save({ status: 'open' })}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              disabled={reopenEvent.isPending}
+              onClick={() =>
+                // Takes back the attempt that closing counted, so re-closing doesn't count it twice
+                reopenEvent.mutateAsync({ eventId: event.id, unsold }).catch((e) => toast.error(sanitizeError(e)))
+              }
+            >
               <Unlock className="w-4 h-4" /> Reopen market
             </Button>
           ) : (
@@ -223,7 +236,7 @@ export function EventReview({ event, items, sales }: Props) {
             <Big label="Profit per hour" value={review.profitPerHour != null ? money(review.profitPerHour) : 'Set start/end time'} />
           </div>
           <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
-            <Line k="Sales (before tax)" v={money(review.gross)} />
+            <Line k="Sales (excluding tax)" v={money(review.gross)} />
             <Line k="Cost of items sold" v={money(-review.cogs)} />
             <Line k="Booth + costs" v={money(-review.boothAndCosts)} />
             <Line k="Card / app fees" v={money(-review.fees)} />

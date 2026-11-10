@@ -96,8 +96,9 @@ export function useMyOpenTaskCount() {
 }
 
 /**
- * Live team sync: when a teammate imports, scans, edits items or changes
- * tasks, refresh the affected lists. Mount once (AppLayout).
+ * Live team sync: when a teammate imports, scans, edits or sells items, takes an
+ * offer, books a meetup, changes a task or adds a shelf, refresh the affected lists
+ * on every other device. Mount once (AppLayout).
  * Needs items/tasks in the supabase_realtime publication (team_workflow migration).
  */
 export function useTeamRealtime() {
@@ -131,9 +132,45 @@ export function useTeamRealtime() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `team_id=eq.${team.id}` }, refreshTasks)
       .subscribe();
 
+    // Everything else a partner might change from somewhere else. A separate channel,
+    // so a table that isn't published for realtime yet can't take items/tasks down with it.
+    const timers = new Map<string, ReturnType<typeof setTimeout>>();
+    const refresh = (...keys: string[]) => () => {
+      const id = keys.join('|');
+      clearTimeout(timers.get(id));
+      timers.set(
+        id,
+        setTimeout(() => keys.forEach((k) => queryClient.invalidateQueries({ queryKey: [k] })), 500)
+      );
+    };
+    const on = (table: string) =>
+      ({ event: '*', schema: 'public', table, filter: `team_id=eq.${team.id}` }) as const;
+
+    const extra = supabase
+      .channel(`team-sync-extra:${team.id}`)
+      .on('postgres_changes', on('sales'), refresh('sales'))
+      .on('postgres_changes', on('events'), refresh('events'))
+      .on('postgres_changes', on('offers'), refresh('offers', 'items'))
+      .on('postgres_changes', on('meetups'), refresh('meetups', 'items'))
+      .on('postgres_changes', on('storage_locations'), refresh('storage_locations'))
+      .on('postgres_changes', on('categories'), refresh('categories'))
+      .subscribe();
+
+    // A phone that slept through the afternoon missed those events: catch up when it wakes
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      refreshItems();
+      refreshTasks();
+      refresh('sales')();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
     return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      timers.forEach((t) => clearTimeout(t));
       clearTimeout(itemsTimer);
       clearTimeout(tasksTimer);
+      supabase.removeChannel(extra);
       supabase.removeChannel(channel);
     };
   }, [team?.id, queryClient]);

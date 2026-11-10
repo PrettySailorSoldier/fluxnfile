@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { useStorageLocations } from '@/hooks/useInventory';
+import { useStorageLocations, useLocationStock } from '@/hooks/useInventory';
+import { Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useQueryClient } from '@tanstack/react-query';
@@ -21,6 +22,8 @@ const locationSchema = z.object({
 export function StorageLocationManager() {
   const { team } = useAuth();
   const { data: locations = [] } = useStorageLocations();
+  const { data: stock } = useLocationStock();
+  const unplaced = stock?.get('') ?? { count: 0, value: 0 };
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [newName, setNewName] = useState('');
@@ -33,17 +36,17 @@ export function StorageLocationManager() {
     if (!team?.id) return;
 
     try {
-      const validated = locationSchema.parse({ 
-        name: newName, 
-        description: newDescription.trim() || undefined 
+      const validated = locationSchema.parse({
+        name: newName,
+        description: newDescription.trim() || undefined
       });
 
       const { error } = await supabase
         .from('storage_locations')
-        .insert({ 
-          name: validated.name, 
+        .insert({
+          name: validated.name,
           description: validated.description || null,
-          team_id: team.id 
+          team_id: team.id
         });
 
       if (error) {
@@ -65,14 +68,14 @@ export function StorageLocationManager() {
 
   const handleUpdate = async (id: string) => {
     try {
-      const validated = locationSchema.parse({ 
-        name: editName, 
-        description: editDescription.trim() || undefined 
+      const validated = locationSchema.parse({
+        name: editName,
+        description: editDescription.trim() || undefined
       });
 
       const { error } = await supabase
         .from('storage_locations')
-        .update({ 
+        .update({
           name: validated.name,
           description: validated.description || null
         })
@@ -95,6 +98,16 @@ export function StorageLocationManager() {
   };
 
   const handleDelete = async (id: string) => {
+    const inIt = stock?.get(id)?.count ?? 0;
+    const name = locations.find((l) => l.id === id)?.name ?? 'this location';
+    if (
+      !window.confirm(
+        inIt > 0
+          ? `Delete "${name}"? The ${inIt} item${inIt === 1 ? '' : 's'} in it will have no location.`
+          : `Delete "${name}"?`
+      )
+    )
+      return;
     const { error } = await supabase
       .from('storage_locations')
       .delete()
@@ -105,6 +118,7 @@ export function StorageLocationManager() {
     } else {
       toast.success('Location deleted');
       queryClient.invalidateQueries({ queryKey: ['storage_locations'] });
+      queryClient.invalidateQueries({ queryKey: ['items'] });
     }
   };
 
@@ -130,7 +144,7 @@ export function StorageLocationManager() {
             <DialogHeader>
               <DialogTitle>Manage Storage Locations</DialogTitle>
             </DialogHeader>
-            
+
             <div className="space-y-2 mb-4">
               <Input
                 placeholder="Location name (e.g., Garage Shelf 1)"
@@ -181,6 +195,14 @@ export function StorageLocationManager() {
                         {loc.description && (
                           <p className="text-sm text-muted-foreground">{loc.description}</p>
                         )}
+                        <Link
+                          to={`/inventory?loc=${loc.id}`}
+                          onClick={() => setOpen(false)}
+                          className="text-xs text-primary hover:underline"
+                        >
+                          {stock?.get(loc.id)?.count ?? 0} in stock
+                          {(stock?.get(loc.id)?.value ?? 0) > 0 && ` · $${Math.round(stock!.get(loc.id)!.value)} asking`} · view
+                        </Link>
                       </div>
                       <div className="flex gap-1">
                         <Button
@@ -206,6 +228,15 @@ export function StorageLocationManager() {
                   )}
                 </div>
               ))}
+              {unplaced.count > 0 && (
+                <Link
+                  to="/inventory?loc=none"
+                  onClick={() => setOpen(false)}
+                  className="block rounded-lg border border-dashed p-3 text-sm text-muted-foreground hover:text-foreground"
+                >
+                  {unplaced.count} item{unplaced.count === 1 ? '' : 's'} have no location yet · view
+                </Link>
+              )}
               {locations.length === 0 && (
                 <p className="text-sm text-muted-foreground text-center py-4">
                   No storage locations yet

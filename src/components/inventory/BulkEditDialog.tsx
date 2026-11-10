@@ -23,6 +23,17 @@ export interface BulkEdit {
   targetPrice?: number | null;
   /** Set target price to cost + N% for each item */
   markupPercent?: number;
+  /** Pack for this market (id), or unpack (null) */
+  eventId?: string | null;
+  /** Flag for this teammate (they get a notification), or clear the flag (null) */
+  flagFor?: string | null;
+  flagNote?: string;
+  /** Who physically has these now, or nobody (null) */
+  heldBy?: string | null;
+  /** Market sticker price for every item, or clear it (null) */
+  tagPrice?: number | null;
+  /** Sticker price = each item's own asking price */
+  tagFromAsking?: boolean;
 }
 
 interface BulkEditDialogProps {
@@ -31,6 +42,11 @@ interface BulkEditDialogProps {
   count: number;
   categories: Category[];
   storageLocations: StorageLocation[];
+  /** Markets that can still be packed for */
+  events?: { id: string; name: string; event_date: string }[];
+  /** Teammates, for flagging and "who has it" */
+  members?: { id: string; full_name: string | null }[];
+  currentUserId?: string | null;
   isSaving: boolean;
   onApply: (edit: BulkEdit) => void;
 }
@@ -44,9 +60,18 @@ export function BulkEditDialog({
   count,
   categories,
   storageLocations,
+  events = [],
+  members = [],
+  currentUserId,
   isSaving,
   onApply,
 }: BulkEditDialogProps) {
+  const [market, setMarket] = useState(KEEP);
+  const [flag, setFlag] = useState(KEEP);
+  const [flagNote, setFlagNote] = useState('');
+  const [holder, setHolder] = useState(KEEP);
+  const [tagMode, setTagMode] = useState<'keep' | 'fixed' | 'asking' | 'clear'>('keep');
+  const [tagValue, setTagValue] = useState('');
   const [status, setStatus] = useState(KEEP);
   const [category, setCategory] = useState(KEEP);
   const [location, setLocation] = useState(KEEP);
@@ -62,6 +87,12 @@ export function BulkEditDialog({
     setLocation(KEEP);
     setDecision(KEEP);
     setCondition(KEEP);
+    setMarket(KEEP);
+    setFlag(KEEP);
+    setFlagNote('');
+    setHolder(KEEP);
+    setTagMode('keep');
+    setTagValue('');
     setPriceMode('keep');
     setPriceValue('');
   }, [open]);
@@ -72,10 +103,22 @@ export function BulkEditDialog({
   if (location !== KEEP) edit.storageLocationId = location === CLEAR ? null : location;
   if (decision !== KEEP) edit.decision = decision as 'keep' | 'sell';
   if (condition !== KEEP) edit.condition = condition as ItemCondition;
+  if (market !== KEEP) edit.eventId = market === CLEAR ? null : market;
   const priceNum = parseFloat(priceValue);
   if (priceMode === 'fixed' && Number.isFinite(priceNum)) edit.targetPrice = Math.max(0, priceNum);
   if (priceMode === 'markup' && Number.isFinite(priceNum)) edit.markupPercent = priceNum;
   if (priceMode === 'clear') edit.targetPrice = null;
+  if (flag !== KEEP) {
+    edit.flagFor = flag === CLEAR ? null : flag;
+    if (flag !== CLEAR && flagNote.trim()) edit.flagNote = flagNote.trim();
+  }
+  if (holder !== KEEP) edit.heldBy = holder === CLEAR ? null : holder;
+  const tagNum = parseFloat(tagValue);
+  if (tagMode === 'fixed' && Number.isFinite(tagNum)) edit.tagPrice = Math.max(0, tagNum);
+  if (tagMode === 'asking') edit.tagFromAsking = true;
+  if (tagMode === 'clear') edit.tagPrice = null;
+  const memberLabel = (m: { id: string; full_name: string | null }) =>
+    `${m.full_name || 'Unnamed'}${m.id === currentUserId ? ' (you)' : ''}`;
   const changes = Object.keys(edit).length;
 
   const keepItem = <SelectItem value={KEEP}>— No change —</SelectItem>;
@@ -85,7 +128,9 @@ export function BulkEditDialog({
       <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edit {count} item{count === 1 ? '' : 's'}</DialogTitle>
-          <DialogDescription>Only the fields you change are updated.</DialogDescription>
+          <DialogDescription>
+            Only the fields you change are updated. Choosing “Sold” asks what each one sold for and where.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="grid grid-cols-2 gap-3">
@@ -156,6 +201,20 @@ export function BulkEditDialog({
           </div>
 
           <div className="space-y-1.5">
+            <Label>Pack for market</Label>
+            <Select value={market} onValueChange={setMarket}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {keepItem}
+                <SelectItem value={CLEAR}>Unpack</SelectItem>
+                {events.map((e) => (
+                  <SelectItem key={e.id} value={e.id}>{e.name} · {e.event_date}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1.5">
             <Label>Asking price</Label>
             <Select value={priceMode} onValueChange={(v) => setPriceMode(v as typeof priceMode)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -182,6 +241,69 @@ export function BulkEditDialog({
               />
             </div>
           )}
+
+          <div className="space-y-1.5">
+            <Label>Market tag price</Label>
+            <Select value={tagMode} onValueChange={(v) => setTagMode(v as typeof tagMode)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="keep">— No change —</SelectItem>
+                <SelectItem value="fixed">Set to $…</SelectItem>
+                <SelectItem value="asking">Same as asking price</SelectItem>
+                <SelectItem value="clear">Clear tag</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Who has it</Label>
+            <Select value={holder} onValueChange={setHolder}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {keepItem}
+                <SelectItem value={CLEAR}>Nobody</SelectItem>
+                {members.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>{memberLabel(m)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {tagMode === 'fixed' && (
+            <div className="col-span-2 space-y-1.5">
+              <Label>Tag price for every selected item ($)</Label>
+              <Input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="0.5"
+                value={tagValue}
+                placeholder="5"
+                onChange={(e) => setTagValue(e.target.value)}
+              />
+            </div>
+          )}
+
+          <div className="col-span-2 space-y-1.5">
+            <Label>Flag for a teammate</Label>
+            <Select value={flag} onValueChange={setFlag}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {keepItem}
+                <SelectItem value={CLEAR}>Clear flag</SelectItem>
+                {members.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>{memberLabel(m)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {flag !== KEEP && flag !== CLEAR && (
+              <Input
+                value={flagNote}
+                onChange={(e) => setFlagNote(e.target.value.slice(0, 200))}
+                placeholder="Note (optional) — e.g. “photograph these”"
+              />
+            )}
+          </div>
         </div>
 
         <DialogFooter>

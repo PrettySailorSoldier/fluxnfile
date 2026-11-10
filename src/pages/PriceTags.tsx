@@ -5,28 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useItems, type Item } from '@/hooks/useInventory';
 import { useEvent } from '@/hooks/useMarket';
-import { code128Modules } from '@/lib/code128';
-
-/** Bars as SVG rects, merging runs of black modules. */
-function Barcode({ text }: { text: string }) {
-  const modules = useMemo(() => code128Modules(text), [text]);
-  const rects: { x: number; w: number }[] = [];
-  for (let i = 0; i < modules.length; ) {
-    if (modules[i]) {
-      let j = i;
-      while (j < modules.length && modules[j]) j++;
-      rects.push({ x: i, w: j - i });
-      i = j;
-    } else i++;
-  }
-  return (
-    <svg viewBox={`0 0 ${modules.length} 30`} preserveAspectRatio="none" className="w-full h-8" role="img" aria-label={`Barcode ${text}`}>
-      {rects.map((r) => (
-        <rect key={r.x} x={r.x} y={0} width={r.w} height={30} fill="#000" />
-      ))}
-    </svg>
-  );
-}
+import { Barcode } from '@/components/Barcode';
 
 const priceLabel = (n: number) => (Number.isInteger(n) ? `$${n}` : `$${n.toFixed(2)}`);
 

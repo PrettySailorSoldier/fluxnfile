@@ -5,6 +5,7 @@ import { BottomNav } from './BottomNav';
 import { useTheme } from '@/contexts/ThemeContext';
 import { NotificationBell } from '@/components/notifications/NotificationBell';
 import { useTeamRealtime } from '@/hooks/useTeam';
+import { usePendingSaleCount, useSaleQueueSync } from '@/hooks/useMarket';
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -15,6 +16,9 @@ export function AppLayout({ children }: AppLayoutProps) {
   const navigate = useNavigate();
   // Teammates' imports, scans and task changes appear without a refresh
   useTeamRealtime();
+  // Sales made with no signal go out as soon as there is one
+  useSaleQueueSync();
+  const pending = usePendingSaleCount();
 
   return (
     <div className="min-h-screen pb-20 relative">
@@ -22,7 +26,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       {backgroundImageUrl && (
         <div className="fixed inset-0 bg-background/70 backdrop-blur-[2px] -z-10" />
       )}
-      
+
       {/* Header with notification bell */}
       <header
         className="sticky top-0 z-40 bg-background/95 backdrop-blur-sm border-b border-border"
@@ -44,7 +48,13 @@ export function AppLayout({ children }: AppLayoutProps) {
           </div>
         </div>
       </header>
-      
+
+      {pending > 0 && (
+        <div className="bg-amber-500/15 text-amber-700 dark:text-amber-400 text-xs text-center py-1.5 px-4">
+          {pending} sale{pending === 1 ? '' : 's'} saved on this phone, waiting for a connection
+        </div>
+      )}
+
       <main className="max-w-lg mx-auto relative z-0">
         {children}
       </main>

@@ -4,11 +4,21 @@
  */
 
 export const sanitizeError = (error: Error | unknown): string => {
-  const message = error instanceof Error ? error.message : 'Unknown error';
-  
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof (error as { message?: unknown })?.message === 'string'
+        ? (error as { message: string }).message
+        : 'Unknown error';
+
   // Log full error for debugging (would go to proper logging in production)
   console.error('[Error]:', error);
-  
+
+  // Our own sale checks (record_sale) — written for the person at the till
+  const alreadySold = message.match(/ALREADY_SOLD:\s*(.+)/);
+  if (alreadySold) return `${alreadySold[1]} — a teammate got there first. Take it out of the sale.`;
+  if (message.includes('no longer in inventory') || message.includes('Nothing to sell')) return message;
+
   // Map to user-friendly messages
   if (message.includes('duplicate key') || message.includes('unique constraint')) {
     return 'This item already exists';

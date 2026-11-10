@@ -32,7 +32,7 @@ export default function Market() {
       const brought = new Set<string>([
         ...items.filter((i) => i.packed_for_event_id === ev.id).map((i) => i.id),
         ...evSales.flatMap((s) => s.lines.map((l) => l.item_id).filter(Boolean) as string[]),
-      ]).size;
+      ]).size + evSales.reduce((n, s) => n + s.lines.filter((l) => !l.item_id).length, 0);
       out.set(
         ev.id,
         reviewEvent(

@@ -24,9 +24,15 @@ import ScanSession from "./pages/ScanSession";
 import Market from "./pages/Market";
 import MarketEvent from "./pages/MarketEvent";
 import PriceTags from "./pages/PriceTags";
+import Locations from "./pages/Locations";
+import BinLabels from "./pages/BinLabels";
 import NotFound from "./pages/NotFound";
 
-const queryClient = new QueryClient();
+// Lists stay fresh through realtime (useTeamRealtime) and mutations, so a short
+// stale window just stops every screen change from re-downloading everything.
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { staleTime: 30_000 } },
+});
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -106,6 +112,17 @@ const App = () => (
             <Route path="/market/:id" element={
               <ProtectedRoute>
                 <AppLayout><MarketEvent /></AppLayout>
+              </ProtectedRoute>
+            } />
+            <Route path="/locations" element={
+              <ProtectedRoute>
+                <AppLayout><Locations /></AppLayout>
+              </ProtectedRoute>
+            } />
+            {/* Printable bin labels — no app chrome */}
+            <Route path="/locations/labels" element={
+              <ProtectedRoute>
+                <BinLabels />
               </ProtectedRoute>
             } />
             {/* Printable tags — no app chrome */}

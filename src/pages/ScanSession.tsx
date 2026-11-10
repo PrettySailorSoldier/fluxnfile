@@ -45,6 +45,7 @@ import { useContinuousScanner } from '@/hooks/useContinuousScanner';
 import { QuickEditSheet } from '@/components/inventory/QuickEditSheet';
 import { LinkUpcSheet } from '@/components/inventory/LinkUpcSheet';
 import { classifyCode, explainUnrecognized, isFnsku, type CodeType } from '@/lib/barcode';
+import { findBin, isBinCode } from '@/lib/binLabel';
 import { isUnknownTitle, lookupProduct } from '@/lib/productLookup';
 import { captureFrame, readStickerText, warmUpStickerReader, type StickerFrame } from '@/lib/stickerOcr';
 import { jaccardSimilarity, normalizeTitle } from '@/utils/import-dedup-engine';
@@ -673,7 +674,28 @@ export default function ScanSession() {
 
   // ── Camera ─────────────────────────────────────────────────────────────────
 
+  /**
+   * True when `raw` was a bin label (handled: it becomes the location for new and
+   * received items). Kept in a ref so the camera callback always sees current locations.
+   */
+  const binLabelRef = useRef<(raw: string) => boolean>(() => false);
+  binLabelRef.current = (raw: string) => {
+    if (!isBinCode(raw)) return false;
+    const bin = findBin(raw, storageLocations);
+    if (!bin) {
+      signal('error', 'Bin label not found — was that location deleted?');
+      return true;
+    }
+    if (defaults.storageLocationId === bin.id) return true; // same bin swept past again
+    setDefaults((s) => ({ ...s, storageLocationId: bin.id }));
+    signal('existing', `Now filling: ${bin.name}`);
+    toast.success(`Items you scan now go in ${bin.name}`);
+    return true;
+  };
+
   const scanner = useContinuousScanner((result, meta) => {
+    // A bin label: everything scanned after it goes into that bin
+    if (result.status !== 'found' && binLabelRef.current(result.rawValue)) return;
     if (result.status === 'found') {
       // Keep the camera frame of an X00 sticker — its printed product name gets read later
       if (result.codeType === 'fnsku' && videoRef.current) {
@@ -723,6 +745,10 @@ export default function ScanSession() {
   }, [editItem, linkTarget]);
 
   const submitManual = () => {
+    if (binLabelRef.current(manualCode)) {
+      setManualCode('');
+      return;
+    }
     const parsed = classifyCode(manualCode);
     if (!parsed) {
       toast.error(explainUnrecognized(manualCode));

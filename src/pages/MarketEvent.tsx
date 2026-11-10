@@ -140,7 +140,7 @@ export default function MarketEvent() {
                 </div>
                 {s.lines.map((l) => (
                   <div key={l.id} className="flex items-center gap-2 text-sm">
-                    <span className="flex-1 truncate">{l.item?.title ?? 'Deleted item'}</span>
+                    <span className="flex-1 truncate">{l.item?.title ?? l.description ?? (l.item_id ? 'Deleted item' : 'Quick sale')}</span>
                     {l.tag_price != null && l.tag_price !== l.sold_price && (
                       <span className="text-xs text-muted-foreground line-through tabular-nums">{money(l.tag_price)}</span>
                     )}
