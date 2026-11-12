@@ -80,6 +80,8 @@ type WizardStep = 'paste' | 'preview' | 'confirm';
 interface AmazonImportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** A file handed over by another importer (e.g. an order-history CSV dropped on "Import a list") */
+  initialFile?: File | null;
 }
 
 // Extends ParsedAmazonItem with import-pipeline metadata
@@ -433,7 +435,7 @@ interface EnrichPlan {
 // MAIN COMPONENT
 // ============================================================================
 
-export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogProps) {
+export function AmazonImportDialog({ open, onOpenChange, initialFile }: AmazonImportDialogProps) {
   const { team, user } = useAuth();
   const queryClient = useQueryClient();
 
@@ -458,7 +460,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
   const catalogRef = useRef<CatalogMap>(new Map());
 
   // Fetch existing items for duplicate detection (includes new dedup fields)
-  const { data: existingItems = [] } = useQuery({
+  const { data: existingItems = [], isSuccess: existingLoaded } = useQuery({
     queryKey: ['existing-amazon-items', team?.id],
     queryFn: async () => {
       if (!team?.id) return [];
@@ -466,6 +468,7 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
     },
     enabled: !!team?.id && open,
   });
+  const checkingDuplicates = open && !!team?.id && !existingLoaded;
 
   // Legacy duplicate detection (ASIN / title sets for the existing preview UI)
   const { duplicateAsins, duplicateTitles } = useMemo(() => {
@@ -525,6 +528,27 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
       };
     });
   }
+
+  // A file dropped before the existing items finished loading was checked against
+  // nothing, so every row looked new — check again once they arrive.
+  useEffect(() => {
+    if (existingLoaded) setParsedItems((prev) => (prev.length ? applyDedupFlags(prev) : prev));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existingItems, existingLoaded]);
+
+  // Open straight into a handed-over file
+  const handedOver = useRef<File | null>(null);
+  useEffect(() => {
+    if (!open) {
+      handedOver.current = null;
+      return;
+    }
+    if (initialFile && handedOver.current !== initialFile) {
+      handedOver.current = initialFile;
+      void handleFileSelect(initialFile, 'csv');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialFile]);
 
   // ── Text-based CSV router ─────────────────────────────────────────────────
 
@@ -640,7 +664,8 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
         price: ohItem.isVineOrder ? 0 : ohItem.total,
         asin: null,
         imageUrl: null,
-        selected: true,
+        // A cancelled order never arrives — leave it out unless ticked
+        selected: !/cancel/i.test(ohItem.shipmentStatus),
         confidence: 'high' as const,
         confidenceDetails: {
           titleFound: true,
@@ -661,8 +686,12 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
       setIsVineMode(false);
       setDetectedFormat('order_history_extension');
       setStep('preview');
+      const cancelled = converted.filter((c) => !c.selected).length;
+      // Whether each one is new or already in inventory is shown in the preview banner
       toast.success(
-        `Found ${r.items.length} orders — ${r.vineCount} Vine, ${r.regularCount} regular`
+        `Read ${r.items.length} orders from the file (${r.vineCount} Vine, ${r.regularCount} regular)${
+          cancelled ? ` — ${cancelled} cancelled left unticked` : ''
+        }`
       );
 
     } else if (detected.amazonResult && detected.amazonResult.items.length > 0) {
@@ -1613,11 +1642,21 @@ export function AmazonImportDialog({ open, onOpenChange }: AmazonImportDialogPro
                   {regularCount > 0 && (
                     <span className="text-muted-foreground">{regularCount} regular orders</span>
                   )}
-                  {mergeCount > 0 && (
-                    <span className="flex items-center gap-1 text-amber-600">
-                      <GitMerge className="w-3 h-3" />
-                      {mergeCount} will merge with existing items
+                  {checkingDuplicates ? (
+                    <span className="flex items-center gap-1 text-muted-foreground">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      Checking your inventory for duplicates…
                     </span>
+                  ) : (
+                    <>
+                      <span className="font-medium text-foreground">{parsedItems.length - mergeCount} new</span>
+                      {mergeCount > 0 && (
+                        <span className="flex items-center gap-1 text-amber-600">
+                          <GitMerge className="w-3 h-3" />
+                          {mergeCount} already in inventory (will merge, not duplicate)
+                        </span>
+                      )}
+                    </>
                   )}
                 </div>
               )}

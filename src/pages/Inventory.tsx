@@ -144,6 +144,8 @@ export default function Inventory() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
   const [showAmazonImport, setShowAmazonImport] = useState(false);
+  /** An order-history file dropped on "Import a list", handed to the Amazon importer */
+  const [amazonFile, setAmazonFile] = useState<File | null>(null);
   const [showVineReport, setShowVineReport] = useState(false);
   const [showLattice, setShowLattice] = useState(false);
   const [quickEditItem, setQuickEditItem] = useState<Item | null>(null);
@@ -682,7 +684,7 @@ export default function Inventory() {
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setShowAmazonImport(true)}>
                 <ShoppingCart className="w-4 h-4 mr-2" />
-                Amazon HTML
+                Amazon orders (CSV / HTML)
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -1205,7 +1207,14 @@ export default function Inventory() {
         </DialogContent>
       </Dialog>
 
-      <AmazonImportDialog open={showAmazonImport} onOpenChange={setShowAmazonImport} />
+      <AmazonImportDialog
+        open={showAmazonImport}
+        initialFile={amazonFile}
+        onOpenChange={(o) => {
+          setShowAmazonImport(o);
+          if (!o) setAmazonFile(null);
+        }}
+      />
 
       <QuickEditSheet
         item={quickEditItem}
@@ -1231,7 +1240,15 @@ export default function Inventory() {
 
       <LatticeImportDialog open={showLattice} onOpenChange={setShowLattice} />
 
-      <ListImportDialog open={showListImport} onOpenChange={setShowListImport} />
+      <ListImportDialog
+        open={showListImport}
+        onOpenChange={setShowListImport}
+        onAmazonOrderFile={(file) => {
+          setShowListImport(false);
+          setAmazonFile(file);
+          setShowAmazonImport(true);
+        }}
+      />
 
       <AssignTaskDialog
         open={showAssignTask}

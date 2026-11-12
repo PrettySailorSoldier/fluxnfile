@@ -9,8 +9,9 @@
  * Key behaviors:
  * - total === "$0.00" → is_vine_order = true
  * - total > $0.00 → is_vine_order = false (regular Amazon purchase)
- * - itemTitles may be pipe-separated ("|") for multi-item orders
- *   → split into individual items, each gets the same orderId
+ * - itemTitles is ONE product title per row. Don't split it on "|": Amazon titles
+ *   use " | " themselves ("Tattoo Aftercare Balm 5oz | Revives Old Tattoos…"),
+ *   and splitting turned 114 of 410 rows in a real export into fake extra items.
  * - shipmentStatus contains human strings like "Delivered February 3",
  *   "Arriving tomorrow", "Return window closed on March 1, 2026",
  *   "Return complete", "Return started", "Cancelled"
@@ -43,7 +44,6 @@ export interface OrderHistoryParseResult {
   items: OrderHistoryItem[];
   vineCount: number;
   regularCount: number;
-  multiItemOrderCount: number;
   parseWarnings: string[];
 }
 
@@ -80,16 +80,15 @@ export function parseOrderHistoryExtensionCSV(text: string): OrderHistoryParseRe
   const items: OrderHistoryItem[] = [];
   let vineCount = 0;
   let regularCount = 0;
-  let multiItemOrderCount = 0;
   let skippedNoTitle = 0;
 
   // Strip BOM
-  const cleanText = text.replace(/^﻿/, '');
+  const cleanText = text.replace(/^\uFEFF/, '');
   const lines = cleanText.split(/\r?\n/).filter(l => l.trim());
 
   if (lines.length < 2) {
     warnings.push('File appears empty or has no data rows.');
-    return { items, vineCount, regularCount, multiItemOrderCount, parseWarnings: warnings };
+    return { items, vineCount, regularCount, parseWarnings: warnings };
   }
 
   const headers = splitCSVLineOH(lines[0]) || [];
@@ -114,7 +113,7 @@ export function parseOrderHistoryExtensionCSV(text: string): OrderHistoryParseRe
 
   if (iOrderId === -1 || iItemTitles === -1) {
     warnings.push('Missing required columns: orderId or itemTitles');
-    return { items, vineCount, regularCount, multiItemOrderCount, parseWarnings: warnings };
+    return { items, vineCount, regularCount, parseWarnings: warnings };
   }
 
   for (let i = 1; i < lines.length; i++) {
@@ -138,36 +137,29 @@ export function parseOrderHistoryExtensionCSV(text: string): OrderHistoryParseRe
     const refundAmount   = refundAmountRaw > 0 ? refundAmountRaw : null;
     const refundDate     = get(iRefundDate) || null;
     const taxAmount      = parsePriceOH(get(iTaxAmount));
-    const rawTitles      = get(iItemTitles);
+    const title          = get(iItemTitles);
 
-    if (!orderId || !rawTitles) {
+    if (!orderId || title.length < 3) {
       skippedNoTitle++;
       continue;
     }
 
-    // Split multi-item orders on unquoted pipe separators
-    const titleList = splitOnPipes(rawTitles);
-    if (titleList.length > 1) multiItemOrderCount++;
-
-    for (const title of titleList) {
-      if (!title || title.length < 3) continue;
-      items.push({
-        orderId,
-        title,
-        orderPlaced,
-        isVineOrder,
-        total,
-        taxAmount,
-        refundAmount,
-        refundDate,
-        shipmentStatus,
-        trackingUrl,
-        orderDetailsUrl,
-        invoiceUrl,
-        returnStatus,
-        shipToName,
-      });
-    }
+    items.push({
+      orderId,
+      title,
+      orderPlaced,
+      isVineOrder,
+      total,
+      taxAmount,
+      refundAmount,
+      refundDate,
+      shipmentStatus,
+      trackingUrl,
+      orderDetailsUrl,
+      invoiceUrl,
+      returnStatus,
+      shipToName,
+    });
 
     if (isVineOrder) vineCount++;
     else regularCount++;
@@ -177,36 +169,7 @@ export function parseOrderHistoryExtensionCSV(text: string): OrderHistoryParseRe
     warnings.push(`${skippedNoTitle} row${skippedNoTitle !== 1 ? 's' : ''} skipped: missing item title or order ID`);
   }
 
-  return { items, vineCount, regularCount, multiItemOrderCount, parseWarnings: warnings };
-}
-
-/**
- * Split pipe-separated titles. Only splits on pipes that are NOT inside quoted fields.
- * If the whole value was already a single quoted field, treat it as one title.
- */
-function splitOnPipes(raw: string): string[] {
-  const parts: string[] = [];
-  let current = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < raw.length; i++) {
-    const ch = raw[i];
-    if (ch === '"') {
-      inQuotes = !inQuotes;
-      current += ch;
-    } else if (ch === '|' && !inQuotes) {
-      const trimmed = current.trim().replace(/^"|"$/g, '');
-      if (trimmed) parts.push(trimmed);
-      current = '';
-    } else {
-      current += ch;
-    }
-  }
-
-  const last = current.trim().replace(/^"|"$/g, '');
-  if (last) parts.push(last);
-
-  return parts.filter(p => p.length > 0);
+  return { items, vineCount, regularCount, parseWarnings: warnings };
 }
 
 function splitCSVLineOH(line: string): string[] | null {
