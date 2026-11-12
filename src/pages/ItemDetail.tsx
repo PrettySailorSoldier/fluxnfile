@@ -3,17 +3,18 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { Tables } from '@/integrations/supabase/types';
-import { useCategories, useStorageLocations, usePlatforms, statusConfig, calculateProfit, getProfitLevel, ItemStatus, ItemCondition, conditionLabels } from '@/hooks/useInventory';
+import { useCategories, useLocationIndex, usePlatforms, statusConfig, calculateProfit, getProfitLevel, ItemStatus, ItemCondition, conditionLabels } from '@/hooks/useInventory';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { LocationPicker } from '@/components/inventory/LocationPicker';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { ArrowLeft, Save, Trash2, Package, ChevronRight, Loader2, Edit2, Facebook, MessageSquare, Calendar, DollarSign, CreditCard } from 'lucide-react';
+import { ArrowLeft, Save, Trash2, Package, ChevronRight, Loader2, Edit2, Facebook, MessageSquare, Calendar, DollarSign, CreditCard, Printer } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { sanitizeError } from '@/lib/errorHandler';
 import { useWorkflowSettings } from '@/hooks/useUserPreferences';
@@ -43,7 +44,7 @@ export default function ItemDetail() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: categories = [] } = useCategories();
-  const { data: locations = [] } = useStorageLocations();
+  const { index: locationIndex } = useLocationIndex();
   const { data: platforms = [] } = usePlatforms();
   const marketSettings = useWorkflowSettings();
 
@@ -298,6 +299,16 @@ export default function ItemDetail() {
                 <CreditCard className="w-4 h-4" /> Take Payment
               </Button>
             )}
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-9 w-9 flex-shrink-0"
+              onClick={() => navigate(`/item/${item.id}/label`)}
+              aria-label="Print label"
+              title="Print label"
+            >
+              <Printer className="w-4 h-4" />
+            </Button>
             <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
               <Edit2 className="w-4 h-4 mr-1" />
               Edit
@@ -626,16 +637,7 @@ export default function ItemDetail() {
 
               <div>
                 <Label htmlFor="location">Storage Location</Label>
-                <Select value={storageLocationId} onValueChange={setStorageLocationId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select location" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {locations.map((loc) => (
-                      <SelectItem key={loc.id} value={loc.id}>{loc.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <LocationPicker value={storageLocationId} onChange={setStorageLocationId} />
               </div>
             </CardContent>
           </Card>
@@ -747,7 +749,9 @@ export default function ItemDetail() {
               </div>
               <div>
                 <p className="text-muted-foreground">Location</p>
-                <p className="font-medium">{item.storage_location?.name || '—'}</p>
+                <p className="font-medium break-words">
+                  {locationIndex.pathText(item.storage_location_id) || item.storage_location?.name || '—'}
+                </p>
               </div>
               <div>
                 <p className="text-muted-foreground">Source</p>

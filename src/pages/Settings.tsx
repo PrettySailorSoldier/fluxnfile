@@ -13,6 +13,7 @@ import { ThemeCustomizer } from '@/components/settings/ThemeCustomizer';
 import { WorkflowSettingsCard } from '@/components/settings/WorkflowSettingsCard';
 import { NavSettingsCard } from '@/components/settings/NavSettingsCard';
 import { ProfileEditor } from '@/components/settings/ProfileEditor';
+import { LabelSettingsCard } from '@/components/settings/LabelSettingsCard';
 import { useTeamMembers } from '@/hooks/useTeam';
 import {
   AlertDialog,
@@ -158,6 +159,9 @@ export default function Settings() {
         <ChevronRight className="w-4 h-4" />
       </Button>
       <StorageLocationManager />
+
+      {/* Label printer */}
+      <LabelSettingsCard />
 
       {/* Meetup Locations */}
       <MeetupLocationManager />

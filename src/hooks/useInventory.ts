@@ -1,6 +1,8 @@
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { buildIndex, rollUp, type LocationIndex, type Stock } from '@/lib/locationTree';
 
 export type ItemStatus = 'acquired' | 'refurbishing' | 'ready_to_list' | 'listed' | 'sold' | 'shipped';
 export type ItemCondition = 'new' | 'like_new' | 'good' | 'fair' | 'for_parts';
@@ -121,7 +123,11 @@ export interface StorageLocation {
   id: string;
   team_id: string;
   name: string;
+  /** Free-text notes ("Notes" in the UI) */
   description: string | null;
+  /** The location this one sits inside; null = top level (20261111000000_storage_location_hierarchy.sql) */
+  parent_id: string | null;
+  created_at?: string;
 }
 
 export interface Platform {
@@ -252,6 +258,57 @@ export function useStorageLocations() {
     enabled: !!team?.id,
   });
 }
+
+const EMPTY_LOCATIONS: StorageLocation[] = [];
+const indexCache = new WeakMap<readonly StorageLocation[], LocationIndex<StorageLocation>>();
+
+/** One tree index per fetched list, shared by every component that asks for it. */
+export function locationIndexFor(list: readonly StorageLocation[]): LocationIndex<StorageLocation> {
+  let ix = indexCache.get(list);
+  if (!ix) {
+    ix = buildIndex(list);
+    indexCache.set(list, ix);
+  }
+  return ix;
+}
+
+/**
+ * The storage-location tree: paths ("Workshop › Bottom shelf"), children,
+ * descendants. Built from {@link useStorageLocations}; `isLoading` is true
+ * until the list has arrived (so callers don't treat ids as missing too early).
+ */
+export function useLocationIndex() {
+  const { data, isSuccess } = useStorageLocations();
+  const index = locationIndexFor(data ?? EMPTY_LOCATIONS);
+  return { index, locations: data ?? EMPTY_LOCATIONS, loaded: isSuccess };
+}
+
+/** "Workshop › Bottom shelf" (`'path'`) or "Bottom shelf" (`'leaf'`); null when unplaced/unknown. */
+export function locationLabel(
+  id: string | null | undefined,
+  index: LocationIndex<StorageLocation>,
+  mode: 'leaf' | 'path' = 'path'
+): string | null {
+  if (!id) return null;
+  const node = index.byId.get(id);
+  if (!node) return null;
+  return mode === 'leaf' ? node.name : index.pathText(id);
+}
+
+/** Options for itemSearch's matchItem/searchItems so the location field matches full paths. */
+export function useLocationSearchOptions() {
+  const { index } = useLocationIndex();
+  return useMemo(() => ({ locationPath: (id: string) => index.pathText(id) }), [index]);
+}
+
+/** {@link useLocationStock} rolled up so each location includes everything inside it. */
+export function useRolledUpStock() {
+  const { data: stock } = useLocationStock();
+  const { index } = useLocationIndex();
+  return useMemo(() => rollUp(stock, index), [stock, index]);
+}
+
+export type { Stock as LocationStock };
 
 export function usePlatforms() {
   return useQuery({

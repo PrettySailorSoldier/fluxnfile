@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
-import { useCategories, type Item } from '@/hooks/useInventory';
+import { useCategories, useLocationSearchOptions, type Item } from '@/hooks/useInventory';
 import { useWorkflowSettings } from '@/hooks/useUserPreferences';
 import {
   usePackItems,
@@ -58,6 +58,7 @@ interface Props {
 export function EventPlan({ event, items, phases }: Props) {
   const settings = useWorkflowSettings();
   const { data: categories = [] } = useCategories();
+  const searchOpts = useLocationSearchOptions();
   const pack = usePackItems();
   const setPrices = useSetMarketPrices();
   const savePhases = useSavePhases(event.id);
@@ -84,7 +85,7 @@ export function EventPlan({ event, items, phases }: Props) {
     if (categoryFilter !== 'all') pool = pool.filter((i) => i.category_id === categoryFilter);
     if (statusFilter !== 'all') pool = pool.filter((i) => i.status === statusFilter);
     const terms = parseQuery(query);
-    if (terms.length) pool = searchItems(pool, terms).map((h) => h.item);
+    if (terms.length) pool = searchItems(pool, terms, searchOpts).map((h) => h.item);
     const scored = pool.map((it) => {
       const price = it.tag_price ?? it.target_price;
       const margin = price && price > 0 ? ((price - itemBasis(it)) / price) * 100 : null;
@@ -100,7 +101,7 @@ export function EventPlan({ event, items, phases }: Props) {
       return { it, margin, listedDays, score };
     });
     return terms.length ? scored : scored.sort((a, b) => b.score - a.score);
-  }, [items, event.id, categoryFilter, statusFilter, query, categoryName]);
+  }, [items, event.id, categoryFilter, statusFilter, query, categoryName, searchOpts]);
 
   const shown = showAll ? candidates : candidates.slice(0, 25);
 

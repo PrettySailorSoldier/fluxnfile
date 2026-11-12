@@ -26,6 +26,7 @@ import MarketEvent from "./pages/MarketEvent";
 import PriceTags from "./pages/PriceTags";
 import Locations from "./pages/Locations";
 import BinLabels from "./pages/BinLabels";
+import ItemLabelPage from "./pages/ItemLabelPage";
 import Sales from "./pages/Sales";
 import NotFound from "./pages/NotFound";
 
@@ -68,6 +69,12 @@ const App = () => (
             <Route path="/item/:id" element={
               <ProtectedRoute>
                 <AppLayout><ItemDetail /></AppLayout>
+              </ProtectedRoute>
+            } />
+            {/* One printable item label — no app chrome */}
+            <Route path="/item/:id/label" element={
+              <ProtectedRoute>
+                <ItemLabelPage />
               </ProtectedRoute>
             } />
             <Route path="/analytics" element={

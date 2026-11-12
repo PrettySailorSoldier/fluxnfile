@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft, Box, ChevronRight, Printer, ScanLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { useLocationStock, useStorageLocations } from '@/hooks/useInventory';
+import { useLocationIndex, useLocationStock, useRolledUpStock } from '@/hooks/useInventory';
 import { StorageLocationManager } from '@/components/settings/StorageLocationManager';
 import { binCode } from '@/lib/binLabel';
 
@@ -13,8 +13,11 @@ const money = (n: number) => `$${Math.round(n).toLocaleString()}`;
  * they aren't on the shelf any more). Tap one to see its contents.
  */
 export default function Locations() {
-  const { data: locations = [], isLoading } = useStorageLocations();
+  const { index, locations, loaded } = useLocationIndex();
+  const isLoading = !loaded;
   const { data: stock } = useLocationStock();
+  // Each place counts everything inside it (Workshop includes its shelves and bins)
+  const rolled = useRolledUpStock();
   const unplaced = stock?.get('') ?? { count: 0, value: 0 };
   const total = [...(stock?.values() ?? [])].reduce((t, s) => ({ count: t.count + s.count, value: t.value + s.value }), {
     count: 0,
@@ -48,15 +51,18 @@ export default function Locations() {
       {isLoading && <p className="text-center text-muted-foreground py-8">Loading…</p>}
 
       <div className="space-y-2">
-        {locations.map((loc) => {
-          const s = stock?.get(loc.id) ?? { count: 0, value: 0 };
+        {index.flatten().map((loc) => {
+          const s = rolled.get(loc.id) ?? { count: 0, value: 0 };
+          const depth = index.depthOf(loc.id);
           return (
-            <Link key={loc.id} to={`/inventory?loc=${loc.id}`}>
+            <Link key={loc.id} to={`/inventory?loc=${loc.id}`} className="block" style={{ marginLeft: `${(depth - 1) * 12}px` }}>
               <Card className="hover:bg-muted/40 transition-colors">
                 <CardContent className="p-3 flex items-center gap-3">
-                  <Box className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+                  <Box className={`${depth === 1 ? 'w-5 h-5' : 'w-4 h-4'} text-muted-foreground flex-shrink-0`} />
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium truncate">{loc.name}</p>
+                    <p className={`truncate ${depth === 1 ? 'font-medium' : 'text-sm'}`} title={index.pathText(loc.id)}>
+                      {loc.name}
+                    </p>
                     <p className="text-xs text-muted-foreground truncate">
                       {loc.description ? `${loc.description} · ` : ''}
                       <span className="font-mono">{binCode(loc.id)}</span>

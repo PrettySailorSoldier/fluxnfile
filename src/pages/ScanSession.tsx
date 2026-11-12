@@ -34,7 +34,7 @@ import {
   useCategories,
   useItems,
   useOrderSheetItems,
-  useStorageLocations,
+  useLocationIndex,
   conditionLabels,
   type Item,
   type ItemCondition,
@@ -46,6 +46,8 @@ import { QuickEditSheet } from '@/components/inventory/QuickEditSheet';
 import { LinkUpcSheet } from '@/components/inventory/LinkUpcSheet';
 import { classifyCode, explainUnrecognized, isFnsku, type CodeType } from '@/lib/barcode';
 import { findBin, isBinCode } from '@/lib/binLabel';
+import { LocationPicker } from '@/components/inventory/LocationPicker';
+import { getLabelSettings } from '@/lib/labelSettings';
 import { isUnknownTitle, lookupProduct } from '@/lib/productLookup';
 import { captureFrame, readStickerText, warmUpStickerReader, type StickerFrame } from '@/lib/stickerOcr';
 import { jaccardSimilarity, normalizeTitle } from '@/utils/import-dedup-engine';
@@ -171,7 +173,9 @@ export default function ScanSession() {
   const { user, team, profile } = useAuth();
   const workflow = useWorkflowSettings();
   const { data: categories = [] } = useCategories();
-  const { data: storageLocations = [] } = useStorageLocations();
+  const { index: locationIndex, locations: storageLocations } = useLocationIndex();
+  /** "Workshop › Bottom shelf › Right" for a location id; null when unplaced or unknown */
+  const locPath = useCallback((id: string | null | undefined) => (id ? locationIndex.pathText(id) || null : null), [locationIndex]);
   const { data: inventoryItems = [] } = useItems();
   const { data: orderItems = [] } = useOrderSheetItems();
 
@@ -496,9 +500,10 @@ export default function ScanSession() {
           pushRow({
             code, codeType, kind: 'existing', title: first.title || 'Untitled item',
             photo: first.photos?.[0] ?? null, itemIds: [], matchIds: inStock.map((m) => m.id),
-            location: first.storage_location?.name ?? null, price: first.target_price, inStock: inStock.length,
+            location: locPath(first.storage_location_id) ?? first.storage_location?.name ?? null, price: first.target_price, inStock: inStock.length,
           });
-          signal('existing', `${first.title || 'Item'}${first.storage_location?.name ? ` · ${first.storage_location.name}` : ''}`);
+          const where = locPath(first.storage_location_id) ?? first.storage_location?.name;
+          signal('existing', `${first.title || 'Item'}${where ? ` · ${where}` : ''}`);
           if (workflow.scanAutoOpenEdit) void openEdit(first.id);
         } else if (unconfirmed.length > 0) {
           const first = unconfirmed[0];
@@ -529,7 +534,7 @@ export default function ScanSession() {
         pushRow({
           code, codeType, kind: 'received', title: target.title || 'Untitled item',
           photo: target.photos?.[0] ?? null, itemIds: [target.id], undo, altCodes,
-          location: storageLocations.find((l) => l.id === (c.defaults.storageLocationId || target.storage_location_id))?.name ?? null,
+          location: locPath(c.defaults.storageLocationId || target.storage_location_id),
           price: target.target_price,
           message: unconfirmed.length > 1 ? `${unconfirmed.length - 1} more unit${unconfirmed.length > 2 ? 's' : ''} still on the order sheet` : undefined,
         });
@@ -545,7 +550,7 @@ export default function ScanSession() {
         pushRow({
           code, codeType, kind: 'existing', title: first.title || 'Untitled item',
           photo: first.photos?.[0] ?? null, itemIds: [], matchIds: (inStock.length ? inStock : matches).map((m) => m.id),
-          location: first.storage_location?.name ?? null, price: first.target_price, inStock: inStock.length,
+          location: locPath(first.storage_location_id) ?? first.storage_location?.name ?? null, price: first.target_price, inStock: inStock.length,
         });
         signal('existing', `Already have ${inStock.length || 'sold'}: ${first.title || 'item'}`);
         return;
@@ -574,7 +579,7 @@ export default function ScanSession() {
           pushRow({
             code, codeType, kind: 'received', title: target.title || lookup.title || 'Item',
             photo: target.photos?.[0] ?? lookup.imageUrl, itemIds: [target.id], undo, altCodes: [asin],
-            location: storageLocations.find((l) => l.id === (c.defaults.storageLocationId || target.storage_location_id))?.name ?? null,
+            location: locPath(c.defaults.storageLocationId || target.storage_location_id),
             price: target.target_price,
             message: waiting.length > 1 ? `${waiting.length - 1} more unit${waiting.length > 2 ? 's' : ''} still on the order sheet` : undefined,
           });
@@ -589,7 +594,7 @@ export default function ScanSession() {
           pushRow({
             code, codeType, kind: 'existing', title: first.title || 'Untitled item',
             photo: first.photos?.[0] ?? null, itemIds: [], matchIds: (have.length ? have : byAsin).map((m) => m.id),
-            location: first.storage_location?.name ?? null, price: first.target_price, inStock: have.length,
+            location: locPath(first.storage_location_id) ?? first.storage_location?.name ?? null, price: first.target_price, inStock: have.length,
             message: 'Matched by Amazon ASIN — barcode saved',
           });
           signal('existing', `Already have ${have.length || 'sold'}: ${first.title || 'item'}`);
@@ -636,7 +641,7 @@ export default function ScanSession() {
       pushRow({
         code, codeType, kind: 'added', title: created.title || 'Untitled item',
         photo: created.photos?.[0] ?? null, itemIds: [created.id], price: created.target_price,
-        location: storageLocations.find((l) => l.id === created.storage_location_id)?.name ?? null,
+        location: locPath(created.storage_location_id),
         autofilled: lookup.found,
         fuzzy: lookup.found && lookup.fuzzy,
         altCodes: [...altCodes, ...(asin && asin !== code ? [asin] : [])],
@@ -650,7 +655,7 @@ export default function ScanSession() {
       invalidate();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [signal, storageLocations, workflow.scanAutoOpenEdit]
+    [signal, locPath, workflow.scanAutoOpenEdit]
   );
 
   /** Queue scans so two quick scans never race each other. */
@@ -688,8 +693,9 @@ export default function ScanSession() {
     }
     if (defaults.storageLocationId === bin.id) return true; // same bin swept past again
     setDefaults((s) => ({ ...s, storageLocationId: bin.id }));
-    signal('existing', `Now filling: ${bin.name}`);
-    toast.success(`Items you scan now go in ${bin.name}`);
+    const where = locPath(bin.id) ?? bin.name;
+    signal('existing', `Now filling: ${where}`);
+    toast.success(`Items you scan now go in ${where}`);
     return true;
   };
 
@@ -776,15 +782,21 @@ export default function ScanSession() {
   const refreshRowsForItem = async (itemId: string) => {
     const { data } = await supabase
       .from('items')
-      .select('id, title, photos, target_price, storage_location:storage_locations(name)')
+      .select('id, title, photos, target_price, storage_location_id, storage_location:storage_locations(name)')
       .eq('id', itemId)
       .single();
     if (!data) return;
-    const d = data as unknown as { title: string | null; photos: string[] | null; target_price: number | null; storage_location: { name: string } | null };
+    const d = data as unknown as {
+      title: string | null;
+      photos: string[] | null;
+      target_price: number | null;
+      storage_location_id: string | null;
+      storage_location: { name: string } | null;
+    };
     setRows((prev) =>
       prev.map((r) =>
         r.itemIds.includes(itemId) || r.matchIds?.[0] === itemId
-          ? { ...r, title: d.title || r.title, photo: d.photos?.[0] ?? r.photo, price: d.target_price, location: d.storage_location?.name ?? r.location }
+          ? { ...r, title: d.title || r.title, photo: d.photos?.[0] ?? r.photo, price: d.target_price, location: locPath(d.storage_location_id) ?? d.storage_location?.name ?? r.location }
           : r
       )
     );
@@ -827,7 +839,7 @@ export default function ScanSession() {
         pushRow({
           code: row.code, codeType: row.codeType, kind: 'added', title: unit.title || row.title,
           photo: unit.photos?.[0] ?? row.photo, itemIds: [unit.id], price: unit.target_price,
-          location: storageLocations.find((l) => l.id === unit.storage_location_id)?.name ?? null, autofilled: true,
+          location: locPath(unit.storage_location_id), autofilled: true,
         });
       }
       toast.success('Added another unit');
@@ -858,7 +870,7 @@ export default function ScanSession() {
       patchRow(row.key, {
         kind: 'added', title: created.title || 'Untitled item', photo: created.photos?.[0] ?? null,
         itemIds: [created.id], price: created.target_price, autofilled: !!created.lookup?.found,
-        location: storageLocations.find((l) => l.id === created.storage_location_id)?.name ?? null,
+        location: locPath(created.storage_location_id),
         message: undefined,
       });
       signal('added', `Added: ${created.title}`);
@@ -888,7 +900,7 @@ export default function ScanSession() {
         patchRow(target.rowKey, {
           kind: 'received', title: picked.title || 'Item', photo: picked.photos?.[0] ?? null,
           itemIds: [item.id], undo, autofilled: false, message: undefined,
-          location: storageLocations.find((l) => l.id === (c.defaults.storageLocationId || item.storage_location_id))?.name ?? null,
+          location: locPath(c.defaults.storageLocationId || item.storage_location_id),
           price: item.target_price,
         });
         signal('received', `Found: ${picked.title || 'item'}`);
@@ -1081,22 +1093,13 @@ export default function ScanSession() {
                 </button>
               ))}
             </div>
-            <Select
-              value={defaults.storageLocationId || 'none'}
-              onValueChange={(v) => setDefaults((s) => ({ ...s, storageLocationId: v === 'none' ? '' : v }))}
-            >
-              <SelectTrigger className="h-8 text-xs flex-1 min-w-0">
-                <SelectValue placeholder="Location" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">No location</SelectItem>
-                {storageLocations.map((l) => (
-                  <SelectItem key={l.id} value={l.id}>
-                    {l.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <LocationPicker
+              compact
+              value={defaults.storageLocationId}
+              onChange={(id) => setDefaults((s) => ({ ...s, storageLocationId: id }))}
+              noneLabel="No location"
+              triggerClassName="flex-1"
+            />
             <Button
               variant={showSettings ? 'default' : 'outline'}
               size="icon"
@@ -1293,6 +1296,13 @@ export default function ScanSession() {
           setEditItem(null);
           invalidate();
           if (id) void refreshRowsForItem(id);
+          // Details (and tag price) are in — offer a label (Settings → Label printer). Never auto-prints.
+          if (id && getLabelSettings().offerAfterSave) {
+            toast.success('Saved', {
+              action: { label: 'Print label', onClick: () => navigate(`/item/${id}/label`) },
+              duration: 8000,
+            });
+          }
         }}
       />
 

@@ -11,7 +11,18 @@ Runs as a mobile-first web app and as an Android/iOS app via Capacitor, backed b
 - **Order Sheet**: items you've ordered but haven't physically received, checked off as you scan them in.
 - **Inventory**: filters, sorts (profit, margin, age, location), bulk edit, and a "Needs details" queue for items missing a title, price, photo or category.
 - **Selling**: Facebook Marketplace export, offer tracker, meetup scheduling with safety check-ins, and message templates.
+- **Storage locations** (`/locations`): a tree you define, up to four levels deep (Workshop › Bottom shelf › Right › Bin 3). Pickers cascade one level at a time and can add a spot in place. Filtering by a location includes everything inside it, and each spot has a scannable bin label.
 - **Team tools**: shared tasks, rough notes for boxes not yet sorted, analytics, and Amazon review reminders.
+
+## Printing labels
+
+Item labels show the tag price, the title and a Code 128 barcode of the item number (the one Market Mode scans). The floor price is never printed.
+
+- **Settings → Label printer** stores the label size on the device: 50 × 30, 40 × 30 or 62 × 29 mm, or a custom size. A warning appears below about 25 × 15 mm, since the barcode is never drawn shorter than 8 mm. The same card has **Offer to print a label after saving an item** (off by default). When it's on, confirming a box or saving an item's details in a scan session shows a **Print label** shortcut. Nothing opens the print sheet without a tap.
+- **One label:** open an item and tap the printer icon (`/item/<id>/label`). **Print label** opens the iOS print sheet with a page exactly the size of one label and no margins. Pick an AirPrint label printer on the same Wi-Fi as the phone (for example a Brother QL-820NWB). **Share as image** makes a 300 dpi PNG and opens the share sheet, so a printer's own app can print it. Browsers that can't share files download the PNG instead.
+- **Many labels:** the market price-tag page and the bin-label page both have a **Sheet / Label printer (one per page)** switch. Sheet mode is the multi-up paper layout. Label-printer mode prints one label per page at the configured size.
+
+**Why no Bluetooth or USB printing?** On the iPhone the app runs as a Safari PWA, and iOS Safari has no Web Bluetooth, WebUSB or Web Serial. A web page can't reach a Bluetooth label printer directly, so the app uses AirPrint and the share sheet, which both work in Safari. Printing straight to a Bluetooth printer would need a native plugin in the Capacitor app. That's not built.
 
 ## Tech stack
 

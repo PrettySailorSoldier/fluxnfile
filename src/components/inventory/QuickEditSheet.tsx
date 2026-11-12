@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { LocationPicker } from '@/components/inventory/LocationPicker';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -22,7 +23,6 @@ import {
   ItemCondition,
   statusConfig,
   conditionLabels,
-  useStorageLocations,
   useCategories,
   calculateProfit,
   getMissingDetails,
@@ -54,7 +54,6 @@ export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queue
   const { user, team, profile } = useAuth();
   const { data: members = [] } = useTeamMembers();
   const [showAssign, setShowAssign] = useState(false);
-  const { data: storageLocations = [] } = useStorageLocations();
   const { data: categories = [] } = useCategories();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -412,22 +411,7 @@ export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queue
 
           <div className="space-y-1.5">
             <Label>Storage Location</Label>
-            <Select
-              value={storageLocationId || 'none'}
-              onValueChange={(v) => setStorageLocationId(v === 'none' ? '' : v)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="None" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">None</SelectItem>
-                {storageLocations.map((loc) => (
-                  <SelectItem key={loc.id} value={loc.id}>
-                    {loc.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <LocationPicker value={storageLocationId} onChange={setStorageLocationId} />
           </div>
 
           <div className="space-y-1.5">
