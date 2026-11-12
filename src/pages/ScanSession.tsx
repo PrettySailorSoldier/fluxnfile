@@ -47,6 +47,7 @@ import { LinkUpcSheet } from '@/components/inventory/LinkUpcSheet';
 import { classifyCode, explainUnrecognized, isFnsku, type CodeType } from '@/lib/barcode';
 import { findBin, isBinCode } from '@/lib/binLabel';
 import { LocationPicker } from '@/components/inventory/LocationPicker';
+import { getLabelSettings } from '@/lib/labelSettings';
 import { isUnknownTitle, lookupProduct } from '@/lib/productLookup';
 import { captureFrame, readStickerText, warmUpStickerReader, type StickerFrame } from '@/lib/stickerOcr';
 import { jaccardSimilarity, normalizeTitle } from '@/utils/import-dedup-engine';
@@ -1295,6 +1296,13 @@ export default function ScanSession() {
           setEditItem(null);
           invalidate();
           if (id) void refreshRowsForItem(id);
+          // Details (and tag price) are in — offer a label (Settings → Label printer). Never auto-prints.
+          if (id && getLabelSettings().offerAfterSave) {
+            toast.success('Saved', {
+              action: { label: 'Print label', onClick: () => navigate(`/item/${id}/label`) },
+              duration: 8000,
+            });
+          }
         }}
       />
 

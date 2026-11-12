@@ -10,6 +10,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Item, useLocationIndex } from '@/hooks/useInventory';
 import { LocationPicker } from '@/components/inventory/LocationPicker';
 import { OrderDetails } from '@/components/inventory/OrderDetails';
+import { useNavigate } from 'react-router-dom';
+import { getLabelSettings } from '@/lib/labelSettings';
 
 const LAST_LOCATION_KEY = 'confirm-last-storage-location';
 
@@ -25,6 +27,7 @@ interface ConfirmItemSheetProps {
 
 export function ConfirmItemSheet({ item, open, onClose, onConfirmed, onNotThisItem }: ConfirmItemSheetProps) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const { user, team } = useAuth();
   const { index: locationIndex } = useLocationIndex();
 
@@ -84,8 +87,15 @@ export function ConfirmItemSheet({ item, open, onClose, onConfirmed, onNotThisIt
         localStorage.setItem(LAST_LOCATION_KEY, storageLocationId);
       }
       const locationName = storageLocationId ? locationIndex.pathText(storageLocationId) : '';
-      toast.success(locationName ? `Confirmed → ${locationName}` : 'Item confirmed!');
       const confirmed = item;
+      // Optional shortcut to a label for the box (Settings → Label printer); never opens the print sheet itself
+      const offerLabel = !!confirmed && getLabelSettings().offerAfterSave;
+      toast.success(
+        locationName ? `Confirmed → ${locationName}` : 'Item confirmed!',
+        offerLabel
+          ? { action: { label: 'Print label', onClick: () => navigate(`/item/${confirmed!.id}/label`) }, duration: 8000 }
+          : undefined
+      );
       onClose();
       if (confirmed) onConfirmed?.(confirmed);
     },

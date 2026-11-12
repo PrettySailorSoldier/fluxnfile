@@ -14,7 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { ArrowLeft, Save, Trash2, Package, ChevronRight, Loader2, Edit2, Facebook, MessageSquare, Calendar, DollarSign, CreditCard } from 'lucide-react';
+import { ArrowLeft, Save, Trash2, Package, ChevronRight, Loader2, Edit2, Facebook, MessageSquare, Calendar, DollarSign, CreditCard, Printer } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { sanitizeError } from '@/lib/errorHandler';
 import { useWorkflowSettings } from '@/hooks/useUserPreferences';
@@ -299,6 +299,16 @@ export default function ItemDetail() {
                 <CreditCard className="w-4 h-4" /> Take Payment
               </Button>
             )}
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-9 w-9 flex-shrink-0"
+              onClick={() => navigate(`/item/${item.id}/label`)}
+              aria-label="Print label"
+              title="Print label"
+            >
+              <Printer className="w-4 h-4" />
+            </Button>
             <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
               <Edit2 className="w-4 h-4 mr-1" />
               Edit
