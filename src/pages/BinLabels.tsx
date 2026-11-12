@@ -1,13 +1,23 @@
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Printer } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useStorageLocations } from '@/hooks/useInventory';
+import { useMemo, useState } from 'react';
+import { useLocationIndex } from '@/hooks/useInventory';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 import { Barcode } from '@/components/Barcode';
 import { binCode } from '@/lib/binLabel';
 
 /** One printable label per storage location. Scanning it sets the bin in a scan session. */
 export default function BinLabels() {
-  const { data: locations = [], isLoading } = useStorageLocations();
+  const { index, loaded } = useLocationIndex();
+  const isLoading = !loaded;
+  // Shelves that hold bins don't usually need their own label
+  const [leavesOnly, setLeavesOnly] = useState(true);
+  const locations = useMemo(
+    () => index.flatten().filter((l) => !leavesOnly || index.children(l.id).length === 0),
+    [index, leavesOnly]
+  );
 
   return (
     <div className="min-h-screen bg-background p-4 print:p-0">
@@ -24,6 +34,12 @@ export default function BinLabels() {
           <Printer className="w-4 h-4" /> Print
         </Button>
       </div>
+      <div className="no-print max-w-3xl mx-auto mb-4 flex items-center gap-3 min-h-11">
+        <Switch id="leaves-only" checked={leavesOnly} onCheckedChange={setLeavesOnly} />
+        <Label htmlFor="leaves-only" className="text-sm">
+          Only bottom-level spots
+        </Label>
+      </div>
 
       {isLoading && <p className="text-center text-muted-foreground">Loading…</p>}
       {!isLoading && locations.length === 0 && (
@@ -37,8 +53,10 @@ export default function BinLabels() {
             className="border-2 border-black rounded-md p-3 bg-white text-black break-inside-avoid"
             style={{ pageBreakInside: 'avoid' }}
           >
-            <p className="text-2xl font-extrabold leading-tight text-center line-clamp-2">{loc.name}</p>
-            {loc.description && <p className="text-xs text-center line-clamp-1">{loc.description}</p>}
+            <p className="text-2xl font-extrabold leading-tight text-center line-clamp-2 break-words">{loc.name}</p>
+            {loc.parent_id && index.byId.has(loc.parent_id) && (
+              <p className="text-xs text-center line-clamp-1">{index.pathText(loc.parent_id)}</p>
+            )}
             <Barcode text={binCode(loc.id)} className="h-12 mt-2" />
             <p className="text-[11px] text-center tracking-widest font-mono">{binCode(loc.id)}</p>
           </div>

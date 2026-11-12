@@ -7,7 +7,8 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { Item, useStorageLocations } from '@/hooks/useInventory';
+import { Item, useLocationIndex } from '@/hooks/useInventory';
+import { LocationPicker } from '@/components/inventory/LocationPicker';
 import { OrderDetails } from '@/components/inventory/OrderDetails';
 
 const LAST_LOCATION_KEY = 'confirm-last-storage-location';
@@ -25,7 +26,7 @@ interface ConfirmItemSheetProps {
 export function ConfirmItemSheet({ item, open, onClose, onConfirmed, onNotThisItem }: ConfirmItemSheetProps) {
   const queryClient = useQueryClient();
   const { user, team } = useAuth();
-  const { data: storageLocations = [] } = useStorageLocations();
+  const { index: locationIndex } = useLocationIndex();
 
   const [decision, setDecision] = useState<'keep' | 'sell' | null>(null);
   const [storageLocationId, setStorageLocationId] = useState('');
@@ -52,12 +53,13 @@ export function ConfirmItemSheet({ item, open, onClose, onConfirmed, onNotThisIt
     } else {
       // Prefill with the last-used location — receiving a batch of boxes
       // to the same shelf becomes a single tap per item
+      // (a remembered spot that was deleted since is simply skipped)
       const last = localStorage.getItem(LAST_LOCATION_KEY);
-      if (last && storageLocations.some((l) => l.id === last)) {
+      if (last && locationIndex.byId.has(last)) {
         setStorageLocationId((prev) => prev || last);
       }
     }
-  }, [open, storageLocations]);
+  }, [open, locationIndex]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -81,7 +83,7 @@ export function ConfirmItemSheet({ item, open, onClose, onConfirmed, onNotThisIt
       if (storageLocationId) {
         localStorage.setItem(LAST_LOCATION_KEY, storageLocationId);
       }
-      const locationName = storageLocations.find((l) => l.id === storageLocationId)?.name;
+      const locationName = storageLocationId ? locationIndex.pathText(storageLocationId) : '';
       toast.success(locationName ? `Confirmed → ${locationName}` : 'Item confirmed!');
       const confirmed = item;
       onClose();
@@ -135,22 +137,7 @@ export function ConfirmItemSheet({ item, open, onClose, onConfirmed, onNotThisIt
 
           <div className="space-y-1.5">
             <Label>Storage location</Label>
-            <Select
-              value={storageLocationId || 'none'}
-              onValueChange={(v) => setStorageLocationId(v === 'none' ? '' : v)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Where is it right now?" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">None</SelectItem>
-                {storageLocations.map((loc) => (
-                  <SelectItem key={loc.id} value={loc.id}>
-                    {loc.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <LocationPicker value={storageLocationId} onChange={setStorageLocationId} />
           </div>
 
           <div className="space-y-1.5">

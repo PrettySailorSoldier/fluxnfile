@@ -92,18 +92,28 @@ type SearchableItem = Pick<
   | 'tracking_number'
   | 'category'
   | 'storage_location'
+  | 'storage_location_id'
   | 'offers'
   | 'meetups'
 >;
 
-function fieldTexts(item: SearchableItem): [SearchField, (string | null | undefined)[]][] {
+export interface SearchOptions {
+  /**
+   * Full path of a storage location ("Workshop › Bottom shelf › Right"), so
+   * searching "workshop" finds items in any spot inside it. Without this only
+   * the location's own name is searched.
+   */
+  locationPath?: (locationId: string) => string | null | undefined;
+}
+
+function fieldTexts(item: SearchableItem, location: string | null | undefined): [SearchField, (string | null | undefined)[]][] {
   return [
     ['title', [item.title]],
     ['brand', [item.brand]],
     ['category', [item.category?.name]],
     ['description', [item.description]],
     ['notes', [item.refurbish_notes, item.review_notes, item.flag_note, item.fb_conversation_notes]],
-    ['location', [item.storage_location?.name]],
+    ['location', [location]],
     [
       'details',
       [
@@ -132,19 +142,28 @@ function fieldTexts(item: SearchableItem): [SearchField, (string | null | undefi
   ];
 }
 
-// Items are rebuilt on every refetch, so a WeakMap lets old indexes go with them
-const indexCache = new WeakMap<object, FieldIndex[]>();
+// Items are rebuilt on every refetch, so a WeakMap lets old indexes go with them.
+// The location text is part of the key: a location renamed or moved by a teammate
+// changes its path without the item itself being refetched.
+const indexCache = new WeakMap<object, { location: string | null | undefined; fields: FieldIndex[] }>();
 
-function indexOf(item: SearchableItem): FieldIndex[] {
-  let index = indexCache.get(item);
+function locationText(item: SearchableItem, opts?: SearchOptions): string | null | undefined {
+  const fromPath = item.storage_location_id && opts?.locationPath ? opts.locationPath(item.storage_location_id) : null;
+  return fromPath || item.storage_location?.name;
+}
+
+function indexOf(item: SearchableItem, opts?: SearchOptions): FieldIndex[] {
+  const location = locationText(item, opts);
+  const cached = indexCache.get(item);
+  let index = cached && cached.location === location ? cached.fields : undefined;
   if (!index) {
-    index = fieldTexts(item)
+    index = fieldTexts(item, location)
       .map(([field, parts]) => {
         const text = parts.filter(Boolean).join(' ');
         return { field, words: words(text), joined: normalizeText(text).replace(/[^a-z0-9]/g, '') };
       })
       .filter((f) => f.words.length > 0);
-    indexCache.set(item, index);
+    indexCache.set(item, { location, fields: index });
   }
   return index;
 }
@@ -177,8 +196,8 @@ export interface SearchHit<T> {
 }
 
 /** Null when some typed word is nowhere on the item. */
-export function matchItem<T extends SearchableItem>(item: T, terms: string[]): SearchHit<T> | null {
-  const index = indexOf(item);
+export function matchItem<T extends SearchableItem>(item: T, terms: string[], opts?: SearchOptions): SearchHit<T> | null {
+  const index = indexOf(item, opts);
   const fields = new Set<SearchField>();
   let score = 0;
   for (const term of terms) {
@@ -201,10 +220,10 @@ export function matchItem<T extends SearchableItem>(item: T, terms: string[]): S
 }
 
 /** Items matching every word, best first (ties keep their list order). */
-export function searchItems<T extends SearchableItem>(items: T[], terms: string[]): SearchHit<T>[] {
+export function searchItems<T extends SearchableItem>(items: T[], terms: string[], opts?: SearchOptions): SearchHit<T>[] {
   const hits: SearchHit<T>[] = [];
   for (const item of items) {
-    const hit = matchItem(item, terms);
+    const hit = matchItem(item, terms, opts);
     if (hit) hits.push(hit);
   }
   return hits.sort((a, b) => b.score - a.score);

@@ -905,6 +905,7 @@ export type Database = {
           description: string | null
           id: string
           name: string
+          parent_id: string | null
           team_id: string
         }
         Insert: {
@@ -912,6 +913,7 @@ export type Database = {
           description?: string | null
           id?: string
           name: string
+          parent_id?: string | null
           team_id: string
         }
         Update: {
@@ -919,9 +921,17 @@ export type Database = {
           description?: string | null
           id?: string
           name?: string
+          parent_id?: string | null
           team_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "storage_locations_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "storage_locations"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "storage_locations_team_id_fkey"
             columns: ["team_id"]

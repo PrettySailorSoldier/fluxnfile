@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
-import type { Item } from '@/hooks/useInventory';
+import { useLocationSearchOptions, type Item } from '@/hooks/useInventory';
 import { useWorkflowSettings } from '@/hooks/useUserPreferences';
 import { useContinuousScanner } from '@/hooks/useContinuousScanner';
 import {
@@ -78,6 +78,7 @@ interface Props {
 
 export function MarketSell({ event, items, sales, phases, rules }: Props) {
   const settings = useWorkflowSettings();
+  const searchOpts = useLocationSearchOptions();
   const completeSale = useCompleteSale();
   const undoSale = useUndoSale();
 
@@ -118,9 +119,9 @@ export function MarketSell({ event, items, sales, phases, rules }: Props) {
     if (terms.length === 0) return pool.filter((i) => i.packed_for_event_id === event.id).slice(0, 12);
     const digits = query.trim().replace(/^#/, '');
     const byNumber = /^\d{1,6}$/.test(digits) ? pool.filter((i) => i.tracking_number === parseInt(digits, 10)) : [];
-    const hits = searchItems(pool, terms).map((h) => h.item);
+    const hits = searchItems(pool, terms, searchOpts).map((h) => h.item);
     return [...new Set([...byNumber, ...hits])].slice(0, 12);
-  }, [query, sellable, inCart, event.id]);
+  }, [query, sellable, inCart, event.id, searchOpts]);
 
   // ── Prices ────────────────────────────────────────────────────────────────
   const tagOf = (it: Item) => it.tag_price ?? it.target_price ?? 0;

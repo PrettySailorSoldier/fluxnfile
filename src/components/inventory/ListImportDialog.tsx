@@ -18,6 +18,8 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { LocationPicker } from '@/components/inventory/LocationPicker';
+import { findLocationByText } from '@/lib/locationTree';
 import { supabase } from '@/integrations/supabase/client';
 import type { TablesInsert, TablesUpdate } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
@@ -25,7 +27,8 @@ import { useWorkflowSettings } from '@/hooks/useUserPreferences';
 import { notifyTeammates } from '@/hooks/useTeam';
 import {
   useCategories,
-  useStorageLocations,
+  useLocationIndex,
+  locationIndexFor,
   conditionLabels,
   type Category,
   type ItemCondition,
@@ -119,14 +122,13 @@ async function fetchExisting(teamId: string): Promise<ExistingRow[]> {
   return all;
 }
 
-const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 export function ListImportDialog({ open, onOpenChange, defaultDestination = 'sell' }: ListImportDialogProps) {
   const queryClient = useQueryClient();
   const { user, team, profile } = useAuth();
   const workflow = useWorkflowSettings();
   const { data: categories = [] } = useCategories();
-  const { data: storageLocations = [] } = useStorageLocations();
+  const { index: locationIndex, locations: storageLocations } = useLocationIndex();
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [step, setStep] = useState<Step>('upload');
@@ -249,11 +251,11 @@ export function ListImportDialog({ open, onOpenChange, defaultDestination = 'sel
     const newLocations = new Set(
       records
         .map((r) => r.location)
-        .filter((l): l is string => !!l && !storageLocations.some((s) => sameName(s.name, l)))
+        .filter((l): l is string => !!l && !findLocationByText(l, locationIndex))
         .map((l) => l.trim())
     );
     return { units, updates, lookupCount: lookupCodes.size, newCategories, newLocations };
-  }, [plan, records, categories, storageLocations]);
+  }, [plan, records, categories, locationIndex]);
 
   const canImport = records.length > 0 && (mapping.title !== undefined || mapping.upc !== undefined || mapping.asin !== undefined);
 
@@ -285,7 +287,7 @@ export function ListImportDialog({ open, onOpenChange, defaultDestination = 'sel
 
       // 2. Categories & locations
       let cats: Pick<Category, 'id' | 'name'>[] = categories;
-      let locs: Pick<StorageLocation, 'id' | 'name'>[] = storageLocations;
+      let locs: StorageLocation[] = storageLocations;
       if (createMissing) {
         setProgress({ label: 'Creating categories & locations…', value: 52 });
         if (stats.newCategories.size > 0) {
@@ -299,12 +301,13 @@ export function ListImportDialog({ open, onOpenChange, defaultDestination = 'sel
           const { data } = await supabase
             .from('storage_locations')
             .insert([...stats.newLocations].map((name) => ({ name, team_id: team.id })))
-            .select('id, name');
-          if (data) locs = [...locs, ...data];
+            .select('*');
+          if (data) locs = [...locs, ...(data as StorageLocation[])];
         }
       }
-      const locationId = (name: string | null) =>
-        name ? locs.find((l) => sameName(l.name, name))?.id ?? null : null;
+      // Paths ("Workshop > Shelf"), then top-level names, then unique spot names
+      const locIndex = locationIndexFor(locs);
+      const locationId = (name: string | null) => (name ? findLocationByText(name, locIndex)?.id ?? null : null);
 
       // 3. Build rows
       const today = new Date().toISOString().split('T')[0];
@@ -625,19 +628,7 @@ export function ListImportDialog({ open, onOpenChange, defaultDestination = 'sel
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Location (when not in file)</Label>
-                  <Select value={defaultLocation || NONE} onValueChange={(v) => setDefaultLocation(v === NONE ? '' : v)}>
-                    <SelectTrigger className="h-8 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={NONE}>None</SelectItem>
-                      {storageLocations.map((l) => (
-                        <SelectItem key={l.id} value={l.id}>
-                          {l.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <LocationPicker compact value={defaultLocation} onChange={setDefaultLocation} noneLabel="None" triggerClassName="w-full" />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Source (when not in file)</Label>

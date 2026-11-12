@@ -4,7 +4,7 @@ import { useBarcodeScanner, normalizeUpc, type ScanResult } from '@/hooks/useBar
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { X, ScanLine, Loader2, Zap, ZapOff, Camera, CameraOff } from 'lucide-react';
-import { Item } from '@/hooks/useInventory';
+import { Item, useLocationIndex } from '@/hooks/useInventory';
 import { toast } from 'sonner';
 import { readStickerText } from '@/lib/stickerOcr';
 import { classifyCode, type CodeType } from '@/lib/barcode';
@@ -39,6 +39,7 @@ export function BarcodeScannerModal({
 }: BarcodeScannerModalProps) {
   const { scan, cancelScan, isScanning, error, torchSupported, torchOn, toggleTorch } = useBarcodeScanner();
   const { team } = useAuth();
+  const { index: locationIndex } = useLocationIndex();
   const [cameraOn, setCameraOn] = useState(true);
   const [typed, setTyped] = useState('');
   // The latest handler, for the scan started by the effect below
@@ -94,7 +95,7 @@ export function BarcodeScannerModal({
               break;
             }
             if (stocked) {
-              const loc = stocked.storage_location?.name;
+              const loc = locationIndex.pathText(stocked.storage_location_id) || stocked.storage_location?.name;
               toast.info(`Already confirmed: ${stocked.title || 'Untitled item'}${loc ? ` — stored in ${loc}` : ''}`);
               onClose();
               break;

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useItems, calculateProfit, Item, statusConfig } from '@/hooks/useInventory';
+import { useItems, calculateProfit, Item, statusConfig, useLocationIndex } from '@/hooks/useInventory';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { Badge } from '@/components/ui/badge';
@@ -323,6 +323,7 @@ function ScannerOverlay({ onResult, onClose }: ScannerOverlayProps) {
 
 export default function SalesCheck() {
   const queryClient = useQueryClient();
+  const { index: locationIndex } = useLocationIndex();
   const { user, team } = useAuth();
   const { data: items = [], isLoading } = useItems();
 
@@ -756,7 +757,9 @@ export default function SalesCheck() {
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">{getTitle(item)}</p>
                       {item.storage_location && (
-                        <p className="text-xs text-muted-foreground">{item.storage_location.name}</p>
+                        <p className="text-xs text-muted-foreground break-words">
+                          {locationIndex.pathText(item.storage_location_id) || item.storage_location.name}
+                        </p>
                       )}
                       <p className="text-xs text-muted-foreground">
                         Cost ${item.original_cost.toFixed(2)}

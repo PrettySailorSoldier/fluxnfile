@@ -7,7 +7,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   useItems,
   useCategories,
-  useStorageLocations,
+  useLocationIndex,
+  useLocationSearchOptions,
   statusConfig,
   calculateProfit,
   needsDetails,
@@ -110,7 +111,8 @@ export default function Inventory() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { data: items = [], isLoading } = useItems();
   const { data: categories = [] } = useCategories();
-  const { data: storageLocations = [] } = useStorageLocations();
+  const { index: locationIndex, locations: storageLocations } = useLocationIndex();
+  const searchOpts = useLocationSearchOptions();
   const { data: events = [] } = useEvents();
   const workflowSettings = useWorkflowSettings();
   const defaultSort = workflowSettings.defaultSortOrder as SortOption;
@@ -162,8 +164,8 @@ export default function Inventory() {
     if (!bin) return;
     setLocationFilter(bin.id);
     setSearch('');
-    toast.success(`Showing ${bin.name}`);
-  }, [search, storageLocations]);
+    toast.success(`Showing ${locationIndex.pathText(bin.id) || bin.name}`);
+  }, [search, storageLocations, locationIndex]);
 
   const needsDetailsCount = useMemo(() => items.filter(needsDetails).length, [items]);
 
@@ -216,9 +218,12 @@ export default function Inventory() {
     const scores = new Map<string, number>();
     // A shelf holds what's on it: looking by location leaves out what has already sold
     const byPlace = groupBy === 'location' || locationFilter !== 'all';
+    // A place includes every spot inside it (Workshop → its shelves and bins)
+    const inPlace =
+      locationFilter !== 'all' && locationFilter !== 'none' ? locationIndex.descendantIds(locationFilter) : null;
     const wantsSold = view === 'sold' || statusFilter === 'sold' || statusFilter === 'shipped';
     let result = items.filter((item) => {
-      const hit = terms.length === 0 ? null : matchItem(item, terms);
+      const hit = terms.length === 0 ? null : matchItem(item, terms, searchOpts);
       const matchesSearch = terms.length === 0 || hit !== null;
       if (hit) scores.set(item.id, hit.score);
 
@@ -227,7 +232,12 @@ export default function Inventory() {
 
       if (needsDetailsOnly && !needsDetails(item)) return false;
       if (locationFilter !== 'all') {
-        if (locationFilter === 'none' ? item.storage_location_id : item.storage_location_id !== locationFilter) return false;
+        if (locationFilter === 'none') {
+          if (item.storage_location_id) return false;
+        } else if (!item.storage_location_id || !inPlace?.has(item.storage_location_id)) {
+          // An id that's no longer in the tree still matches itself
+          if (item.storage_location_id !== locationFilter) return false;
+        }
       }
       if (decisionFilter !== 'all' && item.physical_status !== decisionFilter) return false;
       if (sourceFilter !== 'all' && (item.acquisition_source?.trim() || '') !== sourceFilter) return false;
@@ -328,8 +338,8 @@ export default function Inventory() {
           );
         }
         case 'location': {
-          const la = a.storage_location?.name ?? '\uffff';
-          const lb = b.storage_location?.name ?? '\uffff';
+          const la = locationIndex.pathText(a.storage_location_id) || a.storage_location?.name || '\uffff';
+          const lb = locationIndex.pathText(b.storage_location_id) || b.storage_location?.name || '\uffff';
           return la.localeCompare(lb) || (a.title || '').localeCompare(b.title || '');
         }
         case 'newest':
@@ -342,7 +352,7 @@ export default function Inventory() {
     });
 
     return result;
-  }, [items, search, statusFilter, categoryFilter, reviewFilter, dateFrom, dateTo, deliveryFilter, sortBy, needsDetailsOnly, locationFilter, decisionFilter, view, inView, groupBy, defaultSort, sourceFilter, holderFilter, eventFilter, flagFilter]);
+  }, [items, search, statusFilter, categoryFilter, reviewFilter, dateFrom, dateTo, deliveryFilter, sortBy, needsDetailsOnly, locationFilter, decisionFilter, view, inView, groupBy, defaultSort, sourceFilter, holderFilter, eventFilter, flagFilter, locationIndex, searchOpts]);
 
   // Long lists render a screenful at a time
   useEffect(() => setVisibleCount(PAGE), [filteredItems]);
@@ -366,7 +376,10 @@ export default function Inventory() {
     for (const item of filteredItems) {
       const [key, label] =
         groupBy === 'location'
-          ? [item.storage_location_id ?? '', item.storage_location?.name ?? 'No location']
+          ? [
+              item.storage_location_id ?? '',
+              locationIndex.pathText(item.storage_location_id) || item.storage_location?.name || 'No location',
+            ]
           : groupBy === 'category'
             ? [item.category_id ?? '', item.category?.name ?? 'Uncategorized']
             : [item.status, statusConfig[item.status].label];
@@ -382,7 +395,7 @@ export default function Inventory() {
     }
     // Unassigned last — it's the pile that still needs a home
     return list.sort((a, b) => (a.key === '' ? 1 : b.key === '' ? -1 : a.label.localeCompare(b.label)));
-  }, [filteredItems, groupBy]);
+  }, [filteredItems, groupBy, locationIndex]);
 
   // Status counts for filter badges
   const statusCounts = items.reduce((acc, item) => {
@@ -961,8 +974,13 @@ export default function Inventory() {
                   <SelectContent>
                     <SelectItem value="all">All</SelectItem>
                     <SelectItem value="none">No location</SelectItem>
-                    {storageLocations.map((loc) => (
-                      <SelectItem key={loc.id} value={loc.id}>
+                    {locationIndex.flatten().map((loc) => (
+                      <SelectItem
+                        key={loc.id}
+                        value={loc.id}
+                        title={locationIndex.pathText(loc.id)}
+                        style={{ paddingLeft: `${2 + (locationIndex.depthOf(loc.id) - 1) * 0.75}rem` }}
+                      >
                         {loc.name}
                       </SelectItem>
                     ))}

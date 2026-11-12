@@ -3,7 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useCategories, useStorageLocations, ItemCondition } from '@/hooks/useInventory';
+import { useCategories, ItemCondition } from '@/hooks/useInventory';
+import { LocationPicker } from '@/components/inventory/LocationPicker';
 import { useUpdateRoughItem } from '@/hooks/useRoughItems';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,7 +37,6 @@ export default function AddItem() {
   const queryClient = useQueryClient();
   const { team, user } = useAuth();
   const { data: categories = [] } = useCategories();
-  const { data: locations = [] } = useStorageLocations();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const updateRoughItem = useUpdateRoughItem();
 
@@ -480,18 +480,7 @@ export default function AddItem() {
 
             <div>
               <Label htmlFor="location">Storage Location</Label>
-              <Select value={storageLocationId} onValueChange={setStorageLocationId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select location" />
-                </SelectTrigger>
-                <SelectContent>
-                  {locations.map((loc) => (
-                    <SelectItem key={loc.id} value={loc.id}>
-                      {loc.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <LocationPicker value={storageLocationId} onChange={setStorageLocationId} />
             </div>
 
             <div>

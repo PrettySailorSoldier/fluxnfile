@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Package, ChevronRight, Tag, Trash2, CheckCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { Item, statusConfig, calculateProfit, getProfitLevel, ItemStatus } from '@/hooks/useInventory';
+import { Item, statusConfig, calculateProfit, getProfitLevel, ItemStatus, useLocationIndex } from '@/hooks/useInventory';
 import { ReviewStatusBadge } from '@/components/amazon/ReviewStatusBadge';
 
 interface SwipeableItemProps {
@@ -32,6 +32,8 @@ export function SwipeableItem({
   onMarkSold,
   onDelete,
 }: SwipeableItemProps) {
+  const { index: locationIndex } = useLocationIndex();
+  const locationPath = locationIndex.pathText(item.storage_location_id) || item.storage_location?.name;
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const startXRef = useRef(0);
@@ -232,7 +234,7 @@ export function SwipeableItem({
                       {item.title || item.category?.name || 'Untitled Item'}
                     </span>
                   </h3>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs text-muted-foreground truncate" title={locationPath || undefined}>
                     {item.category?.name}
                     {item.storage_location && ` • ${item.storage_location.name}`}
                   </p>

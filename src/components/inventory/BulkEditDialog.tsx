@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { LocationPicker } from '@/components/inventory/LocationPicker';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -53,6 +54,8 @@ interface BulkEditDialogProps {
 
 const KEEP = '__keep__';
 const CLEAR = '__clear__';
+/** "Choose a location…" picked, but no location chosen yet */
+const PICK = '__pick__';
 
 export function BulkEditDialog({
   open,
@@ -100,7 +103,7 @@ export function BulkEditDialog({
   const edit: BulkEdit = {};
   if (status !== KEEP) edit.status = status as ItemStatus;
   if (category !== KEEP) edit.categoryId = category === CLEAR ? null : category;
-  if (location !== KEEP) edit.storageLocationId = location === CLEAR ? null : location;
+  if (location !== KEEP && location !== PICK) edit.storageLocationId = location === CLEAR ? null : location;
   if (decision !== KEEP) edit.decision = decision as 'keep' | 'sell';
   if (condition !== KEEP) edit.condition = condition as ItemCondition;
   if (market !== KEEP) edit.eventId = market === CLEAR ? null : market;
@@ -175,16 +178,21 @@ export function BulkEditDialog({
 
           <div className="space-y-1.5">
             <Label>Location</Label>
-            <Select value={location} onValueChange={setLocation}>
+            <Select value={location === KEEP || location === CLEAR ? location : PICK} onValueChange={setLocation}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 {keepItem}
                 <SelectItem value={CLEAR}>None</SelectItem>
-                {storageLocations.map((l) => (
-                  <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
-                ))}
+                <SelectItem value={PICK}>Move to…</SelectItem>
               </SelectContent>
             </Select>
+            {location !== KEEP && location !== CLEAR && (
+              <LocationPicker
+                value={location === PICK ? '' : location}
+                onChange={(id) => setLocation(id || PICK)}
+                noneLabel="Choose a location"
+              />
+            )}
           </div>
 
           <div className="space-y-1.5">

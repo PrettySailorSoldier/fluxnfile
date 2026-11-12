@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useOrderSheetItems, useItems, Item, statusConfig } from '@/hooks/useInventory';
+import { useOrderSheetItems, useItems, Item, statusConfig, useLocationIndex, useLocationSearchOptions } from '@/hooks/useInventory';
 import { parseQuery, searchItems, matchNote, type SearchHit } from '@/lib/itemSearch';
 import { sameUpc, type CodeType } from '@/lib/barcode';
 import { useAuth } from '@/contexts/AuthContext';
@@ -55,6 +55,7 @@ const STORED_SHOWN = 10;
 
 export default function OrderSheet() {
   const { team } = useAuth();
+  const searchOpts = useLocationSearchOptions();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: items = [], isLoading } = useOrderSheetItems();
@@ -92,15 +93,15 @@ export default function OrderSheet() {
   const searching = terms.length > 0;
 
   const filtered = useMemo<SearchHit<Item>[]>(
-    () => (searching ? searchItems(items, terms) : items.map((item) => ({ item, score: 0, fields: [] }))),
-    [items, terms, searching]
+    () => (searching ? searchItems(items, terms, searchOpts) : items.map((item) => ({ item, score: 0, fields: [] }))),
+    [items, terms, searching, searchOpts]
   );
 
   // Confirmed items leave the order sheet — a search still finds them, in Inventory
   const { data: storedItems = [], isLoading: storedLoading } = useItems({ enabled: searching });
   const storedHits = useMemo(
-    () => (searching ? searchItems(storedItems, terms) : []),
-    [storedItems, terms, searching]
+    () => (searching ? searchItems(storedItems, terms, searchOpts) : []),
+    [storedItems, terms, searching, searchOpts]
   );
 
   const clearAllMutation = useMutation({
@@ -469,6 +470,7 @@ function OrderItemCard({ item, note, onConfirm }: { item: Item; note?: string | 
 
 /** A search match that has already left the order sheet — tap through to its page. */
 function StoredItemCard({ item, note, onOpen }: { item: Item; note?: string | null; onOpen: () => void }) {
+  const { index: locationIndex } = useLocationIndex();
   const photo = item.photos?.[0];
   const status = statusConfig[item.status];
 
@@ -495,9 +497,12 @@ function StoredItemCard({ item, note, onOpen }: { item: Item; note?: string | nu
                 </Badge>
               )}
               {item.storage_location?.name && (
-                <span className="inline-flex items-center gap-0.5">
-                  <MapPin className="w-3 h-3" />
-                  {item.storage_location.name}
+                <span
+                  className="inline-flex items-center gap-0.5 min-w-0"
+                  title={locationIndex.pathText(item.storage_location_id) || item.storage_location.name}
+                >
+                  <MapPin className="w-3 h-3 flex-shrink-0" />
+                  <span className="truncate">{item.storage_location.name}</span>
                 </span>
               )}
               <span>{formatDate(item.acquisition_date)}</span>
