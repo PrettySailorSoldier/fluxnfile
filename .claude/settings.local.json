@@ -9,7 +9,9 @@
       "Bash(npx tsc *)",
       "Bash(./node_modules/.bin/tsc --noEmit)",
       "Bash(node_modules/.bin/tsc --noEmit)",
-      "Bash(node_modules/typescript/bin/tsc --noEmit)"
+      "Bash(node_modules/typescript/bin/tsc --noEmit)",
+      "Bash(git checkout *)",
+      "Bash(npx eslint *)"
     ]
   }
 }
