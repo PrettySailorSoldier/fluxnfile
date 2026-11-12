@@ -65,6 +65,8 @@ export default function OrderSheet() {
   const [confirmItem, setConfirmItem] = useState<Item | null>(null);
   const [showClearDialog, setShowClearDialog] = useState(false);
   const [showAmazonImport, setShowAmazonImport] = useState(false);
+  /** An order-history file dropped on "Import a list", handed to the Amazon importer */
+  const [amazonFile, setAmazonFile] = useState<File | null>(null);
   const [showVineReport, setShowVineReport] = useState(false);
   const [showLattice, setShowLattice] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
@@ -267,7 +269,7 @@ export default function OrderSheet() {
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => setShowAmazonImport(true)}>
               <ShoppingCart className="w-4 h-4 mr-2" />
-              Amazon HTML
+              Amazon orders (CSV / HTML)
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -377,13 +379,25 @@ export default function OrderSheet() {
         }}
       />
 
-      <AmazonImportDialog open={showAmazonImport} onOpenChange={setShowAmazonImport} />
+      <AmazonImportDialog
+        open={showAmazonImport}
+        initialFile={amazonFile}
+        onOpenChange={(o) => {
+          setShowAmazonImport(o);
+          if (!o) setAmazonFile(null);
+        }}
+      />
       <VineReportImportDialog open={showVineReport} onOpenChange={setShowVineReport} />
       <LatticeImportDialog open={showLattice} onOpenChange={setShowLattice} />
       <ListImportDialog
         open={showListImport}
         onOpenChange={setShowListImport}
         defaultDestination="order_sheet"
+        onAmazonOrderFile={(file) => {
+          setShowListImport(false);
+          setAmazonFile(file);
+          setShowAmazonImport(true);
+        }}
       />
 
       <AlertDialog open={showClearDialog} onOpenChange={setShowClearDialog}>

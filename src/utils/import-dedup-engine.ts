@@ -7,7 +7,10 @@ import { isUnknownTitle } from '@/lib/productLookup';
  * 1. UPC/EAN match (upc column, leading zeros ignored) — exact product match
  * 2. ASIN match (amazon_asin column) — exact match
  * 3. Order number match (amazon_order_id column) — exact match
+ *    (several products can share one order — the title picks which one)
  * 4. Fuzzy title match — normalized title Jaccard similarity ≥ 0.82 threshold
+ * 5. Shortened title — ≥ 90% of the shorter title's words (5+ words) in the
+ *    longer one, with Jaccard ≥ 0.5 (order history truncates titles)
  *
  * MERGE BEHAVIOR:
  * - When a duplicate is found, MERGE new data into the existing record.
@@ -85,7 +88,44 @@ export function jaccardSimilarity(a: string, b: string): number {
   return intersection.size / union.size;
 }
 
+/**
+ * Share of the shorter title's words that also appear in the longer one.
+ * Amazon's order history cuts titles short, and Vine listings add a brand or a
+ * pack size ("SURAIELEC Battery Window Candles…" vs "Battery Window Candles… 4 Pack"),
+ * which drags Jaccard below the cutoff for what is plainly the same product.
+ * 0 when the shorter title has fewer than CONTAIN_MIN_WORDS words — short
+ * generic titles ("USB C cable") are contained in too many others.
+ */
+export function containment(a: string, b: string): number {
+  const setA = new Set(a.split(' ').filter(Boolean));
+  const setB = new Set(b.split(' ').filter(Boolean));
+  const [small, big] = setA.size <= setB.size ? [setA, setB] : [setB, setA];
+  if (small.size < CONTAIN_MIN_WORDS) return 0;
+  let shared = 0;
+  for (const t of small) if (big.has(t)) shared++;
+  return shared / small.size;
+}
+
 const FUZZY_THRESHOLD = 0.82;
+/** Shorter title (≥ CONTAIN_MIN_WORDS words) almost entirely inside the longer one… */
+const CONTAIN_THRESHOLD = 0.9;
+const CONTAIN_MIN_WORDS = 5;
+/** …and still a fair overlap overall, so a short title can't match a long unrelated listing. */
+const CONTAIN_MIN_JACCARD = 0.5;
+/** Within one Amazon order the candidates are few, so a looser title match picks the right one. */
+const SAME_ORDER_JACCARD = 0.35;
+const SAME_ORDER_CONTAIN = 0.7;
+
+// Existing titles are normalized once per row, not once per incoming row
+const normCache = new WeakMap<object, string>();
+function existingNorm(e: ExistingItemIndex): string {
+  let n = normCache.get(e);
+  if (n === undefined) {
+    n = e.title ? normalizeTitle(e.title) : '';
+    normCache.set(e, n);
+  }
+  return n;
+}
 
 /**
  * Find a matching existing item for the given incoming data.
@@ -100,7 +140,7 @@ export function findDuplicate(
   },
   existingItems: ExistingItemIndex[]
 ): ExistingItemIndex | null {
-  const incomingNorm = normalizeTitle(incoming.title);
+  const incomingNorm = incoming.title ? normalizeTitle(incoming.title) : '';
 
   // 1. UPC match (highest priority) — compare with leading zeros stripped
   if (incoming.upc) {
@@ -119,12 +159,28 @@ export function findDuplicate(
     if (asinMatch) return asinMatch;
   }
 
-  // 3. Order number match
+  // 3. Order number match. One order can hold several products, so with a title
+  //    pick the item in that order that has this title — not just the first one.
   if (incoming.orderId) {
-    const orderMatch = existingItems.find(
-      e => e.amazon_order_id && e.amazon_order_id === incoming.orderId
-    );
-    if (orderMatch) return orderMatch;
+    const sameOrder = existingItems.filter(e => e.amazon_order_id && e.amazon_order_id === incoming.orderId);
+    if (sameOrder.length > 0) {
+      if (!incomingNorm) return sameOrder[0];
+      let best: ExistingItemIndex | null = null;
+      let bestScore = 0;
+      for (const e of sameOrder) {
+        const norm = existingNorm(e);
+        const j = jaccardSimilarity(incomingNorm, norm);
+        if ((j >= SAME_ORDER_JACCARD || containment(incomingNorm, norm) >= SAME_ORDER_CONTAIN) && j > bestScore) {
+          best = e;
+          bestScore = j;
+        }
+      }
+      if (best) return best;
+      // A lone placeholder ("Unknown item (…)") in this order is this product, waiting for its name
+      const placeholders = sameOrder.filter(e => isUnknownTitle(e.title));
+      if (sameOrder.length === 1 && placeholders.length === 1) return placeholders[0];
+      // Otherwise it's a different product from the same order — fall through to the title match
+    }
   }
 
   // 4. Fuzzy title match
@@ -132,9 +188,9 @@ export function findDuplicate(
   let bestScore = 0;
   let bestMatch: ExistingItemIndex | null = null;
   for (const existing of existingItems) {
-    if (!existing.title) continue;
-    const existingNorm = normalizeTitle(existing.title);
-    const score = jaccardSimilarity(incomingNorm, existingNorm);
+    const norm = existingNorm(existing);
+    if (!norm) continue;
+    const score = jaccardSimilarity(incomingNorm, norm);
     if (score > bestScore) {
       bestScore = score;
       bestMatch = existing;
@@ -142,7 +198,21 @@ export function findDuplicate(
   }
   if (bestScore >= FUZZY_THRESHOLD && bestMatch) return bestMatch;
 
-  return null;
+  // 5. Shortened or brand-prefixed title: nearly all of the shorter title is in the longer one
+  let bestContain = 0;
+  let containMatch: ExistingItemIndex | null = null;
+  for (const existing of existingItems) {
+    const norm = existingNorm(existing);
+    if (!norm) continue;
+    const j = jaccardSimilarity(incomingNorm, norm);
+    if (j < CONTAIN_MIN_JACCARD) continue;
+    const c = containment(incomingNorm, norm);
+    if (c >= CONTAIN_THRESHOLD && c + j > bestContain) {
+      bestContain = c + j;
+      containMatch = existing;
+    }
+  }
+  return containMatch;
 }
 
 /**

@@ -63,6 +63,17 @@ interface ListImportDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Order Sheet opens this with 'order_sheet' so items wait to be scanned in */
   defaultDestination?: Destination;
+  /**
+   * An Amazon order-history file was dropped here. It has no barcodes or ASINs, so
+   * this importer can't spot duplicates — hand it to the Amazon importer instead.
+   */
+  onAmazonOrderFile?: (file: File) => void;
+}
+
+/** The order-history browser extension's CSV (orderId, orderPlaced, …, itemTitles) */
+function isAmazonOrderHistory(headers: string[]): boolean {
+  const h = new Set(headers.map((x) => x.toLowerCase().replace(/[^a-z]/g, '')));
+  return h.has('orderid') && h.has('itemtitles');
 }
 
 type ExistingRow = ExistingItemIndex & {
@@ -123,7 +134,12 @@ async function fetchExisting(teamId: string): Promise<ExistingRow[]> {
 }
 
 
-export function ListImportDialog({ open, onOpenChange, defaultDestination = 'sell' }: ListImportDialogProps) {
+export function ListImportDialog({
+  open,
+  onOpenChange,
+  defaultDestination = 'sell',
+  onAmazonOrderFile,
+}: ListImportDialogProps) {
   const queryClient = useQueryClient();
   const { user, team, profile } = useAuth();
   const workflow = useWorkflowSettings();
@@ -169,9 +185,20 @@ export function ListImportDialog({ open, onOpenChange, defaultDestination = 'sel
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const loadSheet = async (parsed: ParsedSheet, name: string) => {
+  const loadSheet = async (parsed: ParsedSheet, name: string, file?: File) => {
     if (parsed.rows.length === 0 || parsed.headers.length === 0) {
       toast.error('No rows found in that file');
+      return;
+    }
+    if (isAmazonOrderHistory(parsed.headers)) {
+      if (file && onAmazonOrderFile) {
+        toast.info('That’s an Amazon order history — opening the Amazon importer, which checks for duplicates');
+        onAmazonOrderFile(file);
+      } else {
+        toast.error(
+          'That’s an Amazon order history. Use Import → Amazon orders instead, so items already in your inventory aren’t added again.'
+        );
+      }
       return;
     }
     setSheet(parsed);
@@ -194,7 +221,7 @@ export function ListImportDialog({ open, onOpenChange, defaultDestination = 'sel
   const onFile = async (file: File | undefined) => {
     if (!file) return;
     try {
-      await loadSheet(await parseListFile(file), file.name);
+      await loadSheet(await parseListFile(file), file.name, file);
     } catch (e) {
       toast.error(e instanceof Error ? `Could not read file: ${e.message}` : 'Could not read file');
     } finally {
