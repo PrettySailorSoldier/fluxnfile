@@ -11,7 +11,8 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { MapPin, Plus, Pencil, Trash2, X, Check, ChevronRight } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
+import { MapPin, Plus, Pencil, Trash2, X, Check, ChevronRight, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { sanitizeError } from '@/lib/errorHandler';
@@ -49,6 +50,9 @@ export function StorageLocationManager() {
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [editParent, setEditParent] = useState(TOP);
+  const [editNeedsMove, setEditNeedsMove] = useState(false);
+
+  const needsMoving = locations.filter((l) => l.needs_move);
 
   /** Expand/collapse overrides; by default top-level places are open, deeper ones closed */
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
@@ -98,6 +102,7 @@ export function StorageLocationManager() {
     setEditName(loc.name);
     setEditDescription(loc.description || '');
     setEditParent(loc.parent_id && index.byId.has(loc.parent_id) ? loc.parent_id : TOP);
+    setEditNeedsMove(!!loc.needs_move);
   };
 
   const handleUpdate = async (loc: StorageLocation) => {
@@ -115,6 +120,8 @@ export function StorageLocationManager() {
         name,
         description: description || null,
         ...((loc.parent_id ?? null) !== parentId ? { parent_id: parentId } : {}),
+        // Only sent when changed, so renames keep working before the needs_move migration is applied
+        ...(!!loc.needs_move !== editNeedsMove ? { needs_move: editNeedsMove } : {}),
       })
       .eq('id', loc.id);
     if (error) return toast.error(locationSaveError(error, name, whereLabel(parentId)) ?? sanitizeError(error));
@@ -124,6 +131,18 @@ export function StorageLocationManager() {
     refresh();
     // Item rows embed the location; paths are rebuilt from the list, but refresh anyway
     queryClient.invalidateQueries({ queryKey: ['items'] });
+  };
+
+  const setNeedsMove = async (loc: StorageLocation, value: boolean) => {
+    const { error } = await supabase.from('storage_locations').update({ needs_move: value }).eq('id', loc.id);
+    if (error) return toast.error(sanitizeError(error));
+    refresh();
+    queryClient.invalidateQueries({ queryKey: ['items'] });
+    if (!value) {
+      toast.success(`${loc.name} marked as moved`, {
+        action: { label: 'Undo', onClick: () => setNeedsMove(loc, true) },
+      });
+    }
   };
 
   const handleDelete = async (loc: StorageLocation) => {
@@ -152,7 +171,10 @@ export function StorageLocationManager() {
     return (
       <div key={loc.id}>
         <div
-          className="rounded-lg bg-muted py-1.5 pr-1"
+          className={cn(
+            'rounded-lg py-1.5 pr-1',
+            loc.needs_move && editingId !== loc.id ? 'bg-amber-500/10 ring-1 ring-inset ring-amber-500/40' : 'bg-muted'
+          )}
           style={{ marginLeft: `${Math.min(depth - 1, MAX_DEPTH - 1) * 12}px` }}
         >
           {editingId === loc.id ? (
@@ -175,6 +197,14 @@ export function StorageLocationManager() {
                 </Select>
               </div>
               <Textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} placeholder="Notes (optional)" rows={2} />
+              <label className="flex min-h-11 items-center gap-3 rounded-md border bg-background px-3 py-2 cursor-pointer">
+                <Truck className="w-4 h-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm font-medium">Needs to be moved</span>
+                  <span className="block text-xs text-muted-foreground">Stuff is here for now but shouldn't stay. Say where it goes in the notes.</span>
+                </span>
+                <Switch checked={editNeedsMove} onCheckedChange={setEditNeedsMove} aria-label="Needs to be moved" />
+              </label>
               <div className="flex gap-2">
                 <Button size="sm" className="h-11 flex-1" onClick={() => handleUpdate(loc)}>
                   <Check className="w-4 h-4 mr-1" /> Save
@@ -199,6 +229,20 @@ export function StorageLocationManager() {
                 <p className="font-medium truncate" title={index.pathText(loc.id)}>
                   {loc.name}
                 </p>
+                {loc.needs_move && (
+                  <div className="flex flex-wrap items-center gap-x-2 my-0.5">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">
+                      <Truck className="w-3 h-3" /> Needs moving
+                    </span>
+                    <button
+                      type="button"
+                      className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline py-1"
+                      onClick={() => setNeedsMove(loc, false)}
+                    >
+                      Mark moved
+                    </button>
+                  </div>
+                )}
                 {loc.description && <p className="text-xs text-muted-foreground truncate">{loc.description}</p>}
                 <Link
                   to={`/inventory?loc=${loc.id}`}
@@ -241,6 +285,12 @@ export function StorageLocationManager() {
           {plural(index.roots.length, 'place')}
           {locations.length > index.roots.length && ` · ${plural(locations.length - index.roots.length, 'spot')} inside them`}
         </p>
+        {needsMoving.length > 0 && (
+          <p className="text-sm text-amber-700 dark:text-amber-400 mb-3 flex items-center gap-1.5">
+            <Truck className="w-4 h-4 flex-shrink-0" />
+            {needsMoving.length === 1 ? '1 place needs' : `${needsMoving.length} places need`} moving
+          </p>
+        )}
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
             <Button variant="outline" className="w-full">

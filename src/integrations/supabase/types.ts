@@ -905,6 +905,7 @@ export type Database = {
           description: string | null
           id: string
           name: string
+          needs_move: boolean
           parent_id: string | null
           team_id: string
         }
@@ -913,6 +914,7 @@ export type Database = {
           description?: string | null
           id?: string
           name: string
+          needs_move?: boolean
           parent_id?: string | null
           team_id: string
         }
@@ -921,6 +923,7 @@ export type Database = {
           description?: string | null
           id?: string
           name?: string
+          needs_move?: boolean
           parent_id?: string | null
           team_id?: string
         }

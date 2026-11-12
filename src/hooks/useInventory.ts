@@ -127,6 +127,11 @@ export interface StorageLocation {
   description: string | null;
   /** The location this one sits inside; null = top level (20261111000000_storage_location_hierarchy.sql) */
   parent_id: string | null;
+  /**
+   * Things are kept here for now but shouldn't stay (boxes in the house that belong
+   * in the garage). Undefined until 20261112000000_storage_location_needs_move.sql is applied.
+   */
+  needs_move?: boolean;
   created_at?: string;
 }
 
