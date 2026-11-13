@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { Flag, Camera, Loader2, X as XIcon, ListChecks } from 'lucide-react';
+import { Flag, Camera, Loader2, X as XIcon, ListChecks, Sparkles, CheckCircle2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { notifyUsers, useTeamMembers, memberName } from '@/hooks/useTeam';
 import { AssignTaskDialog } from '@/components/tasks/AssignTaskDialog';
@@ -27,7 +27,8 @@ import {
   calculateProfit,
   getMissingDetails,
 } from '@/hooks/useInventory';
-import { isUnknownTitle } from '@/lib/productLookup';
+import { classifyCode, explainUnrecognized } from '@/lib/barcode';
+import { isUnknownTitle, lookupProduct, matchCategory, suggestPrice } from '@/lib/productLookup';
 import { todayLocal } from '@/lib/dates';
 import { unsellItem } from '@/hooks/useMarket';
 import { RecordSaleDialog } from '@/components/sales/RecordSaleDialog';
@@ -71,6 +72,10 @@ export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queue
   const [cost, setCost] = useState('');
   const [photos, setPhotos] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [lookupCode, setLookupCode] = useState('');
+  const [lookingUp, setLookingUp] = useState(false);
+  const [brand, setBrand] = useState<string | null>(null);
+  const [retailPrice, setRetailPrice] = useState<number | null>(null);
 
   // Fetch partner profile (the other team member)
   const { data: partner } = useQuery({
@@ -104,7 +109,44 @@ export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queue
     setCondition(item.condition);
     setCost(String(item.original_cost ?? 0));
     setPhotos(item.photos ?? []);
+    setLookupCode(item.upc || item.amazon_asin || '');
+    setBrand(item.brand ?? null);
+    setRetailPrice(item.retail_price ?? item.vine_etv ?? null);
   }, [item]);
+
+  const runQuickLookup = async (raw: string) => {
+    const parsed = classifyCode(raw);
+    if (!parsed) {
+      toast.error(explainUnrecognized(raw));
+      return;
+    }
+    setLookingUp(true);
+    try {
+      const res = await lookupProduct(parsed.value, parsed.codeType);
+      if (!res.found) {
+        toast.info(res.error ?? 'Product not found');
+        return;
+      }
+      if (res.title) setTitle((prev) => prev || res.title || '');
+      if (res.category) {
+        const matchedCat = matchCategory(res.category, categories);
+        if (matchedCat) setCategoryId((prev) => prev || matchedCat);
+      }
+      if (res.images.length || res.imageUrl) {
+        const newPics = res.images.length ? res.images.slice(0, 3) : res.imageUrl ? [res.imageUrl] : [];
+        setPhotos((prev) => (prev.length ? prev : newPics));
+      }
+      if (res.brand) setBrand((prev) => prev ?? res.brand);
+      if (res.retailPrice != null) {
+        setRetailPrice((prev) => prev ?? res.retailPrice);
+        const suggested = suggestPrice(res.retailPrice, 60, true);
+        if (suggested != null) setTargetPrice((prev) => prev || String(suggested));
+      }
+      toast.success('Autofilled from OpenWeb Ninja / catalog');
+    } finally {
+      setLookingUp(false);
+    }
+  };
 
   const missing = item ? getMissingDetails(item) : [];
 
@@ -153,15 +195,17 @@ export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queue
     actualPrice !== '' ? parseFloat(actualPrice) : targetPrice !== '' ? parseFloat(targetPrice) : null;
 
   const saveMutation = useMutation({
-    mutationFn: async (_opts: { next?: boolean } = {}) => {
+    mutationFn: async (_opts: { next?: boolean; statusOverride?: ItemStatus } = {}) => {
       if (!item) return;
       const trimmedTitle = title.trim();
+      const parsedCode = lookupCode.trim() ? classifyCode(lookupCode) : null;
+      const nextStatus = _opts.statusOverride ?? status;
       // Back in stock: the sale comes off the books too
-      if (isSoldStatus(item.status) && !showSaleFields) await unsellItem(item.id, status);
+      if (isSoldStatus(item.status) && !isSoldStatus(nextStatus)) await unsellItem(item.id, nextStatus);
       const { error } = await supabase
         .from('items')
         .update({
-          status,
+          status: nextStatus,
           target_price: targetPrice !== '' ? parseFloat(targetPrice) : null,
           actual_price: showSaleFields && actualPrice !== '' ? parseFloat(actualPrice) : null,
           storage_location_id: storageLocationId || null,
@@ -173,6 +217,10 @@ export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queue
           condition,
           original_cost: cost !== '' ? Math.max(0, parseFloat(cost) || 0) : item.original_cost,
           photos,
+          ...(brand ? { brand } : {}),
+          ...(retailPrice != null ? { retail_price: retailPrice } : {}),
+          ...(parsedCode?.codeType === 'upc' && !item.upc ? { upc: parsedCode.value } : {}),
+          ...(parsedCode?.codeType === 'asin' && !item.amazon_asin ? { amazon_asin: parsedCode.value } : {}),
         })
         .eq('id', item.id);
       if (error) throw error;
@@ -275,6 +323,34 @@ export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queue
         </SheetHeader>
 
         <div className="space-y-4 pb-6">
+          {(missing.length > 0 || isUnknownTitle(item?.title)) && (
+            <div className="flex gap-2 items-center">
+              <Input
+                value={lookupCode}
+                onChange={(e) => setLookupCode(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && lookupCode.trim()) {
+                    e.preventDefault();
+                    void runQuickLookup(lookupCode);
+                  }
+                }}
+                placeholder="UPC, EAN, or ASIN to autofill…"
+                className="h-9 font-mono text-xs flex-1"
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="h-9"
+                disabled={!lookupCode.trim() || lookingUp}
+                onClick={() => void runQuickLookup(lookupCode)}
+              >
+                {lookingUp ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
+                Look up
+              </Button>
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <Label>Title</Label>
             <Input
@@ -319,7 +395,19 @@ export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queue
           </div>
 
           <div className="space-y-1.5">
-            <Label>Status</Label>
+            <div className="flex items-center justify-between">
+              <Label>Status</Label>
+              {status === 'acquired' && (
+                <button
+                  type="button"
+                  onClick={() => setStatus('ready_to_list')}
+                  className="text-xs font-medium text-primary hover:underline flex items-center gap-1"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Mark Ready to List
+                </button>
+              )}
+            </div>
             <Select
               value={status}
               onValueChange={(v) => {
@@ -371,9 +459,9 @@ export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queue
           <div className="space-y-1.5">
             <Label>
               Target / Asking Price
-              {item?.retail_price != null && (
+              {retailPrice != null && retailPrice > 0 && (
                 <span className="ml-2 font-normal text-xs text-muted-foreground">
-                  retail ~${Number(item.retail_price).toFixed(2)}
+                  retail ~${Number(retailPrice).toFixed(2)}
                 </span>
               )}
             </Label>
@@ -389,6 +477,29 @@ export function QuickEditSheet({ item, open, onClose, onSaved, onSaveNext, queue
                 onChange={(e) => setTargetPrice(e.target.value)}
               />
             </div>
+            {retailPrice != null && retailPrice > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {[50, 60, 75].map((pct) => {
+                  const p = suggestPrice(retailPrice, pct, true);
+                  if (p == null) return null;
+                  return (
+                    <button
+                      key={pct}
+                      type="button"
+                      onClick={() => setTargetPrice(String(p))}
+                      className={cn(
+                        'px-2 py-0.5 rounded border text-xs transition-colors',
+                        targetPrice === String(p)
+                          ? 'border-primary bg-primary/15 text-primary font-medium'
+                          : 'border-border bg-muted/40 text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {pct}% (${p})
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {showSaleFields && (

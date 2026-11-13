@@ -49,10 +49,20 @@ const ZXING_FORMATS = [
   BarcodeFormat.CODE_39,
   BarcodeFormat.ITF,
   BarcodeFormat.QR_CODE,
+  BarcodeFormat.DATA_MATRIX,
 ];
-const NATIVE_FORMATS = ['upc_a', 'upc_e', 'ean_13', 'ean_8', 'code_128', 'code_39', 'itf', 'qr_code'];
+const NATIVE_FORMATS = ['upc_a', 'upc_e', 'ean_13', 'ean_8', 'code_128', 'code_39', 'itf', 'qr_code', 'data_matrix'];
 
 // ── Read confirmation ────────────────────────────────────────────────────────
+
+/** Normalize consecutive reads so 12-digit UPC-A and 13-digit 0-prefixed EAN-13 confirm each other. */
+function normalizeReadKey(text: string): string {
+  const trimmed = text.trim().toUpperCase();
+  if (/^\d{12,13}$/.test(trimmed)) {
+    return trimmed.replace(/^0+/, '') || trimmed;
+  }
+  return trimmed;
+}
 
 /**
  * Accept a read only after the same text has decoded `required` times within
@@ -60,15 +70,16 @@ const NATIVE_FORMATS = ['upc_a', 'upc_e', 'ean_13', 'ean_8', 'code_128', 'code_3
  * two agreeing frames cost ~150 ms and remove nearly all of them.
  * Returns a function: feed it every raw read, it returns true when confirmed.
  */
-export function createReadConfirmer(required = 2, windowMs = 1500) {
+export function createReadConfirmer(required = 2, windowMs = 2000) {
   const seen = new Map<string, { count: number; firstAt: number }>();
   return (text: string, now = Date.now()): boolean => {
     for (const [key, entry] of seen) if (now - entry.firstAt > windowMs) seen.delete(key);
-    const entry = seen.get(text) ?? { count: 0, firstAt: now };
+    const norm = normalizeReadKey(text);
+    const entry = seen.get(norm) ?? { count: 0, firstAt: now };
     entry.count += 1;
-    seen.set(text, entry);
+    seen.set(norm, entry);
     if (entry.count < required) return false;
-    seen.delete(text);
+    seen.delete(norm);
     return true;
   };
 }

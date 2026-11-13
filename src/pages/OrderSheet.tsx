@@ -70,8 +70,13 @@ export default function OrderSheet() {
   const [showVineReport, setShowVineReport] = useState(false);
   const [showLattice, setShowLattice] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
-  /** Unmatched scan waiting for "Which item is this?" (hint = words read off an X00 sticker) */
-  const [linkTarget, setLinkTarget] = useState<{ code: string; codeType: CodeType; hint?: string | null } | null>(null);
+  /** Unmatched scan waiting for "Which item is this?" (hint = words read off an X00 sticker or lookup title) */
+  const [linkTarget, setLinkTarget] = useState<{
+    code: string;
+    codeType: CodeType;
+    hint?: string | null;
+    suggestedIds?: string[];
+  } | null>(null);
   // How the confirm sheet was opened — scan-initiated confirms reopen the scanner
   const [confirmSource, setConfirmSource] = useState<'scan' | 'list'>('list');
   /** The code behind the open confirm sheet, for "Not this item" */
@@ -149,7 +154,7 @@ export default function OrderSheet() {
     setLinkTarget({ code: scan.code, codeType: scan.codeType, hint: scan.hint });
   };
 
-  const handleScanNoMatch = async (code: string, codeType: CodeType, hint?: string | null) => {
+  const handleScanNoMatch = async (code: string, codeType: CodeType, hint?: string | null, suggestedIds?: string[]) => {
     if (!team?.id) return;
 
     // X00 sticker that didn't match outright → pick it, ranked by the sticker's printed name
@@ -158,12 +163,9 @@ export default function OrderSheet() {
       return;
     }
 
-    // (The scanner already checked confirmed inventory and same-ASIN orders.)
+    // (The scanner already checked confirmed inventory, same-ASIN orders, and OpenWeb Ninja.)
     if (codeType === 'upc') {
-      // Unknown product barcode — let the user link it to an order once;
-      // every future scan of this UPC matches instantly. The picker looks the
-      // barcode up and puts orders Amazon lists for it first.
-      setLinkTarget({ code, codeType });
+      setLinkTarget({ code, codeType, hint, suggestedIds });
     } else {
       toast.warning(`No order found for ASIN ${code}. Import your orders first, or add it manually.`);
     }
@@ -365,13 +367,20 @@ export default function OrderSheet() {
         upc={linkTarget?.code ?? null}
         codeType={linkTarget?.codeType}
         hint={linkTarget?.hint}
+        suggestedIds={linkTarget?.suggestedIds}
         open={!!linkTarget}
         items={items}
+        confirmOnLink
         onClose={() => setLinkTarget(null)}
-        onLinked={(item) => {
+        onLinked={(item, confirmedInPlace) => {
           queryClient.invalidateQueries({ queryKey: ['items'] });
+          queryClient.invalidateQueries({ queryKey: ['unconfirmed-count'] });
           const t = linkTarget;
           if (!t) return;
+          if (confirmedInPlace) {
+            handleConfirmed();
+            return;
+          }
           handleScanMatch(
             t.codeType === 'fnsku' ? { ...item, fnsku: t.code } : t.codeType === 'upc' ? { ...item, upc: t.code } : item,
             t

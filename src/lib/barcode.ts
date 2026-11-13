@@ -169,23 +169,31 @@ export function classifyCode(raw: string, format?: string): ScannedCode | null {
   // The whole code is an ASIN (Amazon labels encode it as Code 128; typed codes)
   // (typed "BO7…" with the letter O is a common slip for "B07…")
   const upper = text.toUpperCase().replace(/^BO(?=[A-Z0-9]{8}$)/, 'B0');
-  if (/^B0[A-Z0-9]{8}$/.test(upper)) return { codeType: 'asin', value: upper };
+  if (/^B\d[A-Z0-9]{8}$/.test(upper)) return { codeType: 'asin', value: upper };
 
   // ISBN-10 / numeric ASIN (older books) — 9 digits + digit or X, check digit verified
   const isbn10 = upper.replace(/[\s-]/g, '');
   if (isValidIsbn10(isbn10)) return { codeType: 'asin', value: isbn10 };
 
-  // An ASIN embedded in other text (non-Amazon QR codes, labels with prefixes)
-  const embedded = text.match(/(?:^|[^A-Za-z0-9])(B0[A-Z0-9]{8})(?![A-Za-z0-9])/);
+  // An FNSKU or ASIN embedded in other text (composite labels, 2D codes, prefixes)
+  const embeddedFnsku = text.match(/(?:^|[^A-Za-z0-9])(X0[A-Z0-9]{8})(?![A-Za-z0-9])/i);
+  if (embeddedFnsku) return { codeType: 'fnsku', value: embeddedFnsku[1].toUpperCase() };
+  const embedded = text.match(/(?:^|[^A-Za-z0-9])(B\d[A-Z0-9]{8})(?![A-Za-z0-9])/);
   if (embedded) return { codeType: 'asin', value: embedded[1] };
 
   const digitsOnly = text.replace(/[\s-]/g, '');
   if (!/^\d+$/.test(digitsOnly)) return null;
   if (isPostalRoutingCode(digitsOnly, format)) return null;
 
-  // Digits printed as Code 128 / Code 39 / plain QR are tracking, order or serial
-  // numbers — real product numbers come as UPC/EAN/ITF or GS1 (handled above)
-  if (format && !PRODUCT_SYMBOLOGIES.has(format)) return null;
+  // Many third-party sellers print 12-digit UPC-A or 13-digit EAN-13 product numbers
+  // using Code 128 / Code 39 stickers. Allow 12/13-digit codes in CODE_128/CODE_39
+  // when they pass the GS1 check digit (and aren't postal routing codes); require
+  // retail symbologies for 8-digit / 14-digit codes to avoid warehouse/serial labels.
+  const isCode128RetailUpc =
+    (format === 'CODE_128' || format === 'CODE_39') &&
+    (digitsOnly.length === 12 || digitsOnly.length === 13) &&
+    isValidGtin(digitsOnly);
+  if (format && !PRODUCT_SYMBOLOGIES.has(format) && !isCode128RetailUpc) return null;
 
   // UPC-E (6–8 digits) when the scanner says so
   if (format === 'UPC_E') {

@@ -302,101 +302,156 @@ function amazonHeaders(apiKey: string) {
   return { 'x-api-key': apiKey, Accept: 'application/json' };
 }
 
-/** Amazon product details by ASIN. */
+/** Amazon product details by ASIN (with retry + search fallback on transient 5xx). */
 async function fromAmazonDetails(asin: string): Promise<SourceResult> {
   const apiKey = Deno.env.get('OPENWEBNINJA_API_KEY');
   if (!apiKey) return { hit: false, transient: true, error: 'ASIN lookup needs OPENWEBNINJA_API_KEY' };
-  try {
-    const res = await fetch(`${AMAZON_DETAILS_URL}?asin=${encodeURIComponent(asin)}&country=US`, {
-      headers: amazonHeaders(apiKey),
-    });
-    if (res.status === 404) return { hit: false };
-    if (!res.ok) return { hit: false, transient: true, error: `Amazon lookup ${res.status}` };
-    const json = await res.json();
-    const p = json?.data;
-    if (!p?.product_title) return { hit: false };
-    const price = num(p.product_price) ?? num(p.product_original_price);
-    const original = num(p.product_original_price);
-    const photos: string[] = [p.product_photo, ...(Array.isArray(p.product_photos) ? p.product_photos : [])]
-      .filter((u: unknown) => typeof u === 'string' && u.startsWith('http'));
-    const images = [...new Set(photos)].slice(0, 5);
+  const url = `${AMAZON_DETAILS_URL}?asin=${encodeURIComponent(asin)}&country=US`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(url, { headers: amazonHeaders(apiKey) });
+      if (res.status === 404) break;
+      if (!res.ok) {
+        if (attempt === 0 && res.status >= 500) {
+          await new Promise((r) => setTimeout(r, 400));
+          continue;
+        }
+        // Fallback to Amazon search by ASIN when product-details is 503/unavailable
+        const searchFallback = await fromAmazonSearch(asin);
+        if (searchFallback.hit) {
+          return {
+            hit: true,
+            data: {
+              ...searchFallback.data,
+              asin: searchFallback.data.asin ?? asin,
+              fuzzy: false,
+              source: 'amazon',
+            },
+          };
+        }
+        return { hit: false, transient: true, error: `Amazon lookup ${res.status}` };
+      }
+      const json = await res.json();
+      const p = json?.data;
+      if (!p?.product_title) break;
+      const price = num(p.product_price) ?? num(p.product_original_price);
+      const original = num(p.product_original_price);
+      const photos: string[] = [p.product_photo, ...(Array.isArray(p.product_photos) ? p.product_photos : [])]
+        .filter((u: unknown) => typeof u === 'string' && u.startsWith('http'));
+      const images = [...new Set(photos)].slice(0, 5);
+      return {
+        hit: true,
+        data: {
+          title: clean(p.product_title, 255),
+          brand: clean(p.product_byline?.replace?.(/^(Visit the|Brand:)\s*/i, '').replace(/\s*Store$/i, ''), 120),
+          description: clean(Array.isArray(p.about_product) ? p.about_product.join('\n') : p.product_description),
+          category: clean(p.category_path?.map?.((c: { name?: string }) => c.name).join(' > ') ?? p.category?.name ?? p.category, 255),
+          imageUrl: images[0] ?? null,
+          images,
+          lowestPrice: price,
+          highestPrice: original,
+          retailPrice: original ?? price,
+          asin: clean(p.asin, 10) ?? asin,
+          source: 'amazon',
+          raw: p,
+        },
+      };
+    } catch (e) {
+      if (attempt === 0) {
+        await new Promise((r) => setTimeout(r, 400));
+        continue;
+      }
+      return { hit: false, transient: true, error: e instanceof Error ? e.message : 'Amazon lookup error' };
+    }
+  }
+  // If product-details returned 404 or empty data, try searching Amazon for the ASIN
+  const searchFallback = await fromAmazonSearch(asin);
+  if (searchFallback.hit) {
     return {
       hit: true,
       data: {
-        title: clean(p.product_title, 255),
-        brand: clean(p.product_byline?.replace?.(/^(Visit the|Brand:)\s*/i, '').replace(/\s*Store$/i, ''), 120),
-        description: clean(Array.isArray(p.about_product) ? p.about_product.join('\n') : p.product_description),
-        category: clean(p.category_path?.map?.((c: { name?: string }) => c.name).join(' > ') ?? p.category?.name ?? p.category, 255),
-        imageUrl: images[0] ?? null,
-        images,
-        lowestPrice: price,
-        highestPrice: original,
-        retailPrice: original ?? price,
-        asin: clean(p.asin, 10) ?? asin,
+        ...searchFallback.data,
+        asin: searchFallback.data.asin ?? asin,
+        fuzzy: false,
         source: 'amazon',
-        raw: p,
       },
     };
-  } catch (e) {
-    return { hit: false, transient: true, error: e instanceof Error ? e.message : 'Amazon lookup error' };
   }
+  return { hit: false };
 }
 
 /**
  * Search Amazon for a barcode and take the top product. Amazon indexes many
- * UPC/EAN codes, so this finds products the free barcode
- * databases have never seen. One request: the search row has the title, photo
- * and price, and the ASIN is what matters for matching orders — skipping the
- * details call halves the cost of sorting a pile of boxes.
+ * UPC/EAN codes, so this finds products and their ASINs so the app can match
+ * scanned barcodes directly against Amazon orders.
  */
 async function fromAmazonSearch(query: string): Promise<SourceResult> {
   const apiKey = Deno.env.get('OPENWEBNINJA_API_KEY');
   if (!apiKey) {
     return { hit: false, transient: true, error: 'Not in the free barcode databases — set OPENWEBNINJA_API_KEY to also search Amazon' };
   }
-  try {
-    const res = await fetch(`${AMAZON_SEARCH_URL}?query=${encodeURIComponent(query)}&country=US&page=1`, {
-      headers: amazonHeaders(apiKey),
-    });
-    if (!res.ok) return { hit: false, transient: res.status === 429 || res.status >= 500, error: `Amazon search ${res.status}` };
-    const json = await res.json();
-    const products = Array.isArray(json?.data?.products) ? json.data.products : [];
-    const top = products.find((p: { asin?: string; product_title?: string }) => p?.asin && p?.product_title);
-    if (!top) return { hit: false };
-    // The other results matter too: the top one is often another colour/size of
-    // the listing, and the variant actually ordered is further down. The app
-    // checks these against the order list (as a suggestion, never auto-received).
-    const candidateAsins = [
-      ...new Set(
-        products
-          .map((p: { asin?: unknown }) => (typeof p?.asin === 'string' ? p.asin.trim().toUpperCase() : ''))
-          .filter((a: string) => /^[A-Z0-9]{10}$/.test(a)),
-      ),
-    ].slice(0, MAX_CANDIDATE_ASINS) as string[];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`${AMAZON_SEARCH_URL}?query=${encodeURIComponent(query)}&country=US&page=1`, {
+        headers: amazonHeaders(apiKey),
+      });
+      if (!res.ok) {
+        if (attempt === 0 && res.status >= 500) {
+          await new Promise((r) => setTimeout(r, 400));
+          continue;
+        }
+        return { hit: false, transient: res.status === 429 || res.status >= 500, error: `Amazon search ${res.status}` };
+      }
+      const json = await res.json();
+      const products = Array.isArray(json?.data?.products) ? json.data.products : [];
+      const top = products.find((p: { asin?: string; product_title?: string }) => p?.asin && p?.product_title);
+      if (!top) return { hit: false };
+      // The other results matter too: the top one is often another colour/size of
+      // the listing, and the variant actually ordered is further down.
+      const candidateAsins = [
+        ...new Set(
+          products
+            .map((p: { asin?: unknown }) => (typeof p?.asin === 'string' ? p.asin.trim().toUpperCase() : ''))
+            .filter((a: string) => /^[A-Z0-9]{10}$/.test(a)),
+        ),
+      ].slice(0, MAX_CANDIDATE_ASINS) as string[];
 
-    const price = num(top.product_price);
-    const original = num(top.product_original_price);
-    const img = typeof top.product_photo === 'string' && top.product_photo.startsWith('http') ? top.product_photo : null;
-    return {
-      hit: true,
-      data: {
-        title: clean(top.product_title, 255),
-        imageUrl: img,
-        images: img ? [img] : [],
-        lowestPrice: price,
-        highestPrice: original,
-        retailPrice: original ?? price,
-        asin: top.asin,
-        candidateAsins,
-        fuzzy: true,
-        source: 'amazon-search',
-        // No column for the candidates — they ride along in raw for cached reads
-        raw: { ...top, candidate_asins: candidateAsins },
-      },
-    };
-  } catch (e) {
-    return { hit: false, transient: true, error: e instanceof Error ? e.message : 'Amazon search error' };
+      const price = num(top.product_price);
+      const original = num(top.product_original_price);
+      const img = typeof top.product_photo === 'string' && top.product_photo.startsWith('http') ? top.product_photo : null;
+      const brand = clean(
+        top.product_byline?.replace?.(/^(Visit the|Brand:)\s*/i, '').replace(/\s*Store$/i, '') ?? top.brand,
+        120,
+      );
+      // A barcode query that returns a single product (or exact ASIN match) is high-confidence
+      const isExactBarcodeMatch = candidateAsins.length === 1 || top.asin?.toUpperCase() === query.toUpperCase();
+      return {
+        hit: true,
+        data: {
+          title: clean(top.product_title, 255),
+          brand,
+          imageUrl: img,
+          images: img ? [img] : [],
+          lowestPrice: price,
+          highestPrice: original,
+          retailPrice: original ?? price,
+          asin: top.asin,
+          candidateAsins,
+          fuzzy: !isExactBarcodeMatch,
+          source: 'amazon-search',
+          // No column for the candidates — they ride along in raw for cached reads
+          raw: { ...top, candidate_asins: candidateAsins, exact_match: isExactBarcodeMatch },
+        },
+      };
+    } catch (e) {
+      if (attempt === 0) {
+        await new Promise((r) => setTimeout(r, 400));
+        continue;
+      }
+      return { hit: false, transient: true, error: e instanceof Error ? e.message : 'Amazon search error' };
+    }
   }
+  return { hit: false, transient: true, error: 'Amazon search failed' };
 }
 
 // ── Core ─────────────────────────────────────────────────────────────────────
@@ -417,6 +472,8 @@ function candidatesOf(asin: string | null | undefined, list: unknown): string[] 
 }
 
 function rowToResult(row: Record<string, any>, digits: string): ProductLookup {
+  const candidateAsins = candidatesOf(row.asin, row.raw?.candidate_asins);
+  const exactMatch = row.raw?.exact_match === true || candidateAsins.length === 1;
   return {
     code: digits,
     codeType: row.code_type,
@@ -433,8 +490,8 @@ function rowToResult(row: Record<string, any>, digits: string): ProductLookup {
     retailPrice: row.retail_price != null ? Number(row.retail_price) : null,
     source: row.source,
     asin: row.asin ?? null,
-    candidateAsins: candidatesOf(row.asin, row.raw?.candidate_asins),
-    fuzzy: row.source === 'amazon-search',
+    candidateAsins,
+    fuzzy: row.source === 'amazon-search' && !exactMatch,
     cached: true,
     upc: digits,
   };
@@ -450,42 +507,84 @@ async function lookupOne(
   }
   const { codeType, digits, key } = parsed;
 
-  // X00 stickers: an Amazon search finds nothing for them, so don't spend a lookup
+  // 0. Cache (check before short-circuiting FNSKU so linked FNSKUs in product_catalog resolve)
+  let cachedRow: Record<string, any> | null = null;
+  if (db) {
+    const { data: row } = await db.from('product_catalog').select('*').eq('code', key).maybeSingle();
+    if (row) {
+      cachedRow = row;
+      const ageDays = (Date.now() - new Date(row.fetched_at).getTime()) / 86_400_000;
+      // If a UPC was previously cached from a free DB (upcitemdb/openfacts) without an ASIN,
+      // re-query OpenWeb Ninja once so we get the Amazon ASIN and candidateAsins for order matching.
+      const needsAmazonUpgrade =
+        codeType === 'upc' &&
+        row.found &&
+        !row.asin &&
+        row.source !== 'amazon-search' &&
+        row.source !== 'amazon' &&
+        !row.raw?.amazon_checked &&
+        !!Deno.env.get('OPENWEBNINJA_API_KEY');
+      if ((row.found && !needsAmazonUpgrade) || (!row.found && ageDays < NEGATIVE_CACHE_DAYS)) {
+        return { result: rowToResult(row, digits), calledExternal: false };
+      }
+    }
+  }
+
+  // X00 stickers: check if any existing item already has this FNSKU linked
   if (codeType === 'fnsku') {
+    if (db) {
+      const { data: linkedItem } = await db
+        .from('items')
+        .select('title, brand, description, photos, retail_price, amazon_asin')
+        .ilike('fnsku', digits)
+        .limit(1)
+        .maybeSingle();
+      if (linkedItem?.title || linkedItem?.amazon_asin) {
+        const photos = Array.isArray(linkedItem.photos) ? linkedItem.photos : [];
+        return {
+          result: {
+            ...emptyResult(digits, codeType),
+            found: true,
+            title: linkedItem.title ?? null,
+            brand: linkedItem.brand ?? null,
+            description: linkedItem.description ?? null,
+            imageUrl: photos[0] ?? null,
+            images: photos,
+            retailPrice: linkedItem.retail_price != null ? Number(linkedItem.retail_price) : null,
+            asin: linkedItem.amazon_asin ?? null,
+            candidateAsins: linkedItem.amazon_asin ? [linkedItem.amazon_asin.toUpperCase()] : [],
+            source: 'inventory',
+            cached: true,
+          },
+          calledExternal: false,
+        };
+      }
+    }
     return {
       result: emptyResult(digits, codeType, { error: 'Amazon X00 stickers can’t be looked up — pick the item from your list' }),
       calledExternal: false,
     };
   }
 
-  // 0. Cache
-  if (db) {
-    const { data: row } = await db.from('product_catalog').select('*').eq('code', key).maybeSingle();
-    if (row) {
-      const ageDays = (Date.now() - new Date(row.fetched_at).getTime()) / 86_400_000;
-      if (row.found || ageDays < NEGATIVE_CACHE_DAYS) {
-        return { result: rowToResult(row, digits), calledExternal: false };
-      }
-    }
-  }
-
-  // 1. External sources
+  // 1. External sources — prioritize OpenWeb Ninja (fromAmazonSearch / fromAmazonDetails)
+  // so UPC/EAN scans return accurate Amazon titles, photos, prices, and ASINs for order matching!
+  const hasAmazonKey = !!Deno.env.get('OPENWEBNINJA_API_KEY');
   const chain: Array<() => Promise<SourceResult>> =
     codeType === 'asin'
       ? [() => fromAmazonDetails(digits)]
       : codeType === 'isbn'
         ? [
+            ...(digits.length === 10 && hasAmazonKey ? [() => fromAmazonDetails(digits)] : []),
+            ...(hasAmazonKey ? [() => fromAmazonSearch(digits)] : []),
             () => fromOpenLibrary(digits),
             () => fromUpcItemDb(digits.length === 10 ? isbn10To13(digits) : digits),
-            // A numeric book ASIN is its ISBN-10 — Amazon knows books Open Library doesn't
-            ...(digits.length === 10 && Deno.env.get('OPENWEBNINJA_API_KEY') ? [() => fromAmazonDetails(digits)] : []),
           ]
         : [
+            ...(hasAmazonKey ? [() => fromAmazonSearch(digits)] : []),
             () => fromUpcItemDb(digits),
             () => fromOpenFacts(digits, 'world.openfoodfacts.org', 'openfoodfacts'),
             () => fromOpenFacts(digits, 'world.openproductsfacts.org', 'openproductsfacts'),
             () => fromOpenFacts(digits, 'world.openbeautyfacts.org', 'openbeautyfacts'),
-            () => fromAmazonSearch(digits),
           ];
 
   let hit: (Partial<ProductLookup> & { raw?: unknown }) | null = null;
@@ -499,6 +598,70 @@ async function lookupOne(
     }
     if (r.transient) transient = true;
     if (r.error) lastError = r.error;
+  }
+
+  // If upgrading a cached non-Amazon hit and direct barcode search on Amazon missed, preserve the cached hit
+  if (!hit && cachedRow?.found) {
+    hit = {
+      title: cachedRow.title,
+      brand: cachedRow.brand,
+      model: cachedRow.model,
+      description: cachedRow.description,
+      category: cachedRow.category,
+      imageUrl: cachedRow.image_url,
+      images: cachedRow.images ?? [],
+      lowestPrice: cachedRow.lowest_price != null ? Number(cachedRow.lowest_price) : null,
+      highestPrice: cachedRow.highest_price != null ? Number(cachedRow.highest_price) : null,
+      retailPrice: cachedRow.retail_price != null ? Number(cachedRow.retail_price) : null,
+      source: cachedRow.source,
+      asin: cachedRow.asin ?? null,
+      raw: { ...(typeof cachedRow.raw === 'object' && cachedRow.raw ? cachedRow.raw : {}), amazon_checked: true },
+    };
+  } else if (hit && cachedRow?.found) {
+    // Enrich Amazon search hit with any extra metadata from previous cached row
+    hit = {
+      ...hit,
+      brand: hit.brand ?? cachedRow.brand ?? null,
+      model: hit.model ?? cachedRow.model ?? null,
+      description: hit.description ?? cachedRow.description ?? null,
+      category: hit.category ?? cachedRow.category ?? null,
+      raw: { ...(typeof hit.raw === 'object' && hit.raw ? hit.raw : {}), amazon_checked: true },
+    };
+  }
+
+  // If a free barcode DB (upcitemdb / openfacts) matched the UPC when direct barcode search on Amazon
+  // returned nothing, search OpenWeb Ninja by brand + title/model to populate candidateAsins & Amazon price/photo!
+  if (hit && codeType === 'upc' && !hit.asin && hasAmazonKey && hit.title) {
+    const qParts = [
+      hit.brand && !/^n\/a$/i.test(hit.brand) && !hit.title.toLowerCase().includes(hit.brand.toLowerCase()) ? hit.brand : null,
+      hit.title,
+    ].filter(Boolean);
+    const titleQuery = qParts.join(' ').slice(0, 90).trim();
+    if (titleQuery.length >= 4) {
+      const amzByTitle = await fromAmazonSearch(titleQuery);
+      if (amzByTitle.hit && amzByTitle.data) {
+        hit = {
+          ...hit,
+          asin: amzByTitle.data.asin ?? null,
+          candidateAsins: amzByTitle.data.candidateAsins ?? [],
+          imageUrl: hit.imageUrl ?? amzByTitle.data.imageUrl ?? null,
+          images: hit.images?.length ? hit.images : amzByTitle.data.images ?? [],
+          retailPrice: hit.retailPrice ?? amzByTitle.data.retailPrice ?? null,
+          lowestPrice: hit.lowestPrice ?? amzByTitle.data.lowestPrice ?? null,
+          highestPrice: hit.highestPrice ?? amzByTitle.data.highestPrice ?? null,
+          fuzzy: true,
+          raw: {
+            ...(typeof hit.raw === 'object' && hit.raw ? hit.raw : {}),
+            candidate_asins: amzByTitle.data.candidateAsins ?? [],
+            amazon_checked: true,
+          },
+        };
+      }
+    }
+  }
+
+  if (hit) {
+    hit.raw = { ...(typeof hit.raw === 'object' && hit.raw ? hit.raw : {}), amazon_checked: hasAmazonKey };
   }
 
   const result: ProductLookup = hit

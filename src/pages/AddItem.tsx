@@ -3,8 +3,9 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import { useCategories, ItemCondition } from '@/hooks/useInventory';
+import { useCategories, useLocationIndex, ItemCondition } from '@/hooks/useInventory';
 import { LocationPicker } from '@/components/inventory/LocationPicker';
+import { LAST_LOCATION_KEY } from '@/components/inventory/ConfirmItemSheet';
 import { useUpdateRoughItem } from '@/hooks/useRoughItems';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -54,7 +55,7 @@ export default function AddItem() {
   const [photos, setPhotos] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const [title, setTitle] = useState('');
-  const [originalCost, setOriginalCost] = useState('');
+  const [originalCost, setOriginalCost] = useState('0');
   const [targetPrice, setTargetPrice] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const [condition, setCondition] = useState<ItemCondition>('good');
@@ -62,10 +63,12 @@ export default function AddItem() {
   const [storageLocationId, setStorageLocationId] = useState('');
   const [refurbishNotes, setRefurbishNotes] = useState('');
   const workflow = useWorkflowSettings();
+  const { index: locationIndex } = useLocationIndex();
   const [barcode, setBarcode] = useState(prefillUpc || prefillAsin || '');
   const [lookingUp, setLookingUp] = useState(false);
   const [lookup, setLookup] = useState<ProductLookup | null>(null);
   const [showScanner, setShowScanner] = useState(false);
+  const afterSaveRef = useRef<'done' | 'another' | 'scan'>('done');
 
   /** Look the barcode up and fill any fields that are still empty. */
   const runLookup = async (raw: string) => {
@@ -99,7 +102,7 @@ export default function AddItem() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Pre-fill form fields when converting from rough item
+  // Pre-fill form fields when converting from rough item or user defaults
   useEffect(() => {
     if (isConvertingRoughItem) {
       if (prefillTitle) setTitle(prefillTitle);
@@ -108,8 +111,28 @@ export default function AddItem() {
       if (prefillBoxLabel) setAcquisitionSource(`Box: ${prefillBoxLabel}`);
     } else if (prefillSource) {
       setAcquisitionSource(prefillSource);
+    } else if (workflow.defaultAcquisitionSource) {
+      setAcquisitionSource((prev) => prev || workflow.defaultAcquisitionSource);
     }
-  }, [isConvertingRoughItem, prefillTitle, prefillNotes, prefillEstimatedValue, prefillBoxLabel, prefillSource]);
+  }, [isConvertingRoughItem, prefillTitle, prefillNotes, prefillEstimatedValue, prefillBoxLabel, prefillSource, workflow.defaultAcquisitionSource]);
+
+  useEffect(() => {
+    const last = localStorage.getItem(LAST_LOCATION_KEY);
+    if (last && locationIndex.byId.has(last)) {
+      setStorageLocationId((prev) => prev || last);
+    }
+  }, [locationIndex]);
+
+  const resetForNextItem = () => {
+    setPhotos([]);
+    setTitle('');
+    setOriginalCost('0');
+    setTargetPrice('');
+    setCategoryId('');
+    setRefurbishNotes('');
+    setBarcode('');
+    setLookup(null);
+  };
 
   const createItem = useMutation({
     mutationFn: async (data: {
@@ -158,6 +181,10 @@ export default function AddItem() {
       queryClient.invalidateQueries({ queryKey: ['items'] });
       queryClient.invalidateQueries({ queryKey: ['unconfirmed-count'] });
       
+      if (storageLocationId) {
+        localStorage.setItem(LAST_LOCATION_KEY, storageLocationId);
+      }
+
       // If converting from a rough item, mark it as processed
       if (fromRoughId) {
         try {
@@ -168,14 +195,21 @@ export default function AddItem() {
           queryClient.invalidateQueries({ queryKey: ['rough_items'] });
           toast.success('Item added and rough note marked as processed!');
         } catch {
-          // Still succeeded in creating item, but failed to mark rough item
           toast.success('Item added! (Note: Failed to mark rough note as processed)');
         }
-      } else {
-        toast.success('Item added successfully!');
+        navigate('/inventory');
+        return;
       }
-      
-      navigate('/inventory');
+
+      toast.success('Item added successfully!');
+      if (afterSaveRef.current === 'scan') {
+        resetForNextItem();
+        setShowScanner(true);
+      } else if (afterSaveRef.current === 'another') {
+        resetForNextItem();
+      } else {
+        navigate('/inventory');
+      }
     },
     onError: (error) => {
       toast.error(sanitizeError(error));
@@ -226,7 +260,7 @@ export default function AddItem() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const cost = parseFloat(originalCost);
+    const cost = originalCost.trim() === '' ? 0 : parseFloat(originalCost);
     if (isNaN(cost) || cost < 0) {
       toast.error('Please enter a valid cost');
       return;
@@ -497,38 +531,76 @@ export default function AddItem() {
           </CardContent>
         </Card>
 
-        <Button
-          type="submit"
-          className="w-full"
-          disabled={createItem.isPending}
-        >
-          {createItem.isPending ? (
-            <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              {isConvertingRoughItem ? 'Converting...' : 'Adding...'}
-            </>
-          ) : (
-            <>
-              {isConvertingRoughItem ? (
-                <>
-                  <ArrowRight className="w-4 h-4 mr-2" />
-                  Convert to Item
-                </>
-              ) : (
-                <>
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add Item
-                </>
-              )}
-            </>
+        <div className="space-y-2">
+          <Button
+            type="submit"
+            className="w-full"
+            disabled={createItem.isPending}
+            onClick={() => {
+              afterSaveRef.current = 'done';
+            }}
+          >
+            {createItem.isPending ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                {isConvertingRoughItem ? 'Converting...' : 'Adding...'}
+              </>
+            ) : (
+              <>
+                {isConvertingRoughItem ? (
+                  <>
+                    <ArrowRight className="w-4 h-4 mr-2" />
+                    Convert to Item
+                  </>
+                ) : (
+                  <>
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add Item
+                  </>
+                )}
+              </>
+            )}
+          </Button>
+          {!isConvertingRoughItem && (
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                type="submit"
+                variant="outline"
+                disabled={createItem.isPending}
+                onClick={() => {
+                  afterSaveRef.current = 'scan';
+                }}
+              >
+                <ScanLine className="w-4 h-4 mr-1.5" />
+                Add &amp; Scan Next
+              </Button>
+              <Button
+                type="submit"
+                variant="outline"
+                disabled={createItem.isPending}
+                onClick={() => {
+                  afterSaveRef.current = 'another';
+                }}
+              >
+                <Plus className="w-4 h-4 mr-1.5" />
+                Add &amp; Another
+              </Button>
+            </div>
           )}
-        </Button>
+        </div>
       </form>
       <BarcodeScannerModal
         open={showScanner}
         items={[]}
         onMatchFound={() => undefined}
-        onNoMatch={(code) => void runLookup(code)}
+        onNoMatch={(code, codeType, hint) => {
+          if (codeType === 'fnsku' && hint) {
+            setTitle((prev) => prev || hint);
+            toast.info(`Read from sticker: "${hint}"`);
+            return;
+          }
+          void runLookup(code);
+        }}
         onClose={() => setShowScanner(false)}
       />
     </div>

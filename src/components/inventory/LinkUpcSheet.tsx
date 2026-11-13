@@ -7,11 +7,14 @@ import { Button } from '@/components/ui/button';
 import { Package, Search, Sparkles, Loader2, Plus, Check, ChevronDown, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
-import { Item } from '@/hooks/useInventory';
+import { useAuth } from '@/contexts/AuthContext';
+import { Item, useLocationIndex } from '@/hooks/useInventory';
 import type { CodeType } from '@/lib/barcode';
 import { isUnknownTitle, lookupProduct } from '@/lib/productLookup';
 import { guessStickerMatch, guessTitleMatch, rankBySticker, rankByTitle } from '@/lib/scanIntake';
 import { OrderDetails } from '@/components/inventory/OrderDetails';
+import { LocationPicker } from '@/components/inventory/LocationPicker';
+import { LAST_DECISION_KEY, LAST_LOCATION_KEY } from '@/components/inventory/ConfirmItemSheet';
 
 /** Rendering thousands of order rows on a phone is slow — search narrows it */
 const MAX_SHOWN = 50;
@@ -31,9 +34,11 @@ interface LinkUpcSheetProps {
   items: Item[];
   onClose: () => void;
   /** Called after the user confirms an item and the code is saved onto it. */
-  onLinked: (item: Item) => void;
+  onLinked: (item: Item, confirmedInPlace?: boolean) => void;
   /** Shows "Not in my list — add as new item" */
   onAddNew?: () => void;
+  /** When true (e.g. on Order Sheet), also sets Keep/Sell + Location and confirms the item in one step */
+  confirmOnLink?: boolean;
 }
 
 function shortDate(value: string | null | undefined): string | null {
@@ -57,10 +62,15 @@ export function LinkUpcSheet({
   onClose,
   onLinked,
   onAddNew,
+  confirmOnLink = false,
 }: LinkUpcSheetProps) {
+  const { user } = useAuth();
+  const { index: locationIndex } = useLocationIndex();
   const [search, setSearch] = useState('');
   /** The order whose details are open */
   const [openId, setOpenId] = useState<string | null>(null);
+  const [decision, setDecision] = useState<'sell' | 'keep'>('sell');
+  const [storageLocationId, setStorageLocationId] = useState('');
   const autoOpened = useRef(false);
 
   useEffect(() => {
@@ -68,8 +78,15 @@ export function LinkUpcSheet({
       setSearch('');
       setOpenId(null);
       autoOpened.current = false;
+    } else if (confirmOnLink) {
+      const savedDecision = localStorage.getItem(LAST_DECISION_KEY);
+      setDecision(savedDecision === 'keep' ? 'keep' : 'sell');
+      const last = localStorage.getItem(LAST_LOCATION_KEY);
+      if (last && locationIndex.byId.has(last)) {
+        setStorageLocationId((prev) => prev || last);
+      }
     }
-  }, [open]);
+  }, [open, confirmOnLink, locationIndex]);
 
   // Best-effort product lookup — linking works fine without it
   const { data: lookup, isLoading: isLookingUp } = useQuery({
@@ -156,24 +173,42 @@ export function LinkUpcSheet({
 
   const linkMutation = useMutation({
     mutationFn: async (item: Item) => {
-      // Save the barcode so the next identical box matches by itself
-      if (codeType === 'upc' && upc) {
-        const { error } = await supabase.from('items').update({ upc }).eq('id', item.id);
-        if (error) throw error;
-      } else if (codeType === 'asin' && upc && !item.amazon_asin) {
-        const { error } = await supabase.from('items').update({ amazon_asin: upc }).eq('id', item.id);
-        if (error) throw error;
-      } else if (codeType === 'fnsku' && upc) {
-        // The X00 sticker — Amazon lookups aren't needed for this box again
-        const { error } = await supabase.from('items').update({ fnsku: upc }).eq('id', item.id);
-        if (error) console.warn('[LinkUpcSheet] sticker not saved:', error.message);
+      const patch: Record<string, unknown> = {};
+      if (codeType === 'upc' && upc) patch.upc = upc;
+      else if (codeType === 'asin' && upc && !item.amazon_asin) patch.amazon_asin = upc;
+      else if (codeType === 'fnsku' && upc) patch.fnsku = upc;
+
+      if (confirmOnLink && item.physical_status === 'unconfirmed') {
+        patch.physical_status = decision;
+        patch.confirmed_at = new Date().toISOString();
+        patch.confirmed_by = user?.id ?? null;
+        patch.storage_location_id = storageLocationId || item.storage_location_id || null;
+        patch.status = 'acquired';
+      }
+
+      if (Object.keys(patch).length > 0) {
+        const { error } = await supabase.from('items').update(patch).eq('id', item.id);
+        if (error) {
+          if (codeType === 'fnsku' && !confirmOnLink) {
+            console.warn('[LinkUpcSheet] sticker not saved:', error.message);
+          } else {
+            throw error;
+          }
+        }
       }
       return item;
     },
     onSuccess: (item) => {
-      toast.success(`Matched "${item.title || 'Untitled item'}"`);
+      if (confirmOnLink) {
+        localStorage.setItem(LAST_DECISION_KEY, decision);
+        if (storageLocationId) localStorage.setItem(LAST_LOCATION_KEY, storageLocationId);
+        const locName = storageLocationId ? locationIndex.pathText(storageLocationId) : '';
+        toast.success(locName ? `Confirmed "${item.title || 'Item'}" → ${locName}` : `Confirmed "${item.title || 'Item'}"`);
+      } else {
+        toast.success(`Matched "${item.title || 'Untitled item'}"`);
+      }
       onClose();
-      onLinked(item);
+      onLinked(item, confirmOnLink && item.physical_status === 'unconfirmed');
     },
     onError: () => {
       toast.error('Failed to link barcode');
@@ -190,12 +225,37 @@ export function LinkUpcSheet({
           <SheetTitle>Which item is this?</SheetTitle>
           <p className="text-sm text-muted-foreground">
             <span className="font-mono">{upc}</span> isn't linked to an item yet. Open an order to check its details,
-            then tap <span className="font-medium">This is it</span> — the next box with this barcode matches
+            then tap <span className="font-medium">{confirmOnLink ? 'Confirm & Receive' : 'This is it'}</span> — the next box with this barcode matches
             automatically.
           </p>
         </SheetHeader>
 
         <div className="space-y-3 pb-6">
+          {confirmOnLink && (
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 p-2">
+              <div className="flex rounded-md border border-border p-0.5 text-xs flex-shrink-0 bg-background">
+                {(['sell', 'keep'] as const).map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => setDecision(d)}
+                    className={`px-2.5 py-1 rounded font-medium capitalize ${
+                      decision === d ? 'bg-foreground text-background' : 'text-muted-foreground'
+                    }`}
+                  >
+                    {d}
+                  </button>
+                ))}
+              </div>
+              <LocationPicker
+                compact
+                value={storageLocationId}
+                onChange={setStorageLocationId}
+                noneLabel="No location"
+                triggerClassName="flex-1"
+              />
+            </div>
+          )}
           {isLookingUp && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground rounded-lg bg-muted/40 px-3 py-2">
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -314,7 +374,7 @@ export function LinkUpcSheet({
                             ) : (
                               <Check className="w-4 h-4 mr-1" />
                             )}
-                            This is it
+                            {confirmOnLink && item.physical_status === 'unconfirmed' ? 'Confirm & Receive' : 'This is it'}
                           </Button>
                           <Button variant="outline" className="flex-1" onClick={() => setOpenId(null)}>
                             Not this one

@@ -8,7 +8,8 @@ import { Item, useLocationIndex } from '@/hooks/useInventory';
 import { toast } from 'sonner';
 import { readStickerText } from '@/lib/stickerOcr';
 import { classifyCode, type CodeType } from '@/lib/barcode';
-import { rememberCode, resolveCode } from '@/lib/scanIntake';
+import { lookupProduct } from '@/lib/productLookup';
+import { guessStickerMatch, guessTitleMatch, rememberCode, resolveCode } from '@/lib/scanIntake';
 import { useAuth } from '@/contexts/AuthContext';
 
 const VIEWFINDER_ID = 'zxing-viewfinder';
@@ -16,10 +17,10 @@ const VIEWFINDER_ID = 'zxing-viewfinder';
 interface BarcodeScannerModalProps {
   open: boolean;
   items: Item[];
-  /** An exact code match (ASIN, linked UPC, or a sticker saved on the item) */
+  /** An exact or high-confidence code match (ASIN, linked UPC, OpenWeb Ninja ASIN/title match, or sure sticker match) */
   onMatchFound: (item: Item, code: string, codeType: CodeType) => void;
-  /** `hint`: words read off an X00 sticker, to rank the picker */
-  onNoMatch: (code: string, codeType: CodeType, hint?: string | null) => void;
+  /** `hint`: words read off an X00 sticker or looked-up product title, to rank the picker */
+  onNoMatch: (code: string, codeType: CodeType, hint?: string | null, suggestedIds?: string[]) => void;
   onClose: () => void;
   /**
    * Before giving up on a code that isn't on `items`, check the database: an
@@ -106,16 +107,81 @@ export function BarcodeScannerModal({
         }
 
         if (result.codeType === 'fnsku') {
-          // A new X00 sticker can't be looked up — read the product name printed on it
           const reading = result.frame ? toast.loading('Reading the sticker…') : undefined;
           const printed = result.frame ? await readStickerText(result.frame, result.value) : null;
           if (reading !== undefined) toast.dismiss(reading);
-          // Never matched on a reading alone — brands sell look-alikes. The picker
-          // opens the closest order's details for the user to confirm.
+          if (printed && items.length > 0) {
+            const g = guessStickerMatch(items, printed);
+            if (g?.sure && g.lookalikes === 0) {
+              await rememberCode(g.item.id, result.value, 'fnsku');
+              toast.success(`Found: ${g.item.title || 'Untitled item'}`);
+              onMatchFound({ ...g.item, fnsku: result.value }, result.value, 'fnsku');
+              onClose();
+              break;
+            }
+          }
           onNoMatch(result.value, 'fnsku', printed);
           onClose();
           break;
         }
+
+        // For UPC/EAN scans against a list of items (Order Sheet or Inventory), query OpenWeb Ninja
+        // so we can match the barcode's Amazon ASIN or product title confidently without manual linking.
+        if (result.codeType === 'upc' && items.length > 0) {
+          const loadingId = toast.loading('Looking up barcode on Amazon…');
+          try {
+            const lookup = await lookupProduct(result.value, 'upc');
+            toast.dismiss(loadingId);
+            if (lookup.found) {
+              const asins = lookup.candidateAsins?.length
+                ? lookup.candidateAsins
+                : lookup.asin
+                  ? [lookup.asin]
+                  : [];
+              const rank = new Map(asins.map((a, i) => [a.toUpperCase(), i]));
+              const asinMatches = items
+                .filter((i) => i.amazon_asin && rank.has(i.amazon_asin.trim().toUpperCase()))
+                .sort(
+                  (a, b) =>
+                    (rank.get(a.amazon_asin!.trim().toUpperCase()) ?? 99) -
+                    (rank.get(b.amazon_asin!.trim().toUpperCase()) ?? 99)
+                );
+              const distinctAsins = new Set(asinMatches.map((i) => i.amazon_asin!.trim().toUpperCase()));
+              // Unambiguous ASIN match (1 order, or multiple units of the exact same ASIN)
+              if (asinMatches.length > 0 && distinctAsins.size === 1) {
+                const matched = asinMatches[0];
+                await rememberCode(matched.id, result.value, 'upc');
+                toast.success(`Matched via Amazon: ${matched.title || lookup.title || 'Item'}`);
+                onMatchFound({ ...matched, upc: matched.upc ?? result.value }, result.value, 'upc');
+                onClose();
+                break;
+              }
+              // High-confidence title match when no ASIN matched
+              if (asinMatches.length === 0 && lookup.title) {
+                const titleGuess = guessTitleMatch(items, lookup.title);
+                if (titleGuess?.sure && titleGuess.lookalikes === 0) {
+                  const matched = titleGuess.item;
+                  await rememberCode(matched.id, result.value, 'upc');
+                  toast.success(`Matched: ${matched.title || lookup.title}`);
+                  onMatchFound({ ...matched, upc: matched.upc ?? result.value }, result.value, 'upc');
+                  onClose();
+                  break;
+                }
+              }
+              onNoMatch(
+                result.value,
+                'upc',
+                lookup.title,
+                asinMatches.map((i) => i.id)
+              );
+              onClose();
+              break;
+            }
+          } catch {
+            toast.dismiss(loadingId);
+          }
+        }
+
         onNoMatch(result.value, result.codeType);
         onClose();
         break;

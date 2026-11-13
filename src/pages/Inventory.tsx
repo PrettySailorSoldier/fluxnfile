@@ -1225,14 +1225,25 @@ export default function Inventory() {
           setQuickEditItem(null);
         }}
         onSaveNext={
-          needsDetailsOnly && quickEditItem
-            ? () => openNextNeedingDetails(quickEditItem.id)
+          quickEditItem && filteredItems.length > 1
+            ? () => {
+                if (needsDetailsOnly) {
+                  openNextNeedingDetails(quickEditItem.id);
+                } else {
+                  queryClient.invalidateQueries({ queryKey: ['items'] });
+                  const idx = filteredItems.findIndex((i) => i.id === quickEditItem.id);
+                  const next = filteredItems[idx + 1] ?? filteredItems[0];
+                  setQuickEditItem(next && next.id !== quickEditItem.id ? next : null);
+                }
+              }
             : undefined
         }
         queueLabel={
           needsDetailsOnly && quickEditItem
             ? `Needs details · ${Math.max(0, filteredItems.filter((i) => i.id !== quickEditItem.id).length)} more after this`
-            : undefined
+            : quickEditItem && filteredItems.length > 1
+              ? `Item ${filteredItems.findIndex((i) => i.id === quickEditItem.id) + 1} of ${filteredItems.length}`
+              : undefined
         }
       />
 

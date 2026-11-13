@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -12,8 +13,10 @@ import { LocationPicker } from '@/components/inventory/LocationPicker';
 import { OrderDetails } from '@/components/inventory/OrderDetails';
 import { useNavigate } from 'react-router-dom';
 import { getLabelSettings } from '@/lib/labelSettings';
+import { suggestPrice } from '@/lib/productLookup';
 
-const LAST_LOCATION_KEY = 'confirm-last-storage-location';
+export const LAST_LOCATION_KEY = 'confirm-last-storage-location';
+export const LAST_DECISION_KEY = 'confirm-last-decision';
 
 interface ConfirmItemSheetProps {
   item: Item | null;
@@ -31,9 +34,10 @@ export function ConfirmItemSheet({ item, open, onClose, onConfirmed, onNotThisIt
   const { user, team } = useAuth();
   const { index: locationIndex } = useLocationIndex();
 
-  const [decision, setDecision] = useState<'keep' | 'sell' | null>(null);
+  const [decision, setDecision] = useState<'keep' | 'sell' | null>('sell');
   const [storageLocationId, setStorageLocationId] = useState('');
   const [heldBy, setHeldBy] = useState('');
+  const [targetPrice, setTargetPrice] = useState('');
 
   const { data: teamMembers = [] } = useQuery({
     queryKey: ['team-members', team?.id],
@@ -50,23 +54,32 @@ export function ConfirmItemSheet({ item, open, onClose, onConfirmed, onNotThisIt
 
   useEffect(() => {
     if (!open) {
-      setDecision(null);
-      setStorageLocationId('');
       setHeldBy('');
     } else {
-      // Prefill with the last-used location — receiving a batch of boxes
-      // to the same shelf becomes a single tap per item
-      // (a remembered spot that was deleted since is simply skipped)
+      const savedDecision = localStorage.getItem(LAST_DECISION_KEY);
+      setDecision(savedDecision === 'keep' ? 'keep' : 'sell');
       const last = localStorage.getItem(LAST_LOCATION_KEY);
       if (last && locationIndex.byId.has(last)) {
         setStorageLocationId((prev) => prev || last);
+      } else if (item?.storage_location_id && locationIndex.byId.has(item.storage_location_id)) {
+        setStorageLocationId(item.storage_location_id);
+      }
+      if (item) {
+        if (item.target_price != null) {
+          setTargetPrice(String(item.target_price));
+        } else {
+          const basis = item.retail_price ?? item.vine_etv ?? (item.original_cost > 0 ? item.original_cost : null);
+          const suggested = suggestPrice(basis, 60, true);
+          setTargetPrice(suggested != null ? String(suggested) : '');
+        }
       }
     }
-  }, [open, locationIndex]);
+  }, [open, item, locationIndex]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!item || !decision) return;
+      const parsedPrice = decision === 'sell' && targetPrice.trim() !== '' ? parseFloat(targetPrice) : null;
       const { error } = await supabase
         .from('items')
         .update({
@@ -76,6 +89,7 @@ export function ConfirmItemSheet({ item, open, onClose, onConfirmed, onNotThisIt
           held_by: heldBy || null,
           storage_location_id: storageLocationId || null,
           status: 'acquired',
+          ...(parsedPrice != null && !isNaN(parsedPrice) && parsedPrice >= 0 ? { target_price: parsedPrice } : {}),
         })
         .eq('id', item.id);
       if (error) throw error;
@@ -83,6 +97,9 @@ export function ConfirmItemSheet({ item, open, onClose, onConfirmed, onNotThisIt
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['items'] });
       queryClient.invalidateQueries({ queryKey: ['unconfirmed-count'] });
+      if (decision) {
+        localStorage.setItem(LAST_DECISION_KEY, decision);
+      }
       if (storageLocationId) {
         localStorage.setItem(LAST_LOCATION_KEY, storageLocationId);
       }
@@ -112,7 +129,7 @@ export function ConfirmItemSheet({ item, open, onClose, onConfirmed, onNotThisIt
           <p className="text-sm text-muted-foreground">Check the order details against the box before confirming.</p>
         </SheetHeader>
 
-        <div className="space-y-5 pb-6">
+        <div className="space-y-4 pb-6">
           {item && (
             <div className="rounded-lg border border-border p-3">
               <OrderDetails item={item} />
@@ -125,24 +142,45 @@ export function ConfirmItemSheet({ item, open, onClose, onConfirmed, onNotThisIt
             </Button>
           )}
 
-          <div className="space-y-2">
-            <Label>What are you doing with this?</Label>
-            <div className="flex flex-col gap-2">
-              <Button
-                variant={decision === 'keep' ? 'default' : 'outline'}
-                className="w-full h-12 text-base"
-                onClick={() => setDecision('keep')}
-              >
-                Keep
-              </Button>
-              <Button
-                variant={decision === 'sell' ? 'default' : 'outline'}
-                className="w-full h-12 text-base"
-                onClick={() => setDecision('sell')}
-              >
-                Sell
-              </Button>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Keep or Sell</Label>
+              <div className="grid grid-cols-2 gap-1.5">
+                <Button
+                  type="button"
+                  variant={decision === 'sell' ? 'default' : 'outline'}
+                  className="h-11 text-sm"
+                  onClick={() => setDecision('sell')}
+                >
+                  Sell
+                </Button>
+                <Button
+                  type="button"
+                  variant={decision === 'keep' ? 'default' : 'outline'}
+                  className="h-11 text-sm"
+                  onClick={() => setDecision('keep')}
+                >
+                  Keep
+                </Button>
+              </div>
             </div>
+
+            {decision === 'sell' && (
+              <div className="space-y-1.5">
+                <Label htmlFor="confirm-price">Asking price ($)</Label>
+                <Input
+                  id="confirm-price"
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.01"
+                  placeholder="Optional"
+                  value={targetPrice}
+                  onChange={(e) => setTargetPrice(e.target.value)}
+                  className="h-11"
+                />
+              </div>
+            )}
           </div>
 
           <div className="space-y-1.5">
@@ -171,11 +209,15 @@ export function ConfirmItemSheet({ item, open, onClose, onConfirmed, onNotThisIt
           </div>
 
           <Button
-            className="w-full"
+            className="w-full h-12 text-base"
             onClick={() => saveMutation.mutate()}
             disabled={!decision || saveMutation.isPending}
           >
-            {saveMutation.isPending ? 'Confirming...' : 'Confirm Item'}
+            {saveMutation.isPending
+              ? 'Confirming...'
+              : storageLocationId && locationIndex.pathText(storageLocationId)
+                ? `Confirm (${decision === 'keep' ? 'Keep' : 'Sell'}) → ${locationIndex.pathText(storageLocationId)}`
+                : `Confirm Item (${decision === 'keep' ? 'Keep' : 'Sell'})`}
           </Button>
         </div>
       </SheetContent>

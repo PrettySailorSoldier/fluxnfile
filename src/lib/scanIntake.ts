@@ -90,7 +90,28 @@ export async function findByCode(teamId: string, code: string, codeType: CodeTyp
     throw error;
   }
   const direct = (data ?? []) as unknown as MatchRow[];
-  if (codeType === 'asin' || direct.length === 0) return direct;
+  if (codeType === 'asin') return direct;
+
+  // If no item directly has this UPC/FNSKU yet, check if product_catalog already knows its ASIN
+  if (direct.length === 0) {
+    const key = codeType === 'upc' ? code.replace(/\D/g, '').replace(/^0+/, '') || code : code.toUpperCase();
+    const { data: cat } = await supabase
+      .from('product_catalog')
+      .select('asin')
+      .eq('code', key)
+      .maybeSingle();
+    if (cat?.asin) {
+      const { data: byCatalogAsin } = await supabase
+        .from('items')
+        .select(MATCH_FIELDS)
+        .eq('team_id', teamId)
+        .ilike('amazon_asin', cat.asin)
+        .order('created_at', { ascending: true })
+        .limit(100);
+      if (byCatalogAsin?.length) return byCatalogAsin as unknown as MatchRow[];
+    }
+    return [];
+  }
 
   // Same product, other orders: unconfirmed rows sharing the matched items' ASIN.
   // More than a few distinct ASINs behind one code means the code was linked

@@ -440,9 +440,28 @@ export default function ScanSession() {
           }
         }
 
-        // Never received on the reading alone — a brand's look-alikes (a 4-pack of
-        // pathway lights vs. a house-number sign) read much the same. The picker
-        // opens the closest order's details for the user to confirm.
+        // High-confidence sticker match with zero look-alikes on the Order Sheet → receive directly
+        if (currentMode === 'add' && printed && orderItemsRef.current.length > 0) {
+          const waitingOrders = orderItemsRef.current.filter((i) => i.physical_status === 'unconfirmed');
+          const g = guessStickerMatch(waitingOrders, printed);
+          if (g?.sure && g.lookalikes === 0) {
+            const target = g.item as unknown as MatchRow;
+            const undo = await receiveItem(target, c);
+            await rememberCode(target.id, code, 'fnsku');
+            pushRow({
+              code, codeType, kind: 'received', title: target.title || 'Item',
+              photo: target.photos?.[0] ?? null, itemIds: [target.id], undo,
+              location: locPath(c.defaults.storageLocationId || target.storage_location_id),
+              price: target.target_price,
+              hint: printed,
+              message: `Matched from sticker (“${printed.slice(0, 40)}”)`,
+            });
+            signal('received', `Received: ${target.title || 'item'}`);
+            invalidate();
+            return;
+          }
+        }
+
         if (currentMode === 'add' && orderItemsRef.current.length > 0) {
           askWhichItem(
             {
@@ -605,17 +624,58 @@ export default function ScanSession() {
 
       // 3c. Another product in Amazon's results for this barcode is on the Order Sheet —
       // usually the colour/size actually ordered when the top result is a sibling variant.
-      // Strong, but not exact: it opens first in the picker for the user to confirm.
       const suggestedIds = codeType === 'upc' && lookup.found ? orderSheetByAsins(lookup.candidateAsins) : [];
+      if (suggestedIds.length > 0) {
+        const matchedOrders = suggestedIds
+          .map((id) => orderItemsRef.current.find((i) => i.id === id))
+          .filter((i): i is Item => !!i && i.physical_status === 'unconfirmed');
+        const distinctAsins = new Set(matchedOrders.map((i) => i.amazon_asin?.trim().toUpperCase()).filter(Boolean));
+        if (matchedOrders.length > 0 && distinctAsins.size === 1) {
+          const target = await fillFromLookup(matchedOrders[0] as unknown as MatchRow, lookup);
+          const matchedAsin = matchedOrders[0].amazon_asin?.trim().toUpperCase();
+          const undo = await receiveItem(target, c, target.upc ? {} : { upc: code });
+          pushRow({
+            code, codeType, kind: 'received', title: target.title || lookup.title || 'Item',
+            photo: target.photos?.[0] ?? lookup.imageUrl, itemIds: [target.id], undo,
+            altCodes: matchedAsin ? [matchedAsin] : [],
+            location: locPath(c.defaults.storageLocationId || target.storage_location_id),
+            price: target.target_price,
+            hint: lookup.title,
+            suggestedIds,
+            message:
+              matchedOrders.length > 1
+                ? `${matchedOrders.length - 1} more unit${matchedOrders.length > 2 ? 's' : ''} still on the order sheet`
+                : 'Matched to your Amazon order via OpenWeb Ninja',
+          });
+          signal('received', `Received: ${target.title || 'item'}`);
+          invalidate();
+          return;
+        }
+      }
 
-      // 3d. A UPC whose product name clearly matches an Order Sheet item, or 3e. sorting
-      // a backlog of boxes that are all on the order list already → ask which one.
-      // A name match is only a guess, so it's shown (details open) for the user to confirm.
+      // 3d. A UPC whose product name clearly & unambiguously matches an Order Sheet item (sure && 0 look-alikes)
       const nameMatch =
         codeType === 'upc' && lookup.found && suggestedIds.length === 0
           ? await findOrderSheetNameMatch(lookup.title, orderItemsRef.current)
           : null;
-      if (suggestedIds.length > 0 || nameMatch || askFirst()) {
+      if (nameMatch) {
+        const target = await fillFromLookup(nameMatch, lookup);
+        const undo = await receiveItem(target, c, target.upc ? {} : { upc: code });
+        pushRow({
+          code, codeType, kind: 'received', title: target.title || lookup.title || 'Item',
+          photo: target.photos?.[0] ?? lookup.imageUrl, itemIds: [target.id], undo,
+          altCodes: [...altCodes, ...(asin && asin !== code ? [asin] : [])],
+          location: locPath(c.defaults.storageLocationId || target.storage_location_id),
+          price: target.target_price,
+          hint: lookup.title,
+          message: 'Matched by product title — tap "Wrong item? Link" if needed',
+        });
+        signal('received', `Received: ${target.title || 'item'}`);
+        invalidate();
+        return;
+      }
+
+      if (suggestedIds.length > 0 || askFirst()) {
         askWhichItem(
           {
             code, codeType, kind: 'unmatched',
@@ -625,9 +685,9 @@ export default function ScanSession() {
             suggestedIds,
             altCodes: [...altCodes, ...(asin && asin !== code ? [asin] : [])],
             message: suggestedIds.length
-              ? 'Amazon lists an order of yours for this barcode — check it and confirm'
+              ? 'Multiple orders match this barcode — check and pick the right one'
               : lookup.found
-                ? 'Not matched to an order yet — pick it from your list'
+                ? 'Not matched to an order yet — pick it from your list, or tap "Add as new"'
                 : 'Barcode not recognized — pick the item from your list',
           },
           lookup.found ? lookup.title : null
@@ -889,6 +949,8 @@ export default function ScanSession() {
       const row = rowsRef.current.find((r) => r.key === target.rowKey);
       if (row?.kind === 'added') {
         for (const id of row.itemIds) await deleteItem(id);
+      } else if (row?.kind === 'received' && row.undo && row.itemIds[0]) {
+        await undoReceive(row.itemIds[0], row.undo);
       }
       if (item.physical_status === 'unconfirmed') {
         let picked = item as unknown as MatchRow;
@@ -1100,6 +1162,25 @@ export default function ScanSession() {
               noneLabel="No location"
               triggerClassName="flex-1"
             />
+            {orderItems.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setDefaults((s) => ({ ...s, askWhenUnmatched: !(s.askWhenUnmatched ?? true) }))}
+                title={
+                  (defaults.askWhenUnmatched ?? true)
+                    ? 'Unknown barcodes ask which Order Sheet item they belong to (tap to switch to Auto-add)'
+                    : 'Unknown barcodes auto-add as new inventory (tap to switch to Match orders)'
+                }
+                className={cn(
+                  'h-8 px-2.5 rounded-md border text-xs font-medium flex-shrink-0 transition-colors',
+                  (defaults.askWhenUnmatched ?? true)
+                    ? 'border-primary/40 bg-primary/10 text-primary'
+                    : 'border-border bg-background text-muted-foreground'
+                )}
+              >
+                {(defaults.askWhenUnmatched ?? true) ? `Match orders (${orderItems.length})` : 'Auto-add new'}
+              </button>
+            )}
             <Button
               variant={showSettings ? 'default' : 'outline'}
               size="icon"
@@ -1246,7 +1327,7 @@ export default function ScanSession() {
               onReceive={() => void receiveOnOrder(row)}
               onAdd={() => void addFromNotFound(row)}
               onLink={
-                (row.kind === 'added' || row.kind === 'unmatched') && row.codeType
+                (row.kind === 'received' || row.kind === 'added' || row.kind === 'unmatched') && row.codeType
                   ? () =>
                       setLinkTarget({
                         code: row.code, codeType: row.codeType!, rowKey: row.key,
